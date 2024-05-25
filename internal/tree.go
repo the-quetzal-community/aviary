@@ -121,7 +121,7 @@ func (tree *Tree) recalculate(godot gd.Context) {
 
 func scaleInDirection(vector, direction gd.Vector3, scale float64) gd.Vector3 {
 	var currentMag = vector3.Dot(vector, direction)
-	var change = vector3.Scale(direction, currentMag*scale-currentMag)
+	var change = vector3.Mulf(direction, currentMag*scale-currentMag)
 	return vector3.Add(vector, change)
 }
 
@@ -130,10 +130,10 @@ func vecAxisAngle(vec, axis gd.Vector3, angle float64) gd.Vector3 {
 	var sinr = math.Sin(angle)
 	return vector3.Add(
 		vector3.Add(
-			vector3.Scale(vec, cosr),
-			vector3.Scale(vector3.Cross(axis, vec), sinr),
+			vector3.Mulf(vec, cosr),
+			vector3.Mulf(vector3.Cross(axis, vec), sinr),
 		),
-		vector3.Scale(axis, vector3.Dot(axis, vec)*(1-cosr)),
+		vector3.Mulf(axis, vector3.Dot(axis, vec)*(1-cosr)),
 	)
 }
 
@@ -237,7 +237,7 @@ func (tree *Tree) calcNormals() {
 		var total = gd.Vector3{0, 0, 0}
 		var l = len(allNormals[i])
 		for j := 0; j < l; j++ {
-			total = vector3.Add(total, vector3.Scale(allNormals[i][j], 1/float64(l)))
+			total = vector3.Add(total, vector3.Mulf(allNormals[i][j], 1/float64(l)))
 		}
 		tree.mesh.normals[i] = total
 	}
@@ -369,57 +369,57 @@ func (tree *Tree) createTwigs(branch *branch) {
 		var vert1 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, tree.TwigScale)),
-				vector3.Scale(binormal, tree.TwigScale*2-branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, tree.TwigScale)),
+				vector3.Mulf(binormal, tree.TwigScale*2-branch.length),
 			),
 		)
 		var vert2 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, -tree.TwigScale)),
-				vector3.Scale(binormal, tree.TwigScale*2-branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, -tree.TwigScale)),
+				vector3.Mulf(binormal, tree.TwigScale*2-branch.length),
 			),
 		)
 		var vert3 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, -tree.TwigScale)),
-				vector3.Scale(binormal, -branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, -tree.TwigScale)),
+				vector3.Mulf(binormal, -branch.length),
 			),
 		)
 		var vert4 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, tree.TwigScale)),
-				vector3.Scale(binormal, -branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, tree.TwigScale)),
+				vector3.Mulf(binormal, -branch.length),
 			),
 		)
 		var vert8 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, tree.TwigScale)),
-				vector3.Scale(binormal, tree.TwigScale*2-branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, tree.TwigScale)),
+				vector3.Mulf(binormal, tree.TwigScale*2-branch.length),
 			),
 		)
 		var vert7 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, -tree.TwigScale)),
-				vector3.Scale(binormal, tree.TwigScale*2-branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, -tree.TwigScale)),
+				vector3.Mulf(binormal, tree.TwigScale*2-branch.length),
 			),
 		)
 		var vert6 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, -tree.TwigScale)),
-				vector3.Scale(binormal, -branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, -tree.TwigScale)),
+				vector3.Mulf(binormal, -branch.length),
 			),
 		)
 		var vert5 = int32(len(tree.twig.verts))
 		tree.twig.verts = append(tree.twig.verts,
 			vector3.Add(
-				vector3.Add(branch.head, vector3.Scale(tangent, tree.TwigScale)),
-				vector3.Scale(binormal, -branch.length),
+				vector3.Add(branch.head, vector3.Mulf(tangent, tree.TwigScale)),
+				vector3.Mulf(binormal, -branch.length),
 			),
 		)
 		tree.twig.faces = append(tree.twig.faces, gd.Vector3i{vert1, vert2, vert3})
@@ -475,7 +475,7 @@ func (tree *Tree) createForks(branch *branch, radius float64) {
 		for i := int32(0); i < segments; i++ {
 			var vec = vecAxisAngle(gd.Vector3{-1, 0, 0}, axis, -segmentAngle*float64(i))
 			branch.root = append(branch.root, int32(len(tree.mesh.verts)))
-			tree.mesh.verts = append(tree.mesh.verts, vector3.Scale(vec, radius/tree.RadiusFalloffRate))
+			tree.mesh.verts = append(tree.mesh.verts, vector3.Mulf(vec, radius/tree.RadiusFalloffRate))
 		}
 	}
 	//cross the branches to get the left
@@ -492,9 +492,9 @@ func (tree *Tree) createForks(branch *branch, radius float64) {
 		var tangent = vector3.Normalize(vector3.Cross(axis1, axis2))
 		branch.tangent = tangent
 		var (
-			axis3     = vector3.Normalize(vector3.Cross(tangent, vector3.Normalize(vector3.Add(vector3.Scale(axis1, -1), vector3.Scale(axis2, -1)))))
+			axis3     = vector3.Normalize(vector3.Cross(tangent, vector3.Normalize(vector3.Add(vector3.Mulf(axis1, -1), vector3.Mulf(axis2, -1)))))
 			dir       = gd.Vector3{axis2[0], 0, axis2[2]}
-			centerloc = vector3.Add(branch.head, vector3.Scale(dir, -tree.MaxRadius/2))
+			centerloc = vector3.Add(branch.head, vector3.Mulf(dir, -tree.MaxRadius/2))
 			scale     = tree.RadiusFalloffRate
 		)
 		if branch.child[0].trunk || branch.trunk {
@@ -507,7 +507,7 @@ func (tree *Tree) createForks(branch *branch, radius float64) {
 		branch.ring[0] = append(branch.ring[0], linch0)
 		branch.ring[2] = append(branch.ring[2], linch0)
 		tree.mesh.verts = append(tree.mesh.verts,
-			vector3.Add(centerloc, vector3.Scale(tangent, radius*scale)))
+			vector3.Add(centerloc, vector3.Mulf(tangent, radius*scale)))
 		var (
 			start = int32(len(tree.mesh.verts) - 1)
 			d1    = vecAxisAngle(tangent, axis2, 1.57)
@@ -520,20 +520,20 @@ func (tree *Tree) createForks(branch *branch, radius float64) {
 			branch.ring[2] = append(branch.ring[2], start+i)
 			vec = scaleInDirection(vec, d2, s)
 			tree.mesh.verts = append(tree.mesh.verts,
-				vector3.Add(centerloc, vector3.Scale(vec, radius*scale)))
+				vector3.Add(centerloc, vector3.Mulf(vec, radius*scale)))
 		}
 		var linch1 = int32(len(tree.mesh.verts))
 		branch.ring[0] = append(branch.ring[0], linch1)
 		branch.ring[1] = append(branch.ring[1], linch1)
 		tree.mesh.verts = append(tree.mesh.verts,
-			vector3.Add(centerloc, vector3.Scale(tangent, -radius*scale)))
+			vector3.Add(centerloc, vector3.Mulf(tangent, -radius*scale)))
 		for i := segments/2 + 1; i < segments; i++ {
 			var vec = vecAxisAngle(tangent, axis1, segmentAngle*float64(i))
 			branch.ring[0] = append(branch.ring[0], int32(len(tree.mesh.verts)))
 			branch.ring[1] = append(branch.ring[1], int32(len(tree.mesh.verts)))
 
 			tree.mesh.verts = append(tree.mesh.verts,
-				vector3.Add(centerloc, vector3.Scale(vec, radius*scale)))
+				vector3.Add(centerloc, vector3.Mulf(vec, radius*scale)))
 		}
 		branch.ring[1] = append(branch.ring[1], linch0)
 		branch.ring[2] = append(branch.ring[2], linch1)
@@ -545,7 +545,7 @@ func (tree *Tree) createForks(branch *branch, radius float64) {
 			branch.ring[1] = append(branch.ring[1], start+i)
 			branch.ring[2] = append(branch.ring[2], start+(segments/2-i))
 			var (
-				v = vector3.Scale(vec, radius*scale)
+				v = vector3.Mulf(vec, radius*scale)
 			)
 			tree.mesh.verts = append(tree.mesh.verts,
 				vector3.Add(centerloc, v))
@@ -563,7 +563,7 @@ func (tree *Tree) createForks(branch *branch, radius float64) {
 	} else {
 		//add points for the ends of braches
 		branch.end = int32(len(tree.mesh.verts))
-		//branch.head=vector3.Add(branch.head,vector3.Scale([this.properties.xBias,this.properties.yBias,this.properties.zBias],branch.length*3));
+		//branch.head=vector3.Add(branch.head,vector3.Mulf([this.properties.xBias,this.properties.yBias,this.properties.zBias],branch.length*3));
 		tree.mesh.verts = append(tree.mesh.verts,
 			branch.head,
 		)
@@ -623,13 +623,13 @@ func (bra *branch) split(level float64, steps float64, properties *Tree, l1, l2 
 		clumpmax = properties.ClumpMax
 		clumpmin = properties.ClumpMin
 	)
-	var adj = vector3.Add(vector3.Scale(normal, r), vector3.Scale(tangent, 1-r))
+	var adj = vector3.Add(vector3.Mulf(normal, r), vector3.Mulf(tangent, 1-r))
 	if r > 0.5 {
-		adj = vector3.Scale(adj, -1)
+		adj = vector3.Mulf(adj, -1)
 	}
 	var (
 		clump  = (clumpmax-clumpmin)*r + clumpmin
-		newdir = vector3.Normalize(vector3.Add(vector3.Scale(adj, 1-clump), vector3.Scale(dir, clump)))
+		newdir = vector3.Normalize(vector3.Add(vector3.Mulf(adj, 1-clump), vector3.Mulf(dir, clump)))
 	)
 	var newdir2 = bra.mirrorBranch(newdir, dir, properties)
 	if r > 0.5 {
@@ -647,8 +647,8 @@ func (bra *branch) split(level float64, steps float64, properties *Tree, l1, l2 
 	newdir = vector3.Normalize(vector3.Add(newdir, gd.NewVector3(sweepAmount, dropAmount+growAmount, 0)))
 	newdir2 = vector3.Normalize(vector3.Add(newdir2, gd.NewVector3(sweepAmount, dropAmount+growAmount, 0)))
 	var (
-		head0 = vector3.Add(so, vector3.Scale(newdir, bra.length))
-		head1 = vector3.Add(so, vector3.Scale(newdir2, bra.length))
+		head0 = vector3.Add(so, vector3.Mulf(newdir, bra.length))
+		head1 = vector3.Add(so, vector3.Mulf(newdir2, bra.length))
 	)
 	bra.child[0] = newBranch(head0, bra)
 	bra.child[1] = newBranch(head1, bra)
