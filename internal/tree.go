@@ -3,7 +3,6 @@ package internal
 //Based on https://github.com/supereggbert/proctree.js/blob/master/proctree.js
 
 import (
-	"fmt"
 	"math"
 
 	"grow.graphics/gd"
@@ -15,7 +14,7 @@ import (
 type Tree struct {
 	gd.Class[Tree, gd.ArrayMesh] `gd:"AviaryTree"`
 
-	Seed gd.Float `gd:"seed" default:"10"`
+	Seed gd.Float `gd:"seed" default:"10" range:"0,1000,or_greater"`
 
 	ClumpMin            gd.Float `gd:"clump_min" default:"0.8"`
 	ClumpMax            gd.Float `gd:"clump_max" default:"0.5"`
@@ -82,7 +81,6 @@ func (tree *Tree) recalculate(godot gd.Context) {
 	if !tree.recalculating {
 		return
 	}
-	fmt.Println("Recalculating")
 	tree.recalculating = false
 
 	tree.mesh = buffer{}
@@ -95,8 +93,6 @@ func (tree *Tree) recalculate(godot gd.Context) {
 	tree.doFaces(tree.root)
 	tree.calcNormals()
 
-	fmt.Println("Verts:", len(tree.mesh.verts))
-
 	ArrayMesh := tree.AsArrayMesh()
 	ArrayMesh.ClearSurfaces()
 
@@ -106,15 +102,20 @@ func (tree *Tree) recalculate(godot gd.Context) {
 	}
 	var indicies = godot.PackedInt32Array()
 	for _, index := range tree.mesh.faces {
-		indicies.Append(int64(index[0]))
-		indicies.Append(int64(index[1]))
 		indicies.Append(int64(index[2]))
+		indicies.Append(int64(index[1]))
+		indicies.Append(int64(index[0]))
+	}
+	var normals = godot.PackedVector3Array()
+	for _, normal := range tree.mesh.normals {
+		normals.Append(normal)
 	}
 
 	var arrays = godot.Array()
 	arrays.Resize(int64(gd.MeshArrayMax))
 	arrays.SetIndex(int64(gd.MeshArrayVertex), godot.Variant(vertices))
 	arrays.SetIndex(int64(gd.MeshArrayIndex), godot.Variant(indicies))
+	arrays.SetIndex(int64(gd.MeshArrayNormal), godot.Variant(normals))
 
 	ArrayMesh.AddSurfaceFromArrays(gd.MeshPrimitiveTriangles, arrays, gd.NewArrayOf[gd.Array](godot), godot.Dictionary(), gd.MeshArrayFormatVertex)
 }
