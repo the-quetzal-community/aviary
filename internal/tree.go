@@ -41,30 +41,38 @@ import (
 type Tree struct {
 	gd.Class[Tree, gd.ArrayMesh] `gd:"AviaryTree"`
 
-	Seed gd.Float `gd:"seed" default:"10" range:"0,1000,or_greater"`
+	Seed      gd.Float `gd:"seed" default:"10" range:"0,1000,or_greater,or_less"`
+	Levels    gd.Float `gd:"levels" default:"3" range:"0.1,7,or_greater"`
+	TwigScale gd.Float `gd:"twig_scale" default:"2" range:"0,1,or_greater"`
 
-	ClumpMin            gd.Float `gd:"clump_min" default:"0.8"`
-	ClumpMax            gd.Float `gd:"clump_max" default:"0.5"`
-	LengthFalloffFactor gd.Float `gd:"length_falloff_factor" default:"0.85"`
-	LengthFalloffPower  gd.Float `gd:"length_falloff_power" default:"1"`
+	// Branching
 
-	BranchFactor gd.Float `gd:"branch_factor" default:"2.0"`
+	InitalBranchLength  gd.Float `gd:"initial_branch_length" default:"0.85" range:"0.1,1,or_greater"`
+	LengthFalloffFactor gd.Float `gd:"length_falloff_factor" default:"0.85" range:"0.5,1,or_greater,or_less"`
+	LengthFalloffPower  gd.Float `gd:"length_falloff_power" default:"1" range:"0.1,1.5,or_greater"`
+	ClumpMin            gd.Float `gd:"clump_min" default:"0.8" range:"0,1"`
+	ClumpMax            gd.Float `gd:"clump_max" default:"0.5" range:"0,1"`
+	BranchFactor        gd.Float `gd:"branch_factor" default:"2" range:"2,4,or_greater"`
+	DropAmount          gd.Float `gd:"drop_amount" range:"-1,1"`
+	GrowAmount          gd.Float `gd:"grow_amount" range:"-0.5,1"`
+	SweepAmount         gd.Float `gd:"sweep_amount" range:"-1,1"`
 
-	RadiusFalloffRate  gd.Float `gd:"radius_falloff_rate" default:"0.6"`
-	ClimbRate          gd.Float `gd:"climb_rate" default:"1.5"`
-	TrunkKink          gd.Float `gd:"trunk_kink"`
-	MaxRadius          gd.Float `gd:"max_radius" default:"0.25"`
-	TreeSteps          gd.Float `gd:"tree_steps" default:"2"`
-	TaperRate          gd.Float `gd:"taper_rate" default:"0.95"`
-	TwistRate          gd.Float `gd:"twist_rate" default:"13"`
-	Levels             gd.Float `gd:"levels" default:"3"`
-	SweepAmount        gd.Float `gd:"sweep_amount"`
-	InitalBranchLength gd.Float `gd:"initial_branch_length" default:"0.85"`
-	TrunkLength        gd.Float `gd:"trunk_length" default:"2.5"`
-	DropAmount         gd.Float `gd:"drop_amount"`
-	GrowAmount         gd.Float `gd:"grow_amount"`
-	VMultiplier        gd.Float `gd:"v_multiplier" default:"0.2"`
-	TwigScale          gd.Float `gd:"twig_scale" default:"2"`
+	// Trunk
+
+	MaxRadius         gd.Float `gd:"max_radius" default:"0.25" range:"0.05,1,or_greater"`
+	ClimbRate         gd.Float `gd:"climb_rate" default:"1.5" range:"0.05,1,or_greater"`
+	TrunkKink         gd.Float `gd:"trunk_kink" range:"0,0.5,or_greater"`
+	TreeSteps         gd.Float `gd:"tree_steps" range:"0,35,or_greater"`
+	TaperRate         gd.Float `gd:"taper_rate" default:"0.95" range:"0.7,1,or_greater"`
+	RadiusFalloffRate gd.Float `gd:"radius_falloff_rate" default:"0.6" range:"0.5,0.8"`
+	TwistRate         gd.Float `gd:"twist_rate" default:"13" range:"0,10"`
+	TrunkLength       gd.Float `gd:"trunk_length" default:"2.5" range:"0.1,5"`
+
+	// Material
+
+	VMultiplier gd.Float `gd:"v_multiplier" default:"0.2"`
+
+	// Internal
 
 	segments gd.Int `gd:"segments" default:"6"`
 
