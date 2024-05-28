@@ -69,8 +69,8 @@ type Tree struct {
 	TrunkLength       gd.Float `gd:"trunk_length" default:"2.5" range:"0.1,5"`
 
 	// Material
-
-	VMultiplier gd.Float `gd:"v_multiplier" default:"0.2"`
+	TrunkMaterial gd.Material `gd:"trunk_material"`
+	VMultiplier   gd.Float    `gd:"v_multiplier" default:"0.2"`
 
 	// Internal
 
@@ -129,30 +129,69 @@ func (tree *Tree) recalculate(godot gd.Context) {
 	tree.calcNormals()
 
 	ArrayMesh := tree.AsArrayMesh()
+
+	var restoreMats = false
+	var mat1 gd.Material
+	var mat2 gd.Material
+	if ArrayMesh.AsMesh().GetSurfaceCount() > 0 {
+		restoreMats = true
+		mat1 = ArrayMesh.AsMesh().SurfaceGetMaterial(godot, 0)
+		mat2 = ArrayMesh.AsMesh().SurfaceGetMaterial(godot, 1)
+	}
+
 	ArrayMesh.ClearSurfaces()
+	{
+		var vertices = godot.PackedVector3Array()
+		for _, vertex := range tree.mesh.verts {
+			vertices.Append(vertex)
+		}
+		var indicies = godot.PackedInt32Array()
+		for _, index := range tree.mesh.faces {
+			indicies.Append(int64(index[2]))
+			indicies.Append(int64(index[1]))
+			indicies.Append(int64(index[0]))
+		}
+		var normals = godot.PackedVector3Array()
+		for _, normal := range tree.mesh.normals {
+			normals.Append(normal)
+		}
 
-	var vertices = godot.PackedVector3Array()
-	for _, vertex := range tree.mesh.verts {
-		vertices.Append(vertex)
-	}
-	var indicies = godot.PackedInt32Array()
-	for _, index := range tree.mesh.faces {
-		indicies.Append(int64(index[2]))
-		indicies.Append(int64(index[1]))
-		indicies.Append(int64(index[0]))
-	}
-	var normals = godot.PackedVector3Array()
-	for _, normal := range tree.mesh.normals {
-		normals.Append(normal)
-	}
+		var arrays = godot.Array()
+		arrays.Resize(int64(gd.MeshArrayMax))
+		arrays.SetIndex(int64(gd.MeshArrayVertex), godot.Variant(vertices))
+		arrays.SetIndex(int64(gd.MeshArrayIndex), godot.Variant(indicies))
+		arrays.SetIndex(int64(gd.MeshArrayNormal), godot.Variant(normals))
 
-	var arrays = godot.Array()
-	arrays.Resize(int64(gd.MeshArrayMax))
-	arrays.SetIndex(int64(gd.MeshArrayVertex), godot.Variant(vertices))
-	arrays.SetIndex(int64(gd.MeshArrayIndex), godot.Variant(indicies))
-	arrays.SetIndex(int64(gd.MeshArrayNormal), godot.Variant(normals))
+		ArrayMesh.AddSurfaceFromArrays(gd.MeshPrimitiveTriangles, arrays, gd.NewArrayOf[gd.Array](godot), godot.Dictionary(), gd.MeshArrayFormatVertex)
+	}
+	{
+		var vertices = godot.PackedVector3Array()
+		for _, vertex := range tree.twig.verts {
+			vertices.Append(vertex)
+		}
+		var indicies = godot.PackedInt32Array()
+		for _, index := range tree.twig.faces {
+			indicies.Append(int64(index[2]))
+			indicies.Append(int64(index[1]))
+			indicies.Append(int64(index[0]))
+		}
+		var normals = godot.PackedVector3Array()
+		for _, normal := range tree.twig.normals {
+			normals.Append(normal)
+		}
 
-	ArrayMesh.AddSurfaceFromArrays(gd.MeshPrimitiveTriangles, arrays, gd.NewArrayOf[gd.Array](godot), godot.Dictionary(), gd.MeshArrayFormatVertex)
+		var arrays = godot.Array()
+		arrays.Resize(int64(gd.MeshArrayMax))
+		arrays.SetIndex(int64(gd.MeshArrayVertex), godot.Variant(vertices))
+		arrays.SetIndex(int64(gd.MeshArrayIndex), godot.Variant(indicies))
+		arrays.SetIndex(int64(gd.MeshArrayNormal), godot.Variant(normals))
+
+		ArrayMesh.AddSurfaceFromArrays(gd.MeshPrimitiveTriangles, arrays, gd.NewArrayOf[gd.Array](godot), godot.Dictionary(), gd.MeshArrayFormatVertex)
+	}
+	if restoreMats {
+		ArrayMesh.AsMesh().SurfaceSetMaterial(0, mat1)
+		ArrayMesh.AsMesh().SurfaceSetMaterial(1, mat2)
+	}
 }
 
 func scaleInDirection(vector, direction gd.Vector3, scale float64) gd.Vector3 {
