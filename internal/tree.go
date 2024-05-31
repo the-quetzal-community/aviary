@@ -42,7 +42,7 @@ type Tree struct {
 	gd.Class[Tree, gd.ArrayMesh] `gd:"AviaryTree"`
 
 	Seed      gd.Float `gd:"seed" default:"10" range:"0,1000,or_greater,or_less"`
-	Levels    gd.Float `gd:"levels" default:"3" range:"0.1,7,or_greater"`
+	Levels    gd.Int   `gd:"levels" default:"3" range:"1,7,or_greater"`
 	TwigScale gd.Float `gd:"twig_scale" default:"2" range:"0,1,or_greater"`
 
 	// Branching
@@ -69,8 +69,7 @@ type Tree struct {
 	TrunkLength       gd.Float `gd:"trunk_length" default:"2.5" range:"0.1,5"`
 
 	// Material
-	TrunkMaterial gd.Material `gd:"trunk_material"`
-	VMultiplier   gd.Float    `gd:"v_multiplier" default:"0.2"`
+	VMultiplier gd.Float `gd:"v_multiplier" default:"0.2"`
 
 	// Internal
 
@@ -138,6 +137,9 @@ func (tree *Tree) recalculate(godot gd.Context) {
 		mat1 = ArrayMesh.AsMesh().SurfaceGetMaterial(godot, 0)
 		mat2 = ArrayMesh.AsMesh().SurfaceGetMaterial(godot, 1)
 	}
+
+	ArrayMesh.AsObject().SetBlockSignals(true)
+	defer ArrayMesh.AsObject().SetBlockSignals(false)
 
 	ArrayMesh.ClearSurfaces()
 	{
@@ -674,7 +676,7 @@ func (b *branch) mirrorBranch(vec, norm gd.Vector3, properties *Tree) gd.Vector3
 	return vector3.New(float64(vec[0])-float64(v[0])*s, float64(vec[1])-float64(v[1])*s, float64(vec[2])-float64(v[2])*s)
 }
 
-func (bra *branch) split(level float64, steps float64, properties *Tree, l1, l2 float64) {
+func (bra *branch) split(level gd.Int, steps float64, properties *Tree, l1, l2 float64) {
 	if l1 == 0 {
 		l1 = 1
 	}
@@ -693,7 +695,7 @@ func (bra *branch) split(level float64, steps float64, properties *Tree, l1, l2 
 	var (
 		normal  = vector3.Cross(dir, gd.Vector3{dir[2], dir[0], dir[1]})
 		tangent = vector3.Cross(dir, normal)
-		r       = properties.random(rLevel*10 + l1*5 + l2 + properties.Seed)
+		r       = properties.random(float64(rLevel*10) + l1*5 + l2 + properties.Seed)
 		//r2       = properties.random(rLevel*10 + l1*5 + l2 + 1 + properties.Seed)
 		clumpmax = properties.ClumpMax
 		clumpmin = properties.ClumpMin
@@ -716,9 +718,9 @@ func (bra *branch) split(level float64, steps float64, properties *Tree, l1, l2 
 		var angle = steps / properties.TreeSteps * 2 * math.Pi * properties.TwistRate
 		newdir2 = vector3.Normalize(vector3.New(math.Sin(angle), r, math.Cos(angle)))
 	}
-	var growAmount = level * level / (properties.Levels * properties.Levels) * properties.GrowAmount
-	var dropAmount = rLevel * properties.DropAmount
-	var sweepAmount = rLevel * properties.SweepAmount
+	var growAmount = float64(level*level/(properties.Levels*properties.Levels)) * properties.GrowAmount
+	var dropAmount = float64(rLevel) * properties.DropAmount
+	var sweepAmount = float64(rLevel) * properties.SweepAmount
 	newdir = vector3.Normalize(vector3.Add(newdir, gd.NewVector3(sweepAmount, dropAmount+growAmount, 0)))
 	newdir2 = vector3.Normalize(vector3.Add(newdir2, gd.NewVector3(sweepAmount, dropAmount+growAmount, 0)))
 	var (
