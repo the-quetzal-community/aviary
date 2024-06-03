@@ -13,4 +13,5 @@ func main() {
 		return
 	}
 	gd.Register[internal.Tree](godot)
+	gd.Register[internal.Rock](godot)
 }

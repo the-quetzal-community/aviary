@@ -10,6 +10,8 @@ grow.graphics/xy v0.0.0-20240129001410-305eed4d9a6a h1:8QjAMrsqm8iYsCLKz3dT2/aFh
 grow.graphics/xy v0.0.0-20240129001410-305eed4d9a6a/go.mod h1:JwNaWFtFaeSmvp34kveQhSGN8dNowvLlz55K/c9bs1E=
 grow.graphics/xy v0.0.0-20240525040412-80c8da2fee75 h1:hLR3hH5E5AR1vxIIFyFXCiFBgG9tfUDe1uge1MS9G/g=
 grow.graphics/xy v0.0.0-20240525040412-80c8da2fee75/go.mod h1:JwNaWFtFaeSmvp34kveQhSGN8dNowvLlz55K/c9bs1E=
+grow.graphics/xy v0.0.0-20240603021049-7427233fc3a9 h1:7DTN0CCvKzohFhaeb1vNC1XackvyL4u1UwQDBzQixJo=
+grow.graphics/xy v0.0.0-20240603021049-7427233fc3a9/go.mod h1:JwNaWFtFaeSmvp34kveQhSGN8dNowvLlz55K/c9bs1E=
 runtime.link v0.0.0-20240519001043-33982d8d5497 h1:zxC0NC3nM32uR9yx25YB66VgaFLVBcpeIn0yEIdT+k4=
 runtime.link v0.0.0-20240519001043-33982d8d5497/go.mod h1:/uYnCQF/lqkRLLSGKNtaDAJuc0sEKOH5ftxy7QKtODg=
 runtime.link v0.0.0-20240525075419-2bae5ef92c8f h1:j6o3zA2olSwmyiQWMBImRyPTAx2JvfrZWb5UjwHT8dg=
