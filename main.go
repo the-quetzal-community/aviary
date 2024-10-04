@@ -14,6 +14,7 @@ func main() {
 	}
 	gd.Register[internal.Tree](godot)
 	gd.Register[internal.Rock](godot)
-	gd.Register[internal.Seed](godot)
-	gd.Register[internal.Tile](godot)
+	gd.Register[internal.Area](godot)
+	gd.Register[internal.Root](godot)
+	gd.Register[internal.Main](godot)
 }

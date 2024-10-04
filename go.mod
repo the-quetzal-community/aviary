@@ -8,5 +8,5 @@ require (
 	golang.org/x/text v0.15.0 // indirect
 	grow.graphics/uc v0.0.0-20240128001120-57fde712a2f4 // indirect
 	grow.graphics/xy v0.0.0-20240603021049-7427233fc3a9 // indirect
-	runtime.link v0.0.0-20240525075419-2bae5ef92c8f // indirect
+	runtime.link v0.0.0-20240926010634-993899759301 // indirect
 )

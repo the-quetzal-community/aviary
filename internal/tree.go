@@ -264,7 +264,7 @@ func (tree Tree) Leaves() Leaves {
 	return Leaves(tree)
 }
 
-func (tree Tree) Indicies() []uint32 {
+func (tree Tree) indicies() []uint32 {
 	var retArray = make([]uint32, 0, len(tree.mesh.faces)*3)
 	for _, face := range tree.mesh.faces {
 		for _, index := range face {
@@ -274,7 +274,7 @@ func (tree Tree) Indicies() []uint32 {
 	return retArray
 }
 
-func (tree Tree) UVs() []float32 {
+func (tree Tree) uvs() []float32 {
 	var retArray = make([]float32, 0, len(tree.mesh.uvs)*3)
 	for _, uv := range tree.mesh.uvs {
 		for _, v := range uv {
@@ -284,7 +284,7 @@ func (tree Tree) UVs() []float32 {
 	return retArray
 }
 
-func (tree Tree) Normals() []float32 {
+func (tree Tree) normals() []float32 {
 	var retArray = make([]float32, 0, len(tree.mesh.normals)*3)
 	for _, vector := range tree.mesh.normals {
 		for _, v := range vector {
