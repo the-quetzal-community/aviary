@@ -1,3 +1,7 @@
 /go.work.sum
 /go.work
-/graphics
+/graphics/.godot
+/graphics/*.so
+/graphics/*.tscn
+/graphics/project.godot
+/graphics/library.gdextension

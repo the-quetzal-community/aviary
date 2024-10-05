@@ -14,7 +14,7 @@ type API struct {
 	api.Specification `api:"Vulture"
 		provides access to collaborative and creative community spaces.
 	`
-	Vision func(context.Context) (chan<- LookAt, <-chan Vision, error) `http:"GET /vulture/v1/vision"
+	Vision func(context.Context) (<-chan Vision, error) `http:"GET /vulture/v1/vision"
 		returns channels used to focus on and view the world.`
 	Upload func(context.Context, Upload, fs.File) error `http:"PUT /vulture/v1/upload/{design=%v}"
 		a file to the world.`
@@ -22,12 +22,17 @@ type API struct {
 		a file from the world.`
 	Target func(context.Context, Target) error `http:"PUT /vulture/v1/target"
 		selects a target for the client to focus on.`
-	Uplift func(context.Context, Uplift) ([16 * 16]Vertex, error) `http:"POST /vulture/v1/liftup"
+	Uplift func(context.Context, Uplift) (Terrain, error) `http:"POST /vulture/v1/liftup"
 		can be used to modify the surface of the world, and/or to retrieve surface information.`
 	Render func(context.Context, Render) error `http:"POST /vulture/v1/render"
 		is used to add a new view to the world.`
 	Escort func(context.Context, Escort) error `http:"POST /vulture/v1/escort"
 		can be used to animate a view.`
+}
+
+type Terrain struct {
+	Area     Area            `json:"area"`
+	Vertices [16 * 16]Vertex `json:"vertices"`
 }
 
 // Upload identifier.
@@ -78,10 +83,11 @@ type Name uint16
 
 // Uplift to apply to the surface of the world.
 type Uplift struct {
-	Area Area  `json:"area"`
-	Cell Cell  `json:"cell"`
-	Size uint8 `json:"size"`
-	Lift int8  `json:"lift"`
+	Time nix.Nanos `json:"time"`
+	Area Area      `json:"area"`
+	Cell Cell      `json:"cell"`
+	Size uint8     `json:"size"`
+	Lift int8      `json:"lift"`
 }
 
 // Vision represents an update to what the client can see.
