@@ -108,6 +108,8 @@ func (root *Root) Process(dt gd.Float) {
 		mesh := gd.Create(root.KeepAlive, new(gd.MeshInstance3D))
 		plane := gd.Create(tmp, new(gd.PlaneMesh))
 		plane.SetSize(gd.Vector2{16, 16})
+		plane.SetSubdivideDepth(14)
+		plane.SetSubdivideWidth(14)
 		mesh.AsGeometryInstance3D().SetMaterialOverride(root.grass.AsMaterial())
 		mesh.SetMesh(plane.AsMesh())
 		mesh.AsNode3D().SetPosition(gd.Vector3{
