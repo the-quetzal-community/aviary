@@ -19,7 +19,11 @@ type Root struct {
 	FocalPoint struct {
 		gd.Node3D
 
-		Camera gd.Camera3D
+		Lens struct {
+			gd.Node3D
+
+			Camera gd.Camera3D
+		}
 	}
 
 	// ActiveAreas is a container for all of the visible [Area]
@@ -42,8 +46,8 @@ func (root *Root) Ready() {
 	if root.vulture.Uplift == nil {
 		root.vulture = vulture.New()
 	}
-	root.FocalPoint.Camera.AsNode3D().SetPosition(gd.Vector3{0, 1, 3})
-	root.FocalPoint.Camera.AsNode3D().LookAt(gd.Vector3{0, 0, 0}, gd.Vector3{0, 1, 0}, false)
+	root.FocalPoint.Lens.Camera.AsNode3D().SetPosition(gd.Vector3{0, 1, 3})
+	root.FocalPoint.Lens.Camera.AsNode3D().LookAt(gd.Vector3{0, 0, 0}, gd.Vector3{0, 1, 0}, false)
 	root.Light.AsNode3D().SetRotation(gd.Vector3{-math.Pi / 2, 0, 0})
 
 	root.loadedAreas = make(map[vulture.Area]bool)
@@ -57,6 +61,8 @@ func (root *Root) Ready() {
 
 	root.grass = gd.Create(root.KeepAlive, new(gd.StandardMaterial3D))
 	root.grass.AsBaseMaterial3D().SetTexture(gd.BaseMaterial3DTextureAlbedo, texture)
+
+	gd.RenderingServer(root.Temporary).SetDebugGenerateWireframes(true)
 }
 
 func (root *Root) uplift(pos gd.Vector2) {
@@ -136,17 +142,30 @@ func (root *Root) cameraControl(dt gd.Float) {
 	if Input.IsKeyPressed(gd.KeyW) || Input.IsKeyPressed(gd.KeyUp) {
 		root.FocalPoint.AsNode3D().Translate(gd.Vector3{0, 0, -float32(speed * dt)})
 	}
+	if Input.IsKeyPressed(gd.KeyR) {
+		root.FocalPoint.Lens.AsNode3D().Rotate(gd.Vector3{1, 0, 0}, -dt)
+	}
+	if Input.IsKeyPressed(gd.KeyF) {
+		root.FocalPoint.Lens.AsNode3D().Rotate(gd.Vector3{1, 0, 0}, dt)
+	}
 	pos := root.FocalPoint.AsNode3D().GetPosition()
 	root.uplift(gd.Vector2{pos[0], pos[2]})
 }
 
 func (root *Root) UnhandledInput(event gd.InputEvent) {
+	tmp := root.Temporary
 	if event, ok := gd.As[gd.InputEventMouseButton](root.Temporary, event); ok {
 		if event.GetButtonIndex() == gd.MouseButtonWheelUp {
-			root.FocalPoint.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.5})
+			root.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.5})
 		}
 		if event.GetButtonIndex() == gd.MouseButtonWheelDown {
-			root.FocalPoint.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.5})
+			root.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.5})
+		}
+	}
+	if event, ok := gd.As[gd.InputEventKey](root.Temporary, event); ok {
+		if event.AsInputEvent().IsPressed() && event.GetKeycode() == gd.KeyF1 {
+			vp := root.Super().AsNode().GetViewport(tmp)
+			vp.SetDebugDraw(vp.GetDebugDraw() ^ gd.ViewportDebugDrawWireframe)
 		}
 	}
 }
