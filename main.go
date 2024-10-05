@@ -15,6 +15,7 @@ func main() {
 	gd.Register[internal.Tree](godot)
 	gd.Register[internal.Rock](godot)
 	gd.Register[internal.TerrainTile](godot)
+	gd.Register[internal.TerrainShaderPool](godot)
 	gd.Register[internal.World](godot)
 	gd.Register[internal.Main](godot)
 }

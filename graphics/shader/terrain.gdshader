@@ -23,13 +23,14 @@ uniform vec3 uv2_offset;
 // will be on the mouse click, to uplift the terrain
 uniform vec3 uplift;
 uniform float height;
+uniform float radius;
 
 void vertex() {
 	UV = UV * uv1_scale.xy + uv1_offset.xy;
 
 	// uplift the terrain, if within radius
-	if (distance(VERTEX, uplift) < 1.0) {
-        VERTEX.y += height;
+	if (distance(VERTEX, uplift) < radius) {
+        VERTEX.y += height*(1.0 - distance(VERTEX, uplift)/radius);
     }
 }
 

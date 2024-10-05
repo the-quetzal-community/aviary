@@ -41,7 +41,7 @@ type World struct {
 
 	loadedAreas map[vulture.Area]bool
 
-	grass gd.ShaderMaterial
+	shaderPool *TerrainShaderPool
 }
 
 func (world *World) Ready() {
@@ -55,6 +55,8 @@ func (world *World) Ready() {
 	world.loadedAreas = make(map[vulture.Area]bool)
 	world.uplifts = make(chan vulture.Terrain)
 	world.uplift(gd.Vector2{})
+
+	world.shaderPool = gd.Create(world.KeepAlive, new(TerrainShaderPool))
 
 	gd.RenderingServer(world.Temporary).SetDebugGenerateWireframes(true)
 }
@@ -101,6 +103,7 @@ func (world *World) Process(dt gd.Float) {
 	case terrain := <-world.uplifts:
 		area := gd.Create(world.KeepAlive, new(TerrainTile))
 		area.vulture = terrain
+		area.shaders = world.shaderPool
 		//area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("Area %vx%vy", terrain.Area[0], terrain.Area[1])))
 		world.ActiveAreas.AsNode().AddChild(area.Super().AsNode(), false, 0)
 	default:
@@ -141,8 +144,9 @@ func (world *World) cameraControl(dt gd.Float) {
 
 func (world *World) UnhandledInput(event gd.InputEvent) {
 	tmp := world.Temporary
+	Input := gd.Input(tmp)
 	// Tilt the camera up and down with R and F.
-	if event, ok := gd.As[gd.InputEventMouseButton](world.Temporary, event); ok {
+	if event, ok := gd.As[gd.InputEventMouseButton](world.Temporary, event); ok && !Input.IsKeyPressed(gd.KeyShift) {
 		if event.GetButtonIndex() == gd.MouseButtonWheelUp {
 			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.5})
 		}

@@ -12,29 +12,17 @@ type TerrainTile struct {
 
 	Mesh gd.MeshInstance3D
 
-	shader gd.ShaderMaterial
+	shaders *TerrainShaderPool
 
 	uplift    float64
-	uplifting bool
+	radius    float64
+	uplifting float64
 }
 
 func (tile *TerrainTile) Ready() {
 	tmp := tile.Temporary
 
-	shader, ok := gd.Load[gd.Shader](tmp, "res://shader/terrain.gdshader")
-	if !ok {
-		return
-	}
-	grass, ok := gd.Load[gd.Texture2D](tmp, "res://terrain/alpine_grass.png")
-	if !ok {
-		return
-	}
-
-	tile.shader = *gd.Create(tile.KeepAlive, new(gd.ShaderMaterial))
-	tile.shader.SetShader(shader)
-	tile.shader.SetShaderParameter(tmp.StringName("albedo"), tmp.Variant(gd.Color{1, 1, 1, 1}))
-	tile.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{1, 1}))
-	tile.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(grass))
+	tile.radius = 1.0
 
 	plane := gd.Create(tmp, new(gd.PlaneMesh))
 	plane.SetSize(gd.Vector2{16, 16})
@@ -54,7 +42,7 @@ func (tile *TerrainTile) Ready() {
 	owner := tile.Super().AsCollisionObject3D().CreateShapeOwner(tile.AsObject())
 	tile.Super().AsCollisionObject3D().ShapeOwnerAddShape(owner, shape.AsShape3D())
 
-	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.shader.AsMaterial())
+	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.shaders.GetShader().AsMaterial())
 	tile.Mesh.SetMesh(plane.AsMesh())
 	tile.Super().AsNode3D().SetPosition(gd.Vector3{
 		float32(tile.vulture.Area[0])*16 + 8,
@@ -65,21 +53,41 @@ func (tile *TerrainTile) Ready() {
 
 func (tile *TerrainTile) Process(delta gd.Float) {
 	tmp := tile.Temporary
-	if tile.uplifting {
-		tile.uplift += delta
-		tile.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(tile.uplift))
+	if tile.uplifting != 0 {
+		tile.uplift += delta * tile.uplifting
+		tile.shaders.GetShader().SetShaderParameter(tmp.StringName("height"), tmp.Variant(tile.uplift))
 	}
 }
 
 func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos, normal gd.Vector3, shape gd.Int) {
 	tmp := tile.Temporary
-	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok {
+	Input := gd.Input(tmp)
+	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok && Input.IsKeyPressed(gd.KeyShift) {
 		if event.GetButtonIndex() == gd.MouseButtonLeft {
-			tile.uplifting = event.AsInputEvent().IsPressed()
-			if !tile.uplifting {
+			if event.AsInputEvent().IsPressed() {
+				tile.uplifting = 2
+				tile.shaders.GetShader().SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(pos.Round()))
+			} else {
+				tile.uplifting = 0
 				tile.uplift = 0
 			}
-			tile.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(pos))
+		}
+		if event.GetButtonIndex() == gd.MouseButtonRight {
+			if event.AsInputEvent().IsPressed() {
+				tile.uplifting = -2
+				tile.shaders.GetShader().SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(pos.Round()))
+			} else {
+				tile.uplifting = 0
+				tile.uplift = 0
+			}
+		}
+		if event.GetButtonIndex() == gd.MouseButtonWheelUp {
+			tile.radius += 1
+			tile.shaders.GetShader().SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tile.radius))
+		}
+		if event.GetButtonIndex() == gd.MouseButtonWheelDown {
+			tile.radius -= 1
+			tile.shaders.GetShader().SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tile.radius))
 		}
 	}
 }
