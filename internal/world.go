@@ -104,7 +104,7 @@ func (world *World) Process(dt gd.Float) {
 		area := gd.Create(world.KeepAlive, new(TerrainTile))
 		area.vulture = terrain
 		area.shaders = world.shaderPool
-		//area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("Area %vx%vy", terrain.Area[0], terrain.Area[1])))
+		//area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("%dx%dy", terrain.Area[0], terrain.Area[1])))
 		world.ActiveAreas.AsNode().AddChild(area.Super().AsNode(), false, 0)
 	default:
 	}
