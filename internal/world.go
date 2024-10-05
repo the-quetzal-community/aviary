@@ -41,7 +41,7 @@ type World struct {
 
 	loadedAreas map[vulture.Area]bool
 
-	grass *gd.StandardMaterial3D
+	grass gd.ShaderMaterial
 }
 
 func (world *World) Ready() {
@@ -55,14 +55,6 @@ func (world *World) Ready() {
 	world.loadedAreas = make(map[vulture.Area]bool)
 	world.uplifts = make(chan vulture.Terrain)
 	world.uplift(gd.Vector2{})
-
-	texture, ok := gd.Load[gd.Texture2D](world.Temporary, "res://terrain/alpine_grass.png")
-	if !ok {
-		return
-	}
-
-	world.grass = gd.Create(world.KeepAlive, new(gd.StandardMaterial3D))
-	world.grass.AsBaseMaterial3D().SetTexture(gd.BaseMaterial3DTextureAlbedo, texture)
 
 	gd.RenderingServer(world.Temporary).SetDebugGenerateWireframes(true)
 }
@@ -104,22 +96,13 @@ func (world *World) uplift(pos gd.Vector2) {
 }
 
 func (world *World) Process(dt gd.Float) {
-	tmp := world.Temporary
+	//tmp := world.Temporary
 	select {
 	case terrain := <-world.uplifts:
-		mesh := gd.Create(world.KeepAlive, new(gd.MeshInstance3D))
-		plane := gd.Create(tmp, new(gd.PlaneMesh))
-		plane.SetSize(gd.Vector2{16, 16})
-		plane.SetSubdivideDepth(14)
-		plane.SetSubdivideWidth(14)
-		mesh.AsGeometryInstance3D().SetMaterialOverride(world.grass.AsMaterial())
-		mesh.SetMesh(plane.AsMesh())
-		mesh.AsNode3D().SetPosition(gd.Vector3{
-			float32(terrain.Area[0])*16 + 8,
-			0,
-			float32(terrain.Area[1])*16 + 8,
-		})
-		world.ActiveAreas.AsNode().AddChild(mesh.AsNode(), false, 0)
+		area := gd.Create(world.KeepAlive, new(TerrainTile))
+		area.vulture = terrain
+		//area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("Area %vx%vy", terrain.Area[0], terrain.Area[1])))
+		world.ActiveAreas.AsNode().AddChild(area.Super().AsNode(), false, 0)
 	default:
 	}
 	world.cameraControl(dt)
