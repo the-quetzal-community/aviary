@@ -11,7 +11,7 @@ type Main struct {
 }
 
 func (m *Main) OnCreate() {
-	root := gd.Create(m.KeepAlive, new(Root))
+	root := gd.Create(m.KeepAlive, new(World))
 	root.vulture = vulture.New()
 	m.Super().GetRoot(m.Temporary).AsNode().AddChild(root.Super().AsNode(), false, 0)
 }
