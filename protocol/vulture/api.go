@@ -23,7 +23,7 @@ type API struct {
 		a file from the world.`
 	Target func(context.Context, Target) error `http:"PUT /vulture/v0/target"
 		selects a target for the client to focus on.`
-	Uplift func(context.Context, Uplift) (Territory, error) `http:"POST /vulture/v0/liftup"
+	Uplift func(context.Context, Uplift) ([]Territory, error) `http:"POST /vulture/v0/liftup"
 		can be used to modify the surface of the world, and/or to control vision.`
 	Render func(context.Context, Render) error `http:"POST /vulture/v0/render"
 		is used to add a new view to the world.`

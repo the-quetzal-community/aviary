@@ -22,7 +22,7 @@ type TerrainRenderer struct {
 	ActiveTerritory gd.Node // the territory that is currently being rendered.
 	CachedTerritory gd.Node // the territory that is out of focus.
 	loadedTerritory map[vulture.Area]bool
-	updateTerritory chan vulture.Territory
+	updateTerritory chan []vulture.Territory
 
 	//
 	// Terrain Brush parameters are used to represent modifications
@@ -49,7 +49,7 @@ func (tr *TerrainRenderer) AsNode() gd.Node { return tr.Super().AsNode() }
 
 func (tr *TerrainRenderer) OnCreate() {
 	tr.loadedTerritory = make(map[vulture.Area]bool)
-	tr.updateTerritory = make(chan vulture.Territory)
+	tr.updateTerritory = make(chan []vulture.Territory)
 	tr.brushEvents = make(chan terrainBrushEvent, 10)
 }
 
@@ -95,39 +95,43 @@ func (tr *TerrainRenderer) SetFocalPoint3D(world gd.Vector3) {
 func (tr *TerrainRenderer) downloadArea(area vulture.Area) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	terrain, err := tr.Vulture.api.Uplift(ctx, vulture.Uplift{
+	updates, err := tr.Vulture.api.Uplift(ctx, vulture.Uplift{
 		Area: area,
 	})
 	if err != nil {
 		fmt.Println(err) // TODO gd should have a way to report errors to the engine.
 		return
 	}
-	tr.updateTerritory <- terrain
+	tr.updateTerritory <- updates
 }
 
 func (tr *TerrainRenderer) Process(dt gd.Float) {
 	tmp := tr.Temporary
 	select {
-	case territory := <-tr.updateTerritory:
-		name := fmt.Sprintf("%dx%dy", territory.Area[0], territory.Area[1])
-		existing := tr.ActiveTerritory.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
-		if existing == (gd.Node{}) {
-			area := gd.Create(tr.KeepAlive, new(TerrainTile))
-			area.territory = territory
-			area.brushEvents = tr.brushEvents
-			area.Shader = tr.shader
-			area.Super().AsNode().SetName(tmp.String(name))
-			tr.ActiveTerritory.AsNode().AddChild(area.Super().AsNode(), false, 0)
-		}
-		tile, ok := gd.As[*TerrainTile](tmp, existing)
-		if ok {
-			tile.territory = territory
-			tile.Reload()
+	case updates := <-tr.updateTerritory:
+		for _, territory := range updates {
+			name := fmt.Sprintf("%dx%dy", territory.Area[0], territory.Area[1])
+			existing := tr.ActiveTerritory.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
+			if existing == (gd.Node{}) {
+				area := gd.Create(tr.KeepAlive, new(TerrainTile))
+				area.territory = territory
+				area.brushEvents = tr.brushEvents
+				area.Shader = tr.shader
+				area.Super().AsNode().SetName(tmp.String(name))
+				tr.ActiveTerritory.AsNode().AddChild(area.Super().AsNode(), false, 0)
+			}
+			tile, ok := gd.As[*TerrainTile](tmp, existing)
+			if ok {
+				tile.territory = territory
+				tile.Reload()
+			}
 		}
 	case event := <-tr.brushEvents:
 		tr.BrushTarget = event.BrushTarget
 		tr.BrushDeltaV = event.BrushDeltaV
-		tr.BrushActive = true
+		if event.BrushDeltaV != 0 {
+			tr.BrushActive = true
+		}
 		tr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget))
 	default:
 	}
@@ -155,6 +159,15 @@ func (tr *TerrainRenderer) Input(event gd.InputEvent) {
 			tr.uploadEdits()
 		}
 	}
+	if event, ok := gd.As[gd.InputEventKey](tmp, event); ok {
+		if event.GetKeycode() == gd.KeyShift && event.AsInputEvent().IsPressed() {
+			tr.shader.SetShaderParameter(tmp.StringName("brush_active"), tmp.Variant(true))
+		}
+		if event.GetKeycode() == gd.KeyShift && event.AsInputEvent().IsReleased() {
+			tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
+			tr.shader.SetShaderParameter(tmp.StringName("brush_active"), tmp.Variant(false))
+		}
+	}
 }
 
 // submit uplift via Vulture API, so that it is persisted.
@@ -164,8 +177,6 @@ func (tr *TerrainRenderer) uploadEdits() {
 	defer cancel()
 	area := tr.Vulture.WorldSpaceToVultureSpace(tr.BrushTarget)
 	cell := tr.Vulture.WorldSpaceToVultureCell(tr.BrushTarget)
-	fmt.Println(tr.BrushTarget)
-	fmt.Println(area, cell)
 	uplift := vulture.Uplift{
 		Area: vulture.Area{int16(area[0]), int16(area[1])},
 		Cell: vulture.Cell(cell[1]*16 + cell[0]),
@@ -178,11 +189,11 @@ func (tr *TerrainRenderer) uploadEdits() {
 	go func() {
 		tmp := gd.NewLifetime(tr.Temporary)
 		defer tmp.End()
-		terrain, err := tr.Vulture.api.Uplift(ctx, uplift)
+		updates, err := tr.Vulture.api.Uplift(ctx, uplift)
 		if err != nil {
 			tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
 			return
 		}
-		tr.updateTerritory <- terrain
+		tr.updateTerritory <- updates
 	}()
 }

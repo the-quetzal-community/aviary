@@ -98,5 +98,10 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 				}
 			}
 		}
+	} else {
+		pos = pos.Round()
+		tile.brushEvents <- terrainBrushEvent{
+			BrushTarget: pos,
+		}
 	}
 }

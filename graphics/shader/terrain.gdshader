@@ -24,6 +24,9 @@ uniform vec3 uv2_offset;
 uniform vec3 uplift;
 uniform float height;
 uniform float radius;
+uniform bool brush_active;
+
+varying vec3 world;
 
 void vertex() {
 	UV = UV * uv1_scale.xy + uv1_offset.xy;
@@ -34,13 +37,23 @@ void vertex() {
 	if (dx*dx+dy*dy < radius*radius) {
         VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
     }
+    world = VERTEX;
 }
 
 void fragment() {
 	vec2 base_uv = UV;
 
 	vec4 albedo_tex = texture(texture_albedo, base_uv);
-	ALBEDO = albedo.rgb * albedo_tex.rgb;
+
+	float highlight = 1.0;
+	float dx = (world.x - uplift.x);
+    float dy = (world.z - uplift.z);
+	// uplift the terrain, if within radius
+	if (brush_active && dx*dx+dy*dy < radius*radius) {
+        highlight = 2.0;
+	}
+
+	ALBEDO = albedo.rgb * albedo_tex.rgb * highlight;
 
 	float metallic_tex = dot(texture(texture_metallic, base_uv), metallic_texture_channel);
 	METALLIC = metallic_tex * metallic;
