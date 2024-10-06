@@ -28,9 +28,11 @@ uniform float radius;
 void vertex() {
 	UV = UV * uv1_scale.xy + uv1_offset.xy;
 
+    float dx = (VERTEX.x - uplift.x);
+    float dy = (VERTEX.z - uplift.z);
 	// uplift the terrain, if within radius
-	if (distance(VERTEX, uplift) < radius) {
-        VERTEX.y += height*(1.0 - distance(VERTEX, uplift)/radius);
+	if (dx*dx+dy*dy < radius*radius) {
+        VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
     }
 }
 

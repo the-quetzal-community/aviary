@@ -4,6 +4,7 @@ package vulture
 import (
 	"context"
 	"io/fs"
+	"unsafe"
 
 	"runtime.link/api"
 	"runtime.link/nix"
@@ -103,6 +104,18 @@ type Vision struct {
 // Hexagon represents the height and terrain type for
 // a hexagon in the world-space.
 type Vertex uint64
+
+const vertexHeight = 0x000000000000FFFF
+
+func (v Vertex) Height() int16 {
+	bits := uint16(v & vertexHeight)
+	return *(*int16)(unsafe.Pointer(&bits))
+}
+
+func (v *Vertex) SetHeight(height int16) {
+	bits := *(*uint16)(unsafe.Pointer(&height))
+	*v = (*v &^ vertexHeight) | Vertex(bits)
+}
 
 // Direction represents an angle mapped from 0 to 256.
 type Direction uint8

@@ -98,13 +98,14 @@ func (world *World) uplift(pos gd.Vector2) {
 }
 
 func (world *World) Process(dt gd.Float) {
-	//tmp := world.Temporary
+	tmp := world.Temporary
 	select {
 	case terrain := <-world.uplifts:
 		area := gd.Create(world.KeepAlive, new(TerrainTile))
-		area.vulture = terrain
+		area.terrain = terrain
 		area.shaders = world.shaderPool
-		//area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("%dx%dy", terrain.Area[0], terrain.Area[1])))
+		area.vulture = world.vulture
+		area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("%dx%dy", terrain.Area[0], terrain.Area[1])))
 		world.ActiveAreas.AsNode().AddChild(area.Super().AsNode(), false, 0)
 	default:
 	}

@@ -28,7 +28,7 @@ func (pool *TerrainShaderPool) OnCreate() {
 	pool.shader.SetShaderParameter(tmp.StringName("albedo"), tmp.Variant(gd.Color{1, 1, 1, 1}))
 	pool.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{1, 1}))
 	pool.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(grass))
-	pool.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(1.0))
+	pool.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(2.0))
 }
 
 func (pool *TerrainShaderPool) GetShader() gd.ShaderMaterial { return pool.shader }
