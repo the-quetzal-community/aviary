@@ -1,9 +1,6 @@
 package internal
 
 import (
-	"context"
-	"time"
-
 	"grow.graphics/gd"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
@@ -11,30 +8,17 @@ import (
 type TerrainTile struct {
 	gd.Class[TerrainTile, gd.StaticBody3D] `gd:"AviaryTerrainTile"`
 
-	vulture vulture.API
-	terrain vulture.Territory
+	territory   vulture.Territory
+	brushEvents chan<- terrainBrushEvent
 
-	Mesh gd.MeshInstance3D
-
-	shaders *TerrainShaderPool
-	reloads chan vulture.Territory
-
-	target    gd.Vector2
-	uplift    float64
-	radius    float64
-	uplifting float64
+	Mesh   gd.MeshInstance3D
+	Shader gd.ShaderMaterial
 }
 
-func (tile *TerrainTile) Ready() {
-	tile.reloads = make(chan vulture.Territory, 1)
-	tile.radius = 2.0
-	tile.reloads <- tile.terrain
-}
+func (tile *TerrainTile) Ready() { tile.Reload() }
 
-func (tile *TerrainTile) onReload(terrain vulture.Territory) {
+func (tile *TerrainTile) Reload() {
 	tmp := tile.Temporary
-
-	tile.terrain = terrain
 
 	var vertices = tmp.PackedVector3Array()
 	var indicies = tmp.PackedInt32Array()
@@ -42,7 +26,7 @@ func (tile *TerrainTile) onReload(terrain vulture.Territory) {
 	var uvs = tmp.PackedVector2Array()
 
 	heights := tmp.PackedFloat32Array()
-	for i, vertex := range terrain.Vertices {
+	for i, vertex := range tile.territory.Vertices {
 		heights.PushBack(float64(vertex.Height()) / 16)
 		// calculate the position of the vertex in mesh-space
 		x := float32(i%16 - 8)
@@ -84,27 +68,13 @@ func (tile *TerrainTile) onReload(terrain vulture.Territory) {
 	owner := tile.Super().AsCollisionObject3D().CreateShapeOwner(tile.AsObject())
 	tile.Super().AsCollisionObject3D().ShapeOwnerAddShape(owner, shape.AsShape3D())
 
-	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.shaders.GetShader().AsMaterial())
+	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.Shader.AsMaterial())
 	tile.Mesh.SetMesh(mesh.AsMesh())
 	tile.Super().AsNode3D().SetPosition(gd.Vector3{
-		float32(tile.terrain.Area[0])*15 + 8,
+		float32(tile.territory.Area[0])*15 + 8,
 		0,
-		float32(tile.terrain.Area[1])*15 + 8,
+		float32(tile.territory.Area[1])*15 + 8,
 	})
-	tile.shaders.GetShader().SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
-}
-
-func (tile *TerrainTile) Process(delta gd.Float) {
-	tmp := tile.Temporary
-	if tile.uplifting != 0 {
-		tile.uplift += delta * tile.uplifting
-		tile.shaders.GetShader().SetShaderParameter(tmp.StringName("height"), tmp.Variant(tile.uplift))
-	}
-	select {
-	case terrain := <-tile.reloads:
-		tile.onReload(terrain)
-	default:
-	}
 }
 
 func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos, normal gd.Vector3, shape gd.Int) {
@@ -114,53 +84,19 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 		pos = pos.Round()
 		if event.GetButtonIndex() == gd.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
-				tile.uplifting = 2
-				tile.shaders.GetShader().SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(pos))
-				tile.target = gd.Vector2{pos[0], pos[2]}
-			} else {
-				tile.submit()
+				tile.brushEvents <- terrainBrushEvent{
+					BrushTarget: pos,
+					BrushDeltaV: 2,
+				}
 			}
 		}
 		if event.GetButtonIndex() == gd.MouseButtonRight {
 			if event.AsInputEvent().IsPressed() {
-				tile.uplifting = -2
-				tile.shaders.GetShader().SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(pos))
-				tile.target = gd.Vector2{pos[0], pos[2]}
-			} else {
-				tile.submit()
+				tile.brushEvents <- terrainBrushEvent{
+					BrushTarget: pos,
+					BrushDeltaV: -2,
+				}
 			}
 		}
-		if event.GetButtonIndex() == gd.MouseButtonWheelUp {
-			tile.radius += 1
-			tile.shaders.GetShader().SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tile.radius))
-		}
-		if event.GetButtonIndex() == gd.MouseButtonWheelDown {
-			tile.radius -= 1
-			tile.shaders.GetShader().SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tile.radius))
-		}
 	}
-}
-
-// submit uplift via Vulture API, so that it is persisted.
-func (tile *TerrainTile) submit() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	uplift := vulture.Uplift{
-		Area: tile.terrain.Area,
-		Cell: vulture.Cell((tile.target[1])*16 + tile.target[0]),
-		Size: uint8(tile.radius),
-		Lift: int8(tile.uplift * 32),
-	}
-	tile.uplifting = 0
-	tile.uplift = 0
-	go func() {
-		tmp := gd.NewLifetime(tile.Temporary)
-		defer tmp.End()
-		terrain, err := tile.vulture.Uplift(ctx, uplift)
-		if err != nil {
-			tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
-			return
-		}
-		tile.reloads <- terrain
-	}()
 }

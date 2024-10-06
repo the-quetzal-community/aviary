@@ -1,14 +1,9 @@
 package internal
 
 import (
-	"context"
-	"fmt"
 	"math"
-	"time"
 
 	"grow.graphics/gd"
-
-	"the.quetzal.community/aviary/protocol/vulture"
 )
 
 // World represents a creative space accessible via Vulture.
@@ -28,91 +23,23 @@ type World struct {
 		}
 	}
 
-	// ActiveAreas is a container for all of the visible [Area]
-	// nodes in the scene, Aviary will page areas in and
-	// out depending on whether they are in focus of the
-	// camera.
-	ActiveAreas gd.Node3D // []Area
-	CachedAreas gd.Node3D // []Area
-
-	vulture vulture.API
-	updates <-chan vulture.Vision
-	uplifts chan vulture.Territory
-
-	loadedAreas map[vulture.Area]bool
-
-	shaderPool *TerrainShaderPool
+	TerrainRenderer *TerrainRenderer
+	Vulture         *Vulture
 }
 
 func (world *World) Ready() {
-	if world.vulture.Uplift == nil {
-		world.vulture = vulture.New()
+	if world.Vulture == nil {
+		world.Vulture = gd.Create(world.KeepAlive, new(Vulture))
 	}
+	world.TerrainRenderer.Vulture = world.Vulture
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(gd.Vector3{0, 1, 3})
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(gd.Vector3{0, 0, 0}, gd.Vector3{0, 1, 0}, false)
 	world.Light.AsNode3D().SetRotation(gd.Vector3{-math.Pi / 2, 0, 0})
-
-	world.loadedAreas = make(map[vulture.Area]bool)
-	world.uplifts = make(chan vulture.Territory)
-	world.uplift(gd.Vector2{})
-
-	world.shaderPool = gd.Create(world.KeepAlive, new(TerrainShaderPool))
-
+	world.TerrainRenderer.SetFocalPoint3D(gd.Vector3{})
 	gd.RenderingServer(world.Temporary).SetDebugGenerateWireframes(true)
 }
 
-func (world *World) uplift(pos gd.Vector2) {
-	// transform to vulture area coordinates in multiples of 16
-	if pos[0] < 0 {
-		pos[0] -= 16
-	}
-	if pos[1] < 0 {
-		pos[1] -= 16
-	}
-	v2i := pos.Divf(16).Vector2i()
-	// we need to load all 9 neighboring areas
-	for x := int16(-1); x <= 1; x++ {
-		for y := int16(-1); y <= 1; y++ {
-			area := vulture.Area{int16(v2i.X()) + x, int16(v2i.Y()) + y}
-			if world.loadedAreas[area] {
-				continue
-			}
-			world.loadedAreas[area] = true
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				terrain, err := world.vulture.Uplift(ctx, vulture.Uplift{
-					Area: area,
-					Cell: 0,
-					Size: 0,
-					Lift: 0,
-				})
-				if err != nil {
-					fmt.Println(err)
-					return
-				}
-				world.uplifts <- terrain
-			}()
-		}
-	}
-}
-
 func (world *World) Process(dt gd.Float) {
-	tmp := world.Temporary
-	select {
-	case terrain := <-world.uplifts:
-		area := gd.Create(world.KeepAlive, new(TerrainTile))
-		area.terrain = terrain
-		area.shaders = world.shaderPool
-		area.vulture = world.vulture
-		area.Super().AsNode().SetName(tmp.String(fmt.Sprintf("%dx%dy", terrain.Area[0], terrain.Area[1])))
-		world.ActiveAreas.AsNode().AddChild(area.Super().AsNode(), false, 0)
-	default:
-	}
-	world.cameraControl(dt)
-}
-
-func (world *World) cameraControl(dt gd.Float) {
 	Input := gd.Input(world.Temporary)
 	const speed = 16
 	if Input.IsKeyPressed(gd.KeyQ) {
@@ -139,8 +66,7 @@ func (world *World) cameraControl(dt gd.Float) {
 	if Input.IsKeyPressed(gd.KeyF) {
 		world.FocalPoint.Lens.AsNode3D().Rotate(gd.Vector3{1, 0, 0}, dt)
 	}
-	pos := world.FocalPoint.AsNode3D().GetPosition()
-	world.uplift(gd.Vector2{pos[0], pos[2]})
+	world.TerrainRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().GetPosition())
 }
 
 func (world *World) UnhandledInput(event gd.InputEvent) {
