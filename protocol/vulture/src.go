@@ -8,7 +8,7 @@ import (
 // New returns a reference in-memory implementation of the Vulture API.
 func New() API {
 	var I refImpl
-	I.chunks = make(map[Area]Terrain)
+	I.chunks = make(map[Area]Territory)
 	return API{
 		Vision: I.vision,
 		Uplift: I.uplift,
@@ -18,7 +18,7 @@ func New() API {
 type refImpl struct {
 	mutex   sync.Mutex
 	clients []refClient
-	chunks  map[Area]Terrain
+	chunks  map[Area]Territory
 }
 
 type refClient struct {
@@ -31,7 +31,7 @@ func (I *refImpl) vision(ctx context.Context) (<-chan Vision, error) {
 	return vision, nil
 }
 
-func (I *refImpl) uplift(ctx context.Context, uplift Uplift) (Terrain, error) {
+func (I *refImpl) uplift(ctx context.Context, uplift Uplift) (Territory, error) {
 	I.mutex.Lock()
 	defer I.mutex.Unlock()
 

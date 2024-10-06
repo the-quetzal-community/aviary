@@ -15,23 +15,23 @@ type API struct {
 	api.Specification `api:"Vulture"
 		provides access to collaborative and creative community spaces.
 	`
-	Vision func(context.Context) (<-chan Vision, error) `http:"GET /vulture/v1/vision"
+	Vision func(context.Context) (<-chan Vision, error) `http:"GET /vulture/v0/vision"
 		returns channels used to focus on and view the world.`
-	Upload func(context.Context, Upload, fs.File) error `http:"PUT /vulture/v1/upload/{design=%v}"
+	Upload func(context.Context, Upload, fs.File) error `http:"PUT /vulture/v0/upload/{design=%v}"
 		a file to the world.`
-	Lookup func(context.Context, Upload) (fs.File, error) `http:"GET /vulture/v1/upload/{design=%v}"
+	Lookup func(context.Context, Upload) (fs.File, error) `http:"GET /vulture/v0/upload/{design=%v}"
 		a file from the world.`
-	Target func(context.Context, Target) error `http:"PUT /vulture/v1/target"
+	Target func(context.Context, Target) error `http:"PUT /vulture/v0/target"
 		selects a target for the client to focus on.`
-	Uplift func(context.Context, Uplift) (Terrain, error) `http:"POST /vulture/v1/liftup"
+	Uplift func(context.Context, Uplift) (Territory, error) `http:"POST /vulture/v0/liftup"
 		can be used to modify the surface of the world, and/or to control vision.`
-	Render func(context.Context, Render) error `http:"POST /vulture/v1/render"
+	Render func(context.Context, Render) error `http:"POST /vulture/v0/render"
 		is used to add a new view to the world.`
-	Escort func(context.Context, Escort) error `http:"POST /vulture/v1/escort"
+	Escort func(context.Context, Escort) error `http:"POST /vulture/v0/escort"
 		can be used to animate a view.`
 }
 
-type Terrain struct {
+type Territory struct {
 	Area     Area            `json:"area"`
 	Vertices [16 * 16]Vertex `json:"vertices"`
 }

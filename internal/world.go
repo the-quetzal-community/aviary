@@ -37,7 +37,7 @@ type World struct {
 
 	vulture vulture.API
 	updates <-chan vulture.Vision
-	uplifts chan vulture.Terrain
+	uplifts chan vulture.Territory
 
 	loadedAreas map[vulture.Area]bool
 
@@ -53,7 +53,7 @@ func (world *World) Ready() {
 	world.Light.AsNode3D().SetRotation(gd.Vector3{-math.Pi / 2, 0, 0})
 
 	world.loadedAreas = make(map[vulture.Area]bool)
-	world.uplifts = make(chan vulture.Terrain)
+	world.uplifts = make(chan vulture.Territory)
 	world.uplift(gd.Vector2{})
 
 	world.shaderPool = gd.Create(world.KeepAlive, new(TerrainShaderPool))

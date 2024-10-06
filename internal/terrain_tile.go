@@ -12,12 +12,12 @@ type TerrainTile struct {
 	gd.Class[TerrainTile, gd.StaticBody3D] `gd:"AviaryTerrainTile"`
 
 	vulture vulture.API
-	terrain vulture.Terrain
+	terrain vulture.Territory
 
 	Mesh gd.MeshInstance3D
 
 	shaders *TerrainShaderPool
-	reloads chan vulture.Terrain
+	reloads chan vulture.Territory
 
 	target    gd.Vector2
 	uplift    float64
@@ -26,12 +26,12 @@ type TerrainTile struct {
 }
 
 func (tile *TerrainTile) Ready() {
-	tile.reloads = make(chan vulture.Terrain, 1)
+	tile.reloads = make(chan vulture.Territory, 1)
 	tile.radius = 2.0
 	tile.reloads <- tile.terrain
 }
 
-func (tile *TerrainTile) onReload(terrain vulture.Terrain) {
+func (tile *TerrainTile) onReload(terrain vulture.Territory) {
 	tmp := tile.Temporary
 
 	tile.terrain = terrain
