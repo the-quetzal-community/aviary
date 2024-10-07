@@ -3,10 +3,10 @@ package internal
 import "grow.graphics/gd"
 
 /*
-Editor is the main UI for editing a space in Aviary.
+UI for editing a space in Aviary.
 */
-type Editor struct {
-	gd.Class[Editor, gd.Control] `gd:"AviaryEditor"`
+type UI struct {
+	gd.Class[UI, gd.Control] `gd:"AviaryUI"`
 
 	Toolkit struct {
 		gd.PanelContainer

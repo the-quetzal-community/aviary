@@ -33,7 +33,7 @@ func (world *World) Ready() {
 	}
 	editor_scene, ok := gd.Load[gd.PackedScene](world.KeepAlive, "res://ui/editor.tscn")
 	if ok {
-		editor, ok := gd.As[*Editor](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
+		editor, ok := gd.As[*UI](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
 		if ok {
 			world.Super().AsNode().AddChild(editor.Super().AsNode(), false, 0)
 		}

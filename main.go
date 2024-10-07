@@ -18,6 +18,6 @@ func main() {
 	gd.Register[internal.TerrainRenderer](godot)
 	gd.Register[internal.Vulture](godot)
 	gd.Register[internal.World](godot)
-	gd.Register[internal.Editor](godot)
+	gd.Register[internal.UI](godot)
 	gd.Register[internal.Main](godot)
 }

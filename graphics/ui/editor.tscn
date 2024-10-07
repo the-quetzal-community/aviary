@@ -7,7 +7,7 @@
 [ext_resource type="Texture2D" uid="uid://bngfvl7xp4vdo" path="res://emoji/twemoji/👫.png" id="5_5anuo"]
 [ext_resource type="Texture2D" uid="uid://dae1lu27epm8p" path="res://emoji/twemoji/🐾.png" id="6_20vre"]
 
-[node name="Editor" type="AviaryEditor"]
+[node name="Editor" type="AviaryUI"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
