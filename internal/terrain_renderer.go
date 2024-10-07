@@ -50,7 +50,7 @@ func (tr *TerrainRenderer) AsNode() gd.Node { return tr.Super().AsNode() }
 func (tr *TerrainRenderer) OnCreate() {
 	tr.loadedTerritory = make(map[vulture.Area]bool)
 	tr.updateTerritory = make(chan []vulture.Territory)
-	tr.brushEvents = make(chan terrainBrushEvent, 10)
+	tr.brushEvents = make(chan terrainBrushEvent, 20)
 }
 
 func (tr *TerrainRenderer) Ready() {
@@ -155,7 +155,7 @@ func (tr *TerrainRenderer) Input(event gd.InputEvent) {
 				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
 			}
 		}
-		if tr.BrushActive && event.GetButtonIndex() == gd.MouseButtonLeft && event.AsInputEvent().IsReleased() {
+		if tr.BrushActive && event.GetButtonIndex() == gd.MouseButtonLeft || event.GetButtonIndex() == gd.MouseButtonRight && event.AsInputEvent().IsReleased() {
 			tr.uploadEdits()
 		}
 	}
