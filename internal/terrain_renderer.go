@@ -24,6 +24,8 @@ type TerrainRenderer struct {
 	loadedTerritory map[vulture.Area]bool
 	updateTerritory chan []vulture.Territory
 
+	mouseOver chan gd.Vector3
+
 	//
 	// Terrain Brush parameters are used to represent modifications
 	// to the terrain. Either for texturing or height map adjustments.
@@ -107,6 +109,7 @@ func (tr *TerrainRenderer) downloadArea(area vulture.Area) {
 
 func (tr *TerrainRenderer) Process(dt gd.Float) {
 	tmp := tr.Temporary
+	Input := gd.Input(tmp)
 	select {
 	case updates := <-tr.updateTerritory:
 		for _, territory := range updates {
@@ -127,12 +130,16 @@ func (tr *TerrainRenderer) Process(dt gd.Float) {
 			}
 		}
 	case event := <-tr.brushEvents:
-		tr.BrushTarget = event.BrushTarget
-		tr.BrushDeltaV = event.BrushDeltaV
-		if event.BrushDeltaV != 0 {
-			tr.BrushActive = true
+		if !tr.BrushActive && event.BrushDeltaV == 0 && !Input.IsKeyPressed(gd.KeyShift) {
+			tr.mouseOver <- event.BrushTarget
+		} else {
+			tr.BrushTarget = event.BrushTarget
+			tr.BrushDeltaV = event.BrushDeltaV
+			if event.BrushDeltaV != 0 {
+				tr.BrushActive = true
+			}
+			tr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget))
 		}
-		tr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget))
 	default:
 	}
 	if tr.BrushActive {

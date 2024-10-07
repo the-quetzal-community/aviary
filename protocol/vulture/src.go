@@ -3,26 +3,40 @@ package vulture
 import (
 	"context"
 	"sync"
+	"time"
+
+	"runtime.link/nix"
 )
 
 // New returns a reference in-memory implementation of the Vulture API.
 func New() API {
 	var I refImpl
 	I.chunks = make(map[Area]Territory)
+	I.views = make(map[Area][]refView)
+	I.time = time.Now
 	return API{
 		Vision: I.vision,
 		Uplift: I.uplift,
+		Render: I.render,
 	}
 }
 
 type refImpl struct {
 	mutex   sync.Mutex
+	time    func() time.Time
 	clients []refClient
 	chunks  map[Area]Territory
+	views   map[Area][]refView
 }
 
 type refClient struct {
 	vision chan<- Vision
+}
+
+type refView struct {
+	Cell Cell
+	Mesh Upload
+	Time nix.Nanos
 }
 
 func (I *refImpl) vision(ctx context.Context) (<-chan Vision, error) {
@@ -72,4 +86,33 @@ func (I *refImpl) uplift(ctx context.Context, uplift Uplift) ([]Territory, error
 		}
 	}
 	return results, nil
+}
+
+func (I *refImpl) render(ctx context.Context, render Render) error {
+	I.mutex.Lock()
+	defer I.mutex.Unlock()
+	views := I.views[render.Area]
+	view := refView{
+		Cell: render.Cell,
+		Mesh: render.Mesh,
+		Time: nix.Nanos(I.time().UnixNano()),
+	}
+	views = append(views, view)
+	I.views[render.Area] = views
+	for _, clients := range I.clients {
+		select {
+		case clients.vision <- Vision{
+			Time: nix.Nanos(time.Now().UnixNano()),
+			View: []View{
+				{
+					Cell: view.Cell,
+					Mesh: view.Mesh,
+					Show: Ticks(0),
+				},
+			},
+		}:
+		default:
+		}
+	}
+	return nil
 }

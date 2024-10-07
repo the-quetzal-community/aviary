@@ -23,21 +23,31 @@ type World struct {
 		}
 	}
 
+	mouseOver chan gd.Vector3
+
 	TerrainRenderer *TerrainRenderer
-	Vulture         *Vulture
+	PreviewRenderer *PreviewRenderer
+
+	Vulture *Vulture
 }
 
 func (world *World) Ready() {
 	if world.Vulture == nil {
 		world.Vulture = gd.Create(world.KeepAlive, new(Vulture))
 	}
+	world.mouseOver = make(chan gd.Vector3, 1)
+	world.PreviewRenderer.preview = make(chan string, 1)
+	world.PreviewRenderer.mouseOver = world.mouseOver
+	world.PreviewRenderer.Vulture = world.Vulture
 	editor_scene, ok := gd.Load[gd.PackedScene](world.KeepAlive, "res://ui/editor.tscn")
 	if ok {
 		editor, ok := gd.As[*UI](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
 		if ok {
+			editor.preview = world.PreviewRenderer.preview
 			world.Super().AsNode().AddChild(editor.Super().AsNode(), false, 0)
 		}
 	}
+	world.TerrainRenderer.mouseOver = world.mouseOver
 	world.TerrainRenderer.Vulture = world.Vulture
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(gd.Vector3{0, 1, 3})
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(gd.Vector3{0, 0, 0}, gd.Vector3{0, 1, 0}, false)
