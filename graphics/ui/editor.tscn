@@ -1,6 +1,11 @@
-[gd_scene load_steps=2 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=7 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Texture2D" uid="uid://cikmokf7owm08" path="res://emoji/twemoji/🌳.png" id="1_afnya"]
+[ext_resource type="Texture2D" uid="uid://ucuhd0xig3ve" path="res://emoji/twemoji/⛰.png" id="1_sspau"]
+[ext_resource type="Texture2D" uid="uid://kwpwttni4f7u" path="res://emoji/twemoji/🪨.png" id="3_ykgy4"]
+[ext_resource type="Texture2D" uid="uid://d02qugxpmsups" path="res://emoji/twemoji/🛖.png" id="4_rv2vw"]
+[ext_resource type="Texture2D" uid="uid://bngfvl7xp4vdo" path="res://emoji/twemoji/👫.png" id="5_5anuo"]
+[ext_resource type="Texture2D" uid="uid://dae1lu27epm8p" path="res://emoji/twemoji/🐾.png" id="6_20vre"]
 
 [node name="Editor" type="AviaryEditor"]
 anchors_preset = 15
@@ -8,32 +13,43 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
+mouse_force_pass_scroll_events = false
 
-[node name="Foliage" type="TextureButton" parent="."]
+[node name="Toolkit" type="PanelContainer" parent="."]
 layout_mode = 1
 anchors_preset = 11
 anchor_left = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -84.0
-offset_top = 17.0
-offset_right = -12.0
-offset_bottom = -559.0
+offset_left = -78.0
 grow_horizontal = 0
 grow_vertical = 2
+
+[node name="Buttons" type="VBoxContainer" parent="Toolkit"]
+layout_mode = 2
+theme_override_constants/separation = 25
+
+[node name="Terrain" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
+texture_normal = ExtResource("1_sspau")
+
+[node name="Foliage" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
 texture_normal = ExtResource("1_afnya")
 
-[node name="Mineral" type="TextureButton" parent="."]
-layout_mode = 0
+[node name="Mineral" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
+texture_normal = ExtResource("3_ykgy4")
 
-[node name="Shelter" type="TextureButton" parent="."]
-layout_mode = 0
+[node name="Shelter" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
+texture_normal = ExtResource("4_rv2vw")
 
-[node name="Terrain" type="TextureButton" parent="."]
-layout_mode = 0
+[node name="Citizen" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
+texture_normal = ExtResource("5_5anuo")
 
-[node name="Citizen" type="TextureButton" parent="."]
-layout_mode = 0
-
-[node name="Critter" type="TextureButton" parent="."]
-layout_mode = 0
+[node name="Critter" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
+texture_normal = ExtResource("6_20vre")
