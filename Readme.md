@@ -1,3 +1,2 @@
 # Aviary
-----------
 ![Aviary](./logo.jpeg)
