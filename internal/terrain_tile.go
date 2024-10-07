@@ -92,16 +92,22 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 		}
 		if event.GetButtonIndex() == gd.MouseButtonRight {
 			if event.AsInputEvent().IsPressed() {
-				tile.brushEvents <- terrainBrushEvent{
+				select {
+				case tile.brushEvents <- terrainBrushEvent{
 					BrushTarget: pos,
 					BrushDeltaV: -2,
+				}:
+				default:
 				}
 			}
 		}
 	} else {
 		pos = pos.Round()
-		tile.brushEvents <- terrainBrushEvent{
+		select {
+		case tile.brushEvents <- terrainBrushEvent{
 			BrushTarget: pos,
+		}:
+		default:
 		}
 	}
 }
