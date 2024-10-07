@@ -1,9 +1,39 @@
-[gd_scene format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=2 format=3 uid="uid://di3hxgqi78me4"]
 
-[node name="Editor" type="Control"]
-layout_mode = 3
+[ext_resource type="Texture2D" uid="uid://cikmokf7owm08" path="res://emoji/twemoji/🌳.png" id="1_afnya"]
+
+[node name="Editor" type="AviaryEditor"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="Foliage" type="TextureButton" parent="."]
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -84.0
+offset_top = 17.0
+offset_right = -12.0
+offset_bottom = -559.0
+grow_horizontal = 0
+grow_vertical = 2
+texture_normal = ExtResource("1_afnya")
+
+[node name="Mineral" type="TextureButton" parent="."]
+layout_mode = 0
+
+[node name="Shelter" type="TextureButton" parent="."]
+layout_mode = 0
+
+[node name="Terrain" type="TextureButton" parent="."]
+layout_mode = 0
+
+[node name="Citizen" type="TextureButton" parent="."]
+layout_mode = 0
+
+[node name="Critter" type="TextureButton" parent="."]
+layout_mode = 0

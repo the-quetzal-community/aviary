@@ -31,6 +31,13 @@ func (world *World) Ready() {
 	if world.Vulture == nil {
 		world.Vulture = gd.Create(world.KeepAlive, new(Vulture))
 	}
+	editor_scene, ok := gd.Load[gd.PackedScene](world.KeepAlive, "res://ui/editor.tscn")
+	if ok {
+		editor, ok := gd.As[*Editor](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
+		if ok {
+			world.Super().AsNode().AddChild(editor.Super().AsNode(), false, 0)
+		}
+	}
 	world.TerrainRenderer.Vulture = world.Vulture
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(gd.Vector3{0, 1, 3})
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(gd.Vector3{0, 0, 0}, gd.Vector3{0, 1, 0}, false)
