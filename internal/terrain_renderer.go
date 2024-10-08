@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"grow.graphics/gd"
@@ -21,7 +22,7 @@ type TerrainRenderer struct {
 
 	ActiveTerritory gd.Node // the territory that is currently being rendered.
 	CachedTerritory gd.Node // the territory that is out of focus.
-	loadedTerritory map[vulture.Area]bool
+	loadedTerritory map[vulture.Area]vulture.Territory
 	updateTerritory chan []vulture.Territory
 
 	mouseOver chan gd.Vector3
@@ -50,9 +51,9 @@ type terrainBrushEvent struct {
 func (tr *TerrainRenderer) AsNode() gd.Node { return tr.Super().AsNode() }
 
 func (tr *TerrainRenderer) OnCreate() {
-	tr.loadedTerritory = make(map[vulture.Area]bool)
+	tr.loadedTerritory = make(map[vulture.Area]vulture.Territory)
 	tr.updateTerritory = make(chan []vulture.Territory)
-	tr.brushEvents = make(chan terrainBrushEvent, 20)
+	tr.brushEvents = make(chan terrainBrushEvent, 100)
 }
 
 func (tr *TerrainRenderer) Ready() {
@@ -85,10 +86,10 @@ func (tr *TerrainRenderer) SetFocalPoint3D(world gd.Vector3) {
 	for x := int32(-1); x <= 1; x++ {
 		for y := int32(-1); y <= 1; y++ {
 			area := vulture.Area{int16(focal_point[0] + x), int16(focal_point[1] + y)}
-			if tr.loadedTerritory[area] {
+			if _, ok := tr.loadedTerritory[area]; ok {
 				continue
 			}
-			tr.loadedTerritory[area] = true
+			tr.loadedTerritory[area] = vulture.Territory{Area: area}
 			go tr.downloadArea(area)
 		}
 	}
@@ -110,37 +111,42 @@ func (tr *TerrainRenderer) downloadArea(area vulture.Area) {
 func (tr *TerrainRenderer) Process(dt gd.Float) {
 	tmp := tr.Temporary
 	Input := gd.Input(tmp)
-	select {
-	case updates := <-tr.updateTerritory:
-		for _, territory := range updates {
-			name := fmt.Sprintf("%dx%dy", territory.Area[0], territory.Area[1])
-			existing := tr.ActiveTerritory.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
-			if existing == (gd.Node{}) {
-				area := gd.Create(tr.KeepAlive, new(TerrainTile))
-				area.territory = territory
-				area.brushEvents = tr.brushEvents
-				area.Shader = tr.shader
-				area.Super().AsNode().SetName(tmp.String(name))
-				tr.ActiveTerritory.AsNode().AddChild(area.Super().AsNode(), false, 0)
+	for {
+		select {
+		case updates := <-tr.updateTerritory:
+			for _, territory := range updates {
+				name := fmt.Sprintf("%dx%dy", territory.Area[0], territory.Area[1])
+				existing := tr.ActiveTerritory.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
+				if existing == (gd.Node{}) {
+					area := gd.Create(tr.KeepAlive, new(TerrainTile))
+					area.territory = territory
+					area.brushEvents = tr.brushEvents
+					area.Shader = tr.shader
+					area.Super().AsNode().SetName(tmp.String(name))
+					tr.ActiveTerritory.AsNode().AddChild(area.Super().AsNode(), false, 0)
+				}
+				tile, ok := gd.As[*TerrainTile](tmp, existing)
+				if ok {
+					tile.territory = territory
+					tile.Reload()
+				}
+				tr.loadedTerritory[territory.Area] = territory
 			}
-			tile, ok := gd.As[*TerrainTile](tmp, existing)
-			if ok {
-				tile.territory = territory
-				tile.Reload()
+		case event := <-tr.brushEvents:
+			if !Input.IsKeyPressed(gd.KeyShift) {
+				tr.mouseOver <- event.BrushTarget
+			} else {
+				tr.BrushTarget = event.BrushTarget
+				tr.BrushDeltaV = event.BrushDeltaV
+				if event.BrushDeltaV != 0 {
+					tr.BrushActive = true
+				}
+				tr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget))
 			}
+			continue
+		default:
 		}
-	case event := <-tr.brushEvents:
-		if !tr.BrushActive && event.BrushDeltaV == 0 && !Input.IsKeyPressed(gd.KeyShift) {
-			tr.mouseOver <- event.BrushTarget
-		} else {
-			tr.BrushTarget = event.BrushTarget
-			tr.BrushDeltaV = event.BrushDeltaV
-			if event.BrushDeltaV != 0 {
-				tr.BrushActive = true
-			}
-			tr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget))
-		}
-	default:
+		break
 	}
 	if tr.BrushActive {
 		tr.BrushAmount += dt * tr.BrushDeltaV
@@ -203,4 +209,58 @@ func (tr *TerrainRenderer) uploadEdits() {
 		}
 		tr.updateTerritory <- updates
 	}()
+}
+
+func (tr *TerrainRenderer) HeightAt(world gd.Vector3) gd.Float {
+	space := tr.Vulture.WorldSpaceToVultureSpace(world)
+	area := vulture.Area{int16(space[0]), int16(space[1])}
+	cell := tr.Vulture.WorldSpaceToVultureCell(world)
+	data := tr.loadedTerritory[area].Vertices
+
+	// Ensure x and z are within bounds
+	x := math.Min(math.Max(float64(cell[0]), 0), float64(16-1))
+	z := math.Min(math.Max(float64(cell[1]), 0), float64(16-1))
+
+	// Calculate grid cell coordinates
+	x0, z0 := int(x), int(z)
+	x1, z1 := x0+1, z0+1
+
+	// Ensure we don't go out of bounds due to float precision
+	if x1 >= 16 {
+		x1 = 16 - 1
+	}
+	if z1 >= 16 {
+		z1 = 16 - 1
+	}
+
+	// Determine which triangle we're in within the cell (assuming we're using a grid where each square is split into two triangles)
+	insideTriangle := (x-float64(x0))+(z-float64(z0)) < 1.0
+
+	var y float64
+
+	if insideTriangle {
+		// We're in the triangle that includes (x0,z0), (x1,z0), and (x0,z1)
+		y00 := float64(data[z0*16+x0].Height())
+		y10 := float64(data[z0*16+x1].Height())
+		y01 := float64(data[z1*16+x0].Height())
+
+		// Barycentric interpolation within the triangle
+		alpha := float64(x - float64(x0))
+		beta := float64(z - float64(z0))
+		gamma := 1 - alpha - beta
+		y = y00*gamma + y10*alpha + y01*beta
+
+	} else {
+		// We're in the other triangle that includes (x1,z1), (x1,z0), and (x0,z1)
+		y11 := float64(data[z1*16+x1].Height())
+		y10 := float64(data[z0*16+x1].Height())
+		y01 := float64(data[z1*16+x0].Height())
+
+		// Barycentric interpolation within this triangle
+		alpha := float64(1 - (x - float64(x0)))
+		beta := float64(1 - (z - float64(z0)))
+		gamma := 1 - alpha - beta
+		y = y11*gamma + y10*alpha + y01*beta
+	}
+	return y / 32
 }

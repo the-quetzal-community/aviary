@@ -49,8 +49,8 @@ func (tile *TerrainTile) Reload() {
 		}
 	}
 	shape := gd.Create(tmp, new(gd.HeightMapShape3D))
-	shape.SetMapDepth(17)
-	shape.SetMapWidth(17)
+	shape.SetMapDepth(15)
+	shape.SetMapWidth(15)
 	shape.SetMapData(heights)
 
 	var mesh = gd.Create(tmp, new(gd.ArrayMesh))
@@ -84,9 +84,12 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 		pos = pos.Round()
 		if event.GetButtonIndex() == gd.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
-				tile.brushEvents <- terrainBrushEvent{
+				select {
+				case tile.brushEvents <- terrainBrushEvent{
 					BrushTarget: pos,
 					BrushDeltaV: 2,
+				}:
+				default:
 				}
 			}
 		}

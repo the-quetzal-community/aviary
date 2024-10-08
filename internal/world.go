@@ -31,14 +31,16 @@ type World struct {
 	Vulture *Vulture
 }
 
+// Ready does a bunch of dependency injection and setup.
 func (world *World) Ready() {
 	if world.Vulture == nil {
 		world.Vulture = gd.Create(world.KeepAlive, new(Vulture))
 	}
-	world.mouseOver = make(chan gd.Vector3, 1)
+	world.mouseOver = make(chan gd.Vector3, 100)
 	world.PreviewRenderer.preview = make(chan string, 1)
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.Vulture = world.Vulture
+	world.PreviewRenderer.terrain = world.TerrainRenderer
 	editor_scene, ok := gd.Load[gd.PackedScene](world.KeepAlive, "res://ui/editor.tscn")
 	if ok {
 		editor, ok := gd.As[*UI](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
