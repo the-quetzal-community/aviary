@@ -13,9 +13,14 @@ type TerrainTile struct {
 
 	Mesh   gd.MeshInstance3D
 	Shader gd.ShaderMaterial
+
+	shape_owner gd.Int
 }
 
-func (tile *TerrainTile) Ready() { tile.Reload() }
+func (tile *TerrainTile) Ready() {
+	tile.shape_owner = -1
+	tile.Reload()
+}
 
 func (tile *TerrainTile) Reload() {
 	tmp := tile.Temporary
@@ -27,7 +32,7 @@ func (tile *TerrainTile) Reload() {
 
 	heights := tmp.PackedFloat32Array()
 	for i, vertex := range tile.territory.Vertices {
-		heights.PushBack(float64(vertex.Height()) / 16)
+		heights.PushBack(float64(vertex.Height()) / 32)
 		// calculate the position of the vertex in mesh-space
 		x := float32(i%16 - 8)
 		y := float32(i/16 - 8)
@@ -49,8 +54,8 @@ func (tile *TerrainTile) Reload() {
 		}
 	}
 	shape := gd.Create(tmp, new(gd.HeightMapShape3D))
-	shape.SetMapDepth(15)
-	shape.SetMapWidth(15)
+	shape.SetMapDepth(16)
+	shape.SetMapWidth(16)
 	shape.SetMapData(heights)
 
 	var mesh = gd.Create(tmp, new(gd.ArrayMesh))
@@ -65,11 +70,18 @@ func (tile *TerrainTile) Reload() {
 
 	// generate mesh with pre-baked heights.
 
-	owner := tile.Super().AsCollisionObject3D().CreateShapeOwner(tile.AsObject())
-	tile.Super().AsCollisionObject3D().ShapeOwnerAddShape(owner, shape.AsShape3D())
+	if tile.shape_owner != -1 {
+		tile.Super().AsCollisionObject3D().ShapeOwnerClearShapes(tile.shape_owner)
+	} else {
+		tile.shape_owner = tile.Super().AsCollisionObject3D().CreateShapeOwner(tile.AsObject())
+	}
+	tile.Super().AsCollisionObject3D().ShapeOwnerAddShape(tile.shape_owner, shape.AsShape3D())
 
 	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.Shader.AsMaterial())
 	tile.Mesh.SetMesh(mesh.AsMesh())
+	tile.Mesh.AsNode3D().SetPosition(gd.Vector3{
+		0.5, 0, 0.5,
+	})
 	tile.Super().AsNode3D().SetPosition(gd.Vector3{
 		float32(tile.territory.Area[0])*15 + 8,
 		0,
@@ -81,7 +93,7 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 	tmp := tile.Temporary
 	Input := gd.Input(tmp)
 	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok && Input.IsKeyPressed(gd.KeyShift) {
-		pos = pos.Round()
+		pos = pos.Round().Addf(0.5)
 		if event.GetButtonIndex() == gd.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				select {
@@ -105,7 +117,7 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 			}
 		}
 	} else {
-		pos = pos.Round()
+		pos = pos.Round().Addf(0.5)
 		select {
 		case tile.brushEvents <- terrainBrushEvent{
 			BrushTarget: pos,
