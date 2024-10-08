@@ -15,9 +15,9 @@ func New() API {
 	I.views = make(map[Area][]refView)
 	I.time = time.Now
 	return API{
-		Vision: I.vision,
+		//Vision: I.vision,
 		Uplift: I.uplift,
-		Render: I.render,
+		//Render: I.render,
 	}
 }
 
@@ -88,31 +88,31 @@ func (I *refImpl) uplift(ctx context.Context, uplift Uplift) ([]Territory, error
 	return results, nil
 }
 
-func (I *refImpl) render(ctx context.Context, render Render) error {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
-	views := I.views[render.Area]
-	view := refView{
-		Cell: render.Cell,
-		Mesh: render.Mesh,
-		Time: nix.Nanos(I.time().UnixNano()),
-	}
-	views = append(views, view)
-	I.views[render.Area] = views
-	for _, clients := range I.clients {
-		select {
-		case clients.vision <- Vision{
-			Time: nix.Nanos(time.Now().UnixNano()),
-			View: []View{
-				{
-					Cell: view.Cell,
-					Mesh: view.Mesh,
-					Show: Ticks(0),
-				},
-			},
-		}:
-		default:
-		}
-	}
-	return nil
+/*func (I *refImpl) render(ctx context.Context, render Render) error {
+I.mutex.Lock()
+defer I.mutex.Unlock()
+views := I.views[render.Area]
+view := refView{
+	Cell: render.Cell,
+	Mesh: render.Mesh,
+	Time: nix.Nanos(I.time().UnixNano()),
 }
+views = append(views, view)
+I.views[render.Area] = views
+for _, clients := range I.clients {
+	select {
+	case clients.vision <- Vision{
+		Period: nix.Nanos(time.Now().UnixNano()),
+		View: []View{
+			{
+				Cell: view.Cell,
+				Mesh: view.Mesh,
+				Show: Ticks(0),
+			},
+		},
+	}:
+	default:
+	}
+}
+return nil
+}*/

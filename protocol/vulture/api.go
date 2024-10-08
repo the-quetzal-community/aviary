@@ -15,20 +15,27 @@ type API struct {
 	api.Specification `api:"Vulture"
 		provides access to collaborative and creative community spaces.
 	`
-	Vision func(context.Context) (<-chan Vision, error) `http:"GET /vulture/v0/vision"
+	Vision func(context.Context, Vision) error `http:"POST /vulture/v0/vision"
 		returns channels used to focus on and view the world.`
-	Upload func(context.Context, Upload, fs.File) error `http:"PUT /vulture/v0/upload/{design=%v}"
+	Upload func(context.Context, Upload) (fs.File, error) `http:"GET /vulture/v0/upload/{upload=%v}"
 		a file to the world.`
-	Lookup func(context.Context, Upload) (fs.File, error) `http:"GET /vulture/v0/upload/{design=%v}"
+	Lookup func(context.Context, fs.File) (Upload, error) `http:"POST /vulture/v0/lookup"
 		a file from the world.`
-	Target func(context.Context, Target) error `http:"PUT /vulture/v0/target"
+	Target func(context.Context, Target) error `http:"POST /vulture/v0/target"
 		selects a target for the client to focus on.`
-	Uplift func(context.Context, Uplift) ([]Territory, error) `http:"POST /vulture/v0/liftup"
+	Uplift func(context.Context, Uplift) ([]Territory, error) `http:"POST /vulture/v0/uplift"
 		can be used to modify the surface of the world, and/or to control vision.`
-	Render func(context.Context, Render) error `http:"POST /vulture/v0/render"
+	Raptor func(context.Context) (chan<- Raptor, error) `http:"GET /vulture/v0/raptor"
 		is used to add a new view to the world.`
-	Escort func(context.Context, Escort) error `http:"POST /vulture/v0/escort"
+	Events func(context.Context) (<-chan Vision, error) `http:"GET /vulture/v0/events"
 		can be used to animate a view.`
+}
+
+type Raptor struct {
+	Pos   [3]float64
+	Roll  float64
+	Pitch float64
+	Yaw   float64
 }
 
 type Territory struct {
@@ -63,11 +70,6 @@ type Escort struct {
 	Loop bool   `json:"loop"`
 }
 
-type Path struct {
-	Area Area `json:"area"`
-	Cell Cell `json:"cell"`
-}
-
 type Target struct {
 	Name Name `json:"name"`
 }
@@ -86,13 +88,18 @@ type Uplift struct {
 
 // Vision represents an update to what the client can see.
 type Vision struct {
-	Time nix.Nanos  `json:"time"`
-	Area Area       `json:"area"`
-	View []Render   `json:"view,omitempty"`
-	Node []Node     `json:"node,omitempty"`
-	Chat []Chat     `json:"chat,omitempty"`
-	User *Interface `json:"info,omitempty"`
+	Period nix.Nanos          `json:"period"`
+	Packet nix.Nanos          `json:"packet"`
+	Region Area               `json:"region"`
+	Screen bool               `json:"screen"`
+	Offset int                `json:"offset"`
+	Packed Elements           `json:"packed"`
+	Sparse map[uint16]Element `json:"sparse"`
 }
+
+// Element can either be a [Thing], [Anime] or ?
+type Element [16]byte
+type Elements []byte
 
 // Hexagon represents the height and terrain type for
 // a hexagon in the world-space.
@@ -119,14 +126,21 @@ type Render struct {
 	Mesh Upload
 }
 
+type Tile struct {
+	Height uint16 `json:"height"`
+	Liquid uint8  `json:"liquid"`
+	Cell   uint8
+	Biome  uint16
+	Show   Ticks `json:"show"
+		when the view should be created.`
+}
+
 type View struct {
 	Cell Cell `json:"cell"
 		within the area where this view is located.`
 	Face Direction `json:"face"
 		is the direction the view is facing.`
-	Size uint8 `json:"size"
-		of the view.`
-	Jump uint8 `json:"jump"
+	Jump int16 `json:"jump"
 		up by the specified amount.`
 	Bump uint8 `json:"bump"
 		offsets the view within the cell by this amount,
@@ -144,107 +158,63 @@ type View struct {
 		when the view should be removed.`
 }
 
+type Link struct {
+	View uint16 `json:"view"
+		being linked.`
+	Onto uint16 `json:"onto"
+		being linked to.`
+	Bone uint8 `json:"bone"
+		identifies the bone to link the view onto.`
+	Jump uint8 `json:"jump"
+		height.`
+	Bump uint8 `json:"bump"
+		offsets the next location in the path by this amount.`
+	_    uint8
+	Show Ticks `json:"show"
+		when the link should be created.`
+	Hide Ticks `json:"hide"
+		when the link should be removed.`
+	_ uint32
+}
+
+type Path struct {
+	Peer uint16 `json:"view"
+		is the other side of the path.`
+	Jump int16
+	_    uint8 // always zero (Bone)
+	Bump uint8 `json:"bump"
+		offsets the next location in the path by this amount.`
+	Show Ticks `json:"show"
+		when the path should be created.`
+	Hide Ticks `json:"hide"
+		when the path should be removed.`
+	Mesh Upload `json:"onto"
+			being linked to.`
+	Face uint8
+	Walk uint8
+	Cell Cell `json:"cell"
+		identifies the bone to link the view onto.`
+	Anim uint8
+}
+
 // Node represents either a single keyframe for the animation, an attachment
 // of one render to another, or a spatial curve.
 type Node struct {
 	View uint16 `json:"view"
 		identifies the view to animate`
+	Span Ticks `json:"span"
+		how long the path should take to animate.`
 	Jump uint8 `json:"jump"
 		height.`
 	Bump uint8 `json:"bump"
 		offsets the next location in the path by this amount.`
 	From Ticks `json:"from"
 		when the path should start animating.`
-	Span Ticks `json:"span"
-		how long the path should take to animate.`
 	Loop Ticks `json:"loop"
 		how long the path should wait before animating again.`
 	Area Area `json:"area"
 		where the path should animate.`
 	Cell Cell `json:"cell"
 		within the area where the path should animate.`
-}
-
-// Interface available to the user.
-type Interface struct {
-	Name string `json:"name"
-		of the view.`
-	Icon Upload `json:"icon"
-		is the primary icon for the view.`
-	Flag []Upload `json:"flag"
-		in order of importance.`
-	Fact []Fact `json:"fact"
-		known about the view.`
-	Stat []Stat `json:"stat"
-		information that may change over time.`
-	Menu []Menu `json:"menu"
-		of actions that can be taken.`
-	Note string `json:"note"
-		about the view.`
-}
-
-// Menu within an interface.
-type Menu struct {
-	Name string `json:"name"
-		of the action.`
-	Icon Upload `json:"icon"
-		that represents the action.`
-	Hint string `json:"hint"
-		about the action.`
-	List []Item `json:"list"
-		of items that can be added.`
-}
-
-// Fact about a view.
-type Fact struct {
-	Name string `json:"name"
-		of the fact.`
-	Icon Upload `json:"icon"
-		that represents the fact.`
-	Text string `json:"text"
-		of the fact.`
-}
-
-// Item within a menu.
-type Item struct {
-	Name string `json:"name"
-		of the item.`
-	Icon Upload `json:"icon"
-		that represents the item.`
-	Hint string `json:"hint"
-		about the item.`
-	Mesh Upload `json:"mesh"
-		that can be rendered into the world.`
-}
-
-// Stat about a view.
-type Stat struct {
-	Name string `json:"name"
-		of the stat.`
-	Icon Upload `json:"icon"
-		that represents the stat.`
-	Hint string `json:"hint"
-		about the stat.`
-	Plot []Plot `json:"plot"
-		of the stat.`
-}
-
-// Plot of a stat over time.
-type Plot struct {
-	From Ticks `json:"from"
-		when the data starts.`
-	Span Ticks `json:"span"
-		of the data.`
-	Data float64 `json:"data"
-		value of the data.`
-}
-
-// Chat message.
-type Chat struct {
-	Name string `json:"name"
-		of the chat.`
-	Icon Upload `json:"icon"
-		that represents the chat.`
-	Text string `json:"text"
-		of the chat.`
+	_ uint8
 }

@@ -1,11 +1,7 @@
 package internal
 
 import (
-	"context"
-	"time"
-
 	"grow.graphics/gd"
-	"the.quetzal.community/aviary/protocol/vulture"
 )
 
 // PreviewRenderer is responsible for rendering items when the user
@@ -52,7 +48,7 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 		if pr.Super().AsNode().GetChildCount(false) > 0 {
 			pr.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
 
-			pos := pr.Super().AsNode3D().GetPosition()
+			/*pos := pr.Super().AsNode3D().GetPosition()
 			area := pr.Vulture.WorldSpaceToVultureSpace(pos)
 			cell := pr.Vulture.WorldSpaceToVultureCell(pos)
 			render := vulture.Render{
@@ -66,7 +62,7 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 				if err := pr.Vulture.api.Render(ctx, render); err != nil {
 					tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
 				}
-			}()
+				}()*/
 		}
 	}
 	pos := pr.Super().AsNode3D().GetPosition()
