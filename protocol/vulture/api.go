@@ -56,13 +56,6 @@ type LookAt struct {
 		of the area to focus on.`
 }
 
-// Render a view.
-type Render struct {
-	Area Area   `json:"area"`
-	Cell Cell   `json:"cell"`
-	Mesh Upload `json:"mesh"`
-}
-
 // Escort a named view along a path.
 type Escort struct {
 	Name Name   `json:"name"`
@@ -95,7 +88,7 @@ type Uplift struct {
 type Vision struct {
 	Time nix.Nanos  `json:"time"`
 	Area Area       `json:"area"`
-	View []View     `json:"view,omitempty"`
+	View []Render   `json:"view,omitempty"`
 	Node []Node     `json:"node,omitempty"`
 	Chat []Chat     `json:"chat,omitempty"`
 	User *Interface `json:"info,omitempty"`
@@ -120,6 +113,12 @@ func (v *Vertex) SetHeight(height int16) {
 // Direction represents an angle mapped from 0 to 256.
 type Direction uint8
 
+type Render struct {
+	Area Area
+	Cell Cell
+	Mesh Upload
+}
+
 type View struct {
 	Cell Cell `json:"cell"
 		within the area where this view is located.`
@@ -127,12 +126,14 @@ type View struct {
 		is the direction the view is facing.`
 	Size uint8 `json:"size"
 		of the view.`
-	Skin uint8 `json:"skin"
-		identifies a material to select for the view.`
+	Jump uint8 `json:"jump"
+		up by the specified amount.`
 	Bump uint8 `json:"bump"
-		offsets the view within the cell by this amount.`
+		offsets the view within the cell by this amount,
+		treat this as a nested cell.`
 	Name Name `json:"name"
-		of the view.`
+		of the view, used to identify the view across
+		both temporal and territorial boundaries.`
 	Mesh Upload `json:"mesh"
 		identifies the mesh to use for the view.`
 	Icon Upload `json:"icon"
@@ -143,12 +144,13 @@ type View struct {
 		when the view should be removed.`
 }
 
-// Node represents a single keyframe for the animation of a view.
+// Node represents either a single keyframe for the animation, an attachment
+// of one render to another, or a spatial curve.
 type Node struct {
 	View uint16 `json:"view"
 		identifies the view to animate`
-	Type uint8 `json:"type"
-		of the path.`
+	Jump uint8 `json:"jump"
+		height.`
 	Bump uint8 `json:"bump"
 		offsets the next location in the path by this amount.`
 	From Ticks `json:"from"
