@@ -136,6 +136,7 @@ func (tr *TerrainRenderer) Process(dt gd.Float) {
 			if !Input.IsKeyPressed(gd.KeyShift) {
 				tr.mouseOver <- event.BrushTarget
 			} else {
+				event.BrushTarget = event.BrushTarget.Round().Addf(0.5)
 				tr.BrushTarget = event.BrushTarget
 				tr.BrushDeltaV = event.BrushDeltaV
 				if event.BrushDeltaV != 0 {

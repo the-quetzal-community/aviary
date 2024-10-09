@@ -4,6 +4,7 @@ package vulture
 import (
 	"context"
 	"io/fs"
+	"iter"
 	"unsafe"
 
 	"runtime.link/api"
@@ -15,29 +16,25 @@ type API struct {
 	api.Specification `api:"Vulture"
 		provides access to collaborative and creative community spaces.
 	`
-	Vision func(context.Context, Vision) error `http:"POST /vulture/v0/vision"
-		returns channels used to focus on and view the world.`
+	Vision func(context.Context) (chan<- Vision, error) `http:"GET /vulture/v0/vision"
+		can be used to project your vision onto the space, if successful, will
+		generate an [Event].`
 	Upload func(context.Context, Upload) (fs.File, error) `http:"GET /vulture/v0/upload/{upload=%v}"
-		a file to the world.`
+		can be used to download an uploaded visual resource by ID.`
 	Lookup func(context.Context, fs.File) (Upload, error) `http:"POST /vulture/v0/lookup"
-		a file from the world.`
+		returns the ID associated with the specified visual resource.`
 	Target func(context.Context, Target) error `http:"POST /vulture/v0/target"
-		selects a target for the client to focus on.`
+		returns a write-only stream for the client to report their
+		focus.`
 	Uplift func(context.Context, Uplift) ([]Territory, error) `http:"POST /vulture/v0/uplift"
-		can be used to modify the surface of the world, and/or to control vision.`
-	Raptor func(context.Context) (chan<- Raptor, error) `http:"GET /vulture/v0/raptor"
-		is used to add a new view to the world.`
-	Events func(context.Context) (<-chan Vision, error) `http:"GET /vulture/v0/events"
-		can be used to animate a view.`
+		can be used to modify the surface of a region.`
+	Reform func(context.Context, []Deltas) error `http:"POST /vulture/v0/reform"
+		can be used to undo/redo changes.`
+	Events func(context.Context) (<-chan []Deltas, error) `http:"GET /vulture/v0/events"
+		returns events visible to the client.`
 }
 
-type Raptor struct {
-	Pos   [3]float64
-	Roll  float64
-	Pitch float64
-	Yaw   float64
-}
-
+// Deprecated
 type Territory struct {
 	Area     Area            `json:"area"`
 	Vertices [16 * 16]Vertex `json:"vertices"`
@@ -52,30 +49,40 @@ type Area [2]int16
 // Cell within an area.
 type Cell uint8
 
-// Ticks in 1/10 second intervals.
-type Ticks uint16
+// Ticks in 1/10 second intervals, relative to the regional period.
+type Ticks int16
 
-// LookAt represents the client's current focus.
-type LookAt struct {
-	Area Area `json:"area"
-		in the world to focus on.`
-	Size uint8 `json:"size"
-		of the area to focus on.`
+// Time in unix nanoseconds.
+type Time int64
+
+// Vision represents a focal point or view.
+type Vision struct {
+	Grid     Region
+	Cell     Cell
+	Jump     uint16
+	Bump     uint8
+	Size     [2]uint16
+	Zoom     uint16 // if 0, then orbit
+	Roll     uint16
+	Pitch    uint16
+	Yaw      uint16
+	Mesh     Upload
+	Anim     uint8
+	Flag     uint8 // teleport, preview, mouse, etc.
+	Fovy     uint16
+	Controls uint16
+	Select   Target
+	_        uint16
 }
 
-// Escort a named view along a path.
-type Escort struct {
-	Name Name   `json:"name"`
-	Walk []Path `json:"walk"`
-	Loop bool   `json:"loop"`
-}
+// Offset of an element within a [Region].
+type Offset uint16
 
+// Target represents the focal point of the client.
 type Target struct {
-	Name Name `json:"name"`
+	Region Region
+	Offset Offset
 }
-
-// Focus represents the focal point of the client.
-type Name uint16
 
 // Uplift to apply to the surface of the world.
 type Uplift struct {
@@ -86,20 +93,123 @@ type Uplift struct {
 	Lift int8      `json:"lift"`
 }
 
-// Vision represents an update to what the client can see.
-type Vision struct {
-	Period nix.Nanos          `json:"period"`
-	Packet nix.Nanos          `json:"packet"`
-	Region Area               `json:"region"`
-	Screen bool               `json:"screen"`
-	Offset int                `json:"offset"`
-	Packed Elements           `json:"packed"`
-	Sparse map[uint16]Element `json:"sparse"`
+// Deltas represents an update to what the client can see.
+// Will either be packed or sparse (not both).
+type Deltas struct {
+	Region Region `json:"region"
+		uniquely identifies the region.`
+	Period Time `json:"period"
+		for which this vision should take effect.`
+	Packet Time `json:"packet"
+		used for ping pong.`
+	Global *Global `json:"global,omitempty"
+		are the global settings for the space.`
+	Vision *Vision `json:"vision,omitempty"
+		is an optional request to adjust the camera.`
+	Append Elements `json:"append,omitempty"
+			elements to the space.`
+	Offset Offset `json:"offset,omitempty"
+		is the first element to write from.`
+	Packed Elements `json:"packed,omitempty"
+		elements to display.`
+	Sparse map[Offset]Element `json:"sparse,omitempty"
+		elements to display.`
 }
+
+type Global struct {
+	Sun [6]float32 `json:"sun,omitempty"
+		intensity and then direction and angular velocity in XYZ order (euler rotations).`
+	Fog float32 `json:"fog,omitempty"
+		distance.`
+	Sky Upload `json:"sky,omitempty"
+		box.`
+}
+
+// Region uniquely identifies a grid in the space.
+type Region [2]int8
 
 // Element can either be a [Thing], [Anime] or ?
 type Element [16]byte
+
 type Elements []byte
+
+type isElement interface {
+	Element() Element
+}
+
+func (el Elements) Add(element isElement) {
+	add := element.Element()
+	el = append(el, add[:]...)
+}
+
+func (el Elements) Iter() iter.Seq2[Offset, *Element] {
+	return func(yield func(Offset, *Element) bool) {
+		for i := 0; i < len(el); i += 16 {
+			if !yield(Offset(i), (*Element)(el[i:i+16])) {
+				break
+			}
+		}
+	}
+}
+
+type ElementType uint8
+
+const (
+	ElementIsVacant ElementType = iota << 5
+	ElementIsSample
+	ElementIsMarker
+	ElementIsFuture
+	ElementIsTether
+	ElementIsBeizer
+	ElementIsSprite
+	_ // reserved
+)
+
+func (el Element) Type() ElementType {
+	return ElementType(el[0] >> 5)
+}
+
+func (el *Element) Sample() *ElementSample {
+	if el.Type() != ElementIsSample {
+		panic("element is not a sample")
+	}
+	return (*ElementSample)(unsafe.Pointer(&el))
+}
+
+func (el *Element) Marker() *ElementMarker {
+	if el.Type() != ElementIsMarker {
+		panic("element is not a marker")
+	}
+	return (*ElementMarker)(unsafe.Pointer(&el))
+}
+
+func (el *Element) Future() *ElementFuture {
+	if el.Type() != ElementIsFuture {
+		panic("element is not a future")
+	}
+	return (*ElementFuture)(unsafe.Pointer(&el))
+}
+
+func (el *Element) Beizer() *ElementBeizer {
+	if el.Type() != ElementIsBeizer {
+		panic("element is not a sample")
+	}
+	return (*ElementBeizer)(unsafe.Pointer(&el))
+}
+
+func (el *Element) Tether() *ElementTether {
+	if el.Type() != ElementIsTether {
+		panic("element is not a sample")
+	}
+	return (*ElementTether)(unsafe.Pointer(&el))
+}
+
+func (el *Element) Sprite() *ElementSprite {
+	if el.Type() != ElementIsSprite {
+		panic("element is not a sample")
+	}
+	return (*ElementSprite)(unsafe.Pointer(&el))
+}
 
 // Hexagon represents the height and terrain type for
 // a hexagon in the world-space.
@@ -117,104 +227,118 @@ func (v *Vertex) SetHeight(height int16) {
 	*v = (*v &^ vertexHeight) | Vertex(bits)
 }
 
-// Direction represents an angle mapped from 0 to 256.
-type Direction uint8
+// Angle represents an angle mapped from 0 to 256.
+type Angle uint8
 
-type Render struct {
-	Area Area
-	Cell Cell
-	Mesh Upload
+// Height in 1/32 units.
+type Height int16
+
+// ElementSample represents a grid 'cell' sample.
+type ElementSample [2]struct {
+	Shader uint8  // Shader to apply to the cell.
+	Height Height // Height of the cell.
+	Offset uint8  // Liquid/cover depth.
+	Motion uint8  // Motion direction of the liquid.
+	Vertex Cell   // Vertex identifies the cell being sampled.
+	Upload Upload // Upload identifies the cell's texture.
 }
 
-type Tile struct {
-	Height uint16 `json:"height"`
-	Liquid uint8  `json:"liquid"`
-	Cell   uint8
-	Biome  uint16
-	Show   Ticks `json:"show"
-		when the view should be created.`
+// ElementMarker describes a fixed point within the region.
+type ElementMarker struct {
+	Pose uint8  // animation number.
+	Size uint8  // in 1/2 units
+	Link Offset // element with an relationship to this one.
+	Cell Cell   // within the area where this view is located.
+	Face Angle  // is the direction the view is facing (z axiz).
+	Flip Angle  // around the x-axis.
+	Spin Angle  // around the z-axis.
+	Jump Height // up by the specified height.
+	Bump uint8  // offsets the view within the cell by this amount.
+	Mesh Upload // identifies the mesh that represents this anchor.
+	Time Ticks  // when the anchor is active from.
 }
 
-type View struct {
-	Cell Cell `json:"cell"
-		within the area where this view is located.`
-	Face Direction `json:"face"
-		is the direction the view is facing.`
-	Jump int16 `json:"jump"
-		up by the specified amount.`
-	Bump uint8 `json:"bump"
-		offsets the view within the cell by this amount,
-		treat this as a nested cell.`
-	Name Name `json:"name"
-		of the view, used to identify the view across
-		both temporal and territorial boundaries.`
-	Mesh Upload `json:"mesh"
-		identifies the mesh to use for the view.`
-	Icon Upload `json:"icon"
-		identifies the icon to use for the view.`
-	Show Ticks `json:"show"
-		when the view should be created.`
-	Hide Ticks `json:"hide"
-		when the view should be removed.`
+func (marker ElementMarker) Element() Element {
+	el := *(*Element)(unsafe.Pointer(&marker))
+	el[0] |= uint8(ElementIsMarker)
+	return el
 }
 
-type Link struct {
-	View uint16 `json:"view"
-		being linked.`
-	Onto uint16 `json:"onto"
-		being linked to.`
-	Bone uint8 `json:"bone"
-		identifies the bone to link the view onto.`
-	Jump uint8 `json:"jump"
-		height.`
-	Bump uint8 `json:"bump"
-		offsets the next location in the path by this amount.`
-	_    uint8
-	Show Ticks `json:"show"
-		when the link should be created.`
-	Hide Ticks `json:"hide"
-		when the link should be removed.`
-	_ uint32
+// ElementTether used to attach one element to another.
+type ElementTether struct {
+	Type uint8
+	Bone uint8  // identifies the bone to link the view onto.
+	Onto Offset // Element to link onto
+	Next Offset // Next link.
+	Jump Height // height.
+	Bump uint8  // offsets the next location in the path by this amount.
+	Time Ticks  // when the link is active from.`
+	_    uint32
 }
 
-type Path struct {
-	Peer uint16 `json:"view"
-		is the other side of the path.`
-	Jump int16
-	_    uint8 // always zero (Bone)
-	Bump uint8 `json:"bump"
-		offsets the next location in the path by this amount.`
-	Show Ticks `json:"show"
-		when the path should be created.`
-	Hide Ticks `json:"hide"
-		when the path should be removed.`
-	Mesh Upload `json:"onto"
-			being linked to.`
-	Face uint8
-	Walk uint8
-	Cell Cell `json:"cell"
-		identifies the bone to link the view onto.`
-	Anim uint8
+func (tether ElementTether) Element() Element {
+	el := *(*Element)(unsafe.Pointer(&tether))
+	el[0] |= uint8(ElementIsTether)
+	return el
 }
 
-// Node represents either a single keyframe for the animation, an attachment
-// of one render to another, or a spatial curve.
-type Node struct {
-	View uint16 `json:"view"
-		identifies the view to animate`
-	Span Ticks `json:"span"
-		how long the path should take to animate.`
-	Jump uint8 `json:"jump"
-		height.`
-	Bump uint8 `json:"bump"
-		offsets the next location in the path by this amount.`
-	From Ticks `json:"from"
-		when the path should start animating.`
-	Loop Ticks `json:"loop"
-		how long the path should wait before animating again.`
-	Area Area `json:"area"
-		where the path should animate.`
-	Cell Cell `json:"cell"
-		within the area where the path should animate.`
-	_ uint8
+// ElementBeizer can be used to represent curves.
+type ElementBeizer struct {
+	Walk uint16 // Length to the closest control point in 1/16 units.
+	Peer Offset // is the other half of the beizer.
+	Jump Height // height.
+	Bump uint8  // offsets the next location in the path by this amount.
+	Show Ticks  // when the path should be created.
+	Mesh Upload // being linked to.
+	Face Angle  // is the direction the view is facing (z axiz).
+	Cell Cell   // within the area where the path should animate.
+	Flip Angle  // around the x-axis.
+	Spin Angle  // around the z-axis.
+}
+
+func (beizer ElementBeizer) Element() Element {
+	el := *(*Element)(unsafe.Pointer(&beizer))
+	el[0] |= uint8(ElementIsBeizer)
+	return el
+}
+
+// ElementFuture represents a future change to a marker.
+type ElementFuture struct {
+	Pose uint8  // always 0.
+	Bump uint8  // offsets the next location in the path by this amount.
+	Span Ticks  // how long to reach the future.
+	Jump Height // height.
+	Face Angle  // around the y-axis.
+	Lerp uint8  // linear, quadratic, cubic, etc.
+	Loop Ticks  // double ticks used to represent when the path should loop.
+	Flip Angle  // around the x-axis.
+	Spin Angle  // around the z-axis.
+	Area Region // where the path should animate.
+	Cell Cell   // within the area where the path should animate.
+}
+
+func (future ElementFuture) Element() Element {
+	el := *(*Element)(unsafe.Pointer(&future))
+	el[0] |= uint8(ElementIsFuture)
+	return el
+}
+
+// ElementSprite represents a sprite.
+type ElementSprite struct {
+	Fade uint8    // transparency
+	Tint [3]uint8 // color
+	Cell Cell     // within the area where the sprite is located.
+	Bump uint8    // offsets the sprite within the cell by this amount.
+	Turn uint8    // around the y-axis.
+	Cuts uint8    // atlas
+	Uses uint8    // atlas index
+	Icon Upload   // identifies the sprite.
+	Time Ticks    // when the sprite is active from.
+	Next Offset   // Next sprite.
+}
+
+func (sprite ElementSprite) Element() Element {
+	el := *(*Element)(unsafe.Pointer(&sprite))
+	el[0] |= uint8(ElementIsSprite)
+	return el
 }

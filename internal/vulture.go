@@ -28,5 +28,12 @@ func (v *Vulture) VultureSpaceToWorldSpace(vulture gd.Vector2i) gd.Vector3 {
 }
 
 func (v *Vulture) WorldSpaceToVultureSpace(world gd.Vector3) gd.Vector2i {
-	return gd.Vector2i{int32(world[0]) / 15, int32(world[2]) / 15}
+	flat := gd.Vector2{world[0], world[2]}
+	if flat[0] < 0 {
+		flat[0] -= 16
+	}
+	if flat[1] < 0 {
+		flat[1] -= 16
+	}
+	return flat.Divf(16).Vector2i()
 }

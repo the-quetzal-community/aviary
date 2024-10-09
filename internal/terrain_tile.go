@@ -93,7 +93,6 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 	tmp := tile.Temporary
 	Input := gd.Input(tmp)
 	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok && Input.IsKeyPressed(gd.KeyShift) {
-		pos = pos.Round().Addf(0.5)
 		if event.GetButtonIndex() == gd.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				select {
@@ -117,7 +116,6 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 			}
 		}
 	} else {
-		pos = pos.Round().Addf(0.5)
 		select {
 		case tile.brushEvents <- terrainBrushEvent{
 			BrushTarget: pos,

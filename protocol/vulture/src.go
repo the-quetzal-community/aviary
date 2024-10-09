@@ -2,6 +2,8 @@ package vulture
 
 import (
 	"context"
+	"errors"
+	"math"
 	"sync"
 	"time"
 
@@ -13,10 +15,14 @@ func New() API {
 	var I refImpl
 	I.chunks = make(map[Area]Territory)
 	I.views = make(map[Area][]refView)
+	I.regions = make(map[Region]*refRegion)
 	I.time = time.Now
 	return API{
 		//Vision: I.vision,
+		//Vision: I.vision,
 		Uplift: I.uplift,
+		Reform: I.reform,
+		Events: I.events,
 		//Render: I.render,
 	}
 }
@@ -27,22 +33,25 @@ type refImpl struct {
 	clients []refClient
 	chunks  map[Area]Territory
 	views   map[Area][]refView
+
+	globals Global
+	regions map[Region]*refRegion
+}
+
+type refRegion struct {
+	period int64
+	bounds [6]float32
+	packed Elements
 }
 
 type refClient struct {
-	vision chan<- Vision
+	events chan<- []Deltas
 }
 
 type refView struct {
 	Cell Cell
 	Mesh Upload
 	Time nix.Nanos
-}
-
-func (I *refImpl) vision(ctx context.Context) (<-chan Vision, error) {
-	vision := make(chan Vision)
-	I.clients = append(I.clients, refClient{vision})
-	return vision, nil
 }
 
 func (I *refImpl) uplift(ctx context.Context, uplift Uplift) ([]Territory, error) {
@@ -88,31 +97,86 @@ func (I *refImpl) uplift(ctx context.Context, uplift Uplift) ([]Territory, error
 	return results, nil
 }
 
-/*func (I *refImpl) render(ctx context.Context, render Render) error {
-I.mutex.Lock()
-defer I.mutex.Unlock()
-views := I.views[render.Area]
-view := refView{
-	Cell: render.Cell,
-	Mesh: render.Mesh,
-	Time: nix.Nanos(I.time().UnixNano()),
-}
-views = append(views, view)
-I.views[render.Area] = views
-for _, clients := range I.clients {
-	select {
-	case clients.vision <- Vision{
-		Period: nix.Nanos(time.Now().UnixNano()),
-		View: []View{
-			{
-				Cell: view.Cell,
-				Mesh: view.Mesh,
-				Show: Ticks(0),
-			},
-		},
-	}:
-	default:
+func (I *refImpl) reform(ctx context.Context, changes []Deltas) error {
+	I.mutex.Lock()
+	defer I.mutex.Unlock()
+
+	for _, change := range changes {
+		sum := 0
+		if change.Packed != nil {
+			sum++
+		}
+		if change.Sparse != nil {
+			sum++
+		}
+		if change.Append != nil {
+			sum++
+		}
+		if sum != 1 {
+			return errors.New("please provide exactly one of packed, sparse or append")
+		}
 	}
+	now := I.time()
+	for i, change := range changes {
+		region, ok := I.regions[change.Region]
+		if !ok {
+			region = &refRegion{}
+			I.regions[change.Region] = region
+		}
+		if change.Global != nil {
+			I.globals = *change.Global
+		}
+		future := int64(now.Sub(time.Unix(0, int64(region.period))))
+		if future > math.MaxUint16 {
+			I.rebase(region, future)
+		}
+		if change.Packed != nil {
+			copy(region.packed[change.Offset:], change.Packed)
+		}
+		if change.Sparse != nil {
+			for i, el := range change.Sparse {
+				copy(region.packed[change.Offset+i:], el[:])
+			}
+		}
+		if change.Append != nil {
+			// convert to packed, so that we can broadcast change out-of-order.
+			changes[i].Offset = Offset(len(region.packed))
+			region.packed = append(region.packed, change.Append...)
+			changes[i].Packed = changes[i].Append
+			changes[i].Append = nil
+		}
+	}
+	for _, client := range I.clients {
+		select {
+		case client.events <- changes:
+		default:
+			// FIXME kick
+		}
+	}
+	return nil
 }
-return nil
-}*/
+
+func (I *refImpl) rebase(region *refRegion, future int64) {
+	for _, el := range region.packed.Iter() {
+		switch el.Type() {
+		case ElementIsMarker:
+			marker := el.Marker()
+			if int64(marker.Time) > future {
+				marker.Time -= Ticks(future)
+			} else {
+				marker.Time = 0
+			}
+		}
+	}
+	region.period += future
+}
+
+func (I *refImpl) events(ctx context.Context) (<-chan []Deltas, error) {
+	I.mutex.Lock()
+	defer I.mutex.Unlock()
+
+	events := make(chan []Deltas, 10)
+	client := refClient{events: events}
+	I.clients = append(I.clients, client)
+	return events, nil
+}
