@@ -53,18 +53,18 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 		if pr.Super().AsNode().GetChildCount(false) > 0 {
 			pr.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
 			pos := pr.Super().AsNode3D().GetPosition()
-			area := pr.Vulture.WorldSpaceToVultureSpace(pos)
-			cell := pr.Vulture.WorldSpaceToVultureCell(pos)
+			area, cell, bump := pr.Vulture.worldToVulture(pos)
 			packed := vulture.Elements{}
 			packed.Add(vulture.ElementMarker{
-				Cell: vulture.Cell(cell[1]*16 + cell[0]),
+				Cell: cell,
 				Mesh: 1,
+				Bump: bump,
 			})
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if err := pr.Vulture.api.Reform(ctx, []vulture.Deltas{{
-					Region: vulture.Region{int8(area[0]), int8(area[1])},
+					Region: area,
 					Packet: vulture.Time(time.Now().UnixNano()),
 					Append: packed,
 				}}); err != nil {

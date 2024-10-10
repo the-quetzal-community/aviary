@@ -104,7 +104,7 @@ func (vr *VultureRenderer) assert(regionID vulture.Region, region gd.Node, buf v
 	if !ok {
 		return
 	}
-	world := vr.Vulture.vultureCellToWorld(regionID, element.Cell)
+	world := vr.Vulture.vultureToWorld(regionID, element.Cell, element.Bump)
 	world.SetY(vr.terrain.HeightAt(world))
 	parent.SetPosition(world)
 	parent.SetScale(gd.Vector3{0.3, 0.3, 0.3})

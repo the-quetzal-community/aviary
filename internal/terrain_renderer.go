@@ -82,6 +82,13 @@ func (tr *TerrainRenderer) Ready() {
 // be in world space.
 func (tr *TerrainRenderer) SetFocalPoint3D(world gd.Vector3) {
 	focal_point := tr.Vulture.WorldSpaceToVultureSpace(world)
+
+	/*if _, ok := tr.loadedTerritory[vulture.Area{}]; ok {
+		return
+	}
+	go tr.downloadArea(vulture.Area{})
+	return*/
+
 	// we need to load all 9 neighboring areas
 	for x := int32(-1); x <= 1; x++ {
 		for y := int32(-1); y <= 1; y++ {
@@ -193,11 +200,10 @@ func (tr *TerrainRenderer) uploadEdits() {
 	tmp := tr.Temporary
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	area := tr.Vulture.WorldSpaceToVultureSpace(tr.BrushTarget)
-	cell := tr.Vulture.WorldSpaceToVultureCell(tr.BrushTarget)
+	area, cell, _ := tr.Vulture.worldToVulture(tr.BrushTarget)
 	uplift := vulture.Uplift{
 		Area: vulture.Area{int16(area[0]), int16(area[1])},
-		Cell: vulture.Cell(cell[1]*16 + cell[0]),
+		Cell: cell,
 		Size: uint8(tr.BrushRadius),
 		Lift: int8(tr.BrushAmount * 32),
 	}
