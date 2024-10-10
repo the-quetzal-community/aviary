@@ -6,8 +6,6 @@ import (
 	"math"
 	"sync"
 	"time"
-
-	"runtime.link/nix"
 )
 
 // New returns a reference in-memory implementation of the Vulture API.
@@ -51,7 +49,7 @@ type refClient struct {
 type refView struct {
 	Cell Cell
 	Mesh Upload
-	Time nix.Nanos
+	Time Time
 }
 
 func (I *refImpl) uplift(ctx context.Context, uplift Uplift) ([]Territory, error) {

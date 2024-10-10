@@ -8,7 +8,6 @@ import (
 	"unsafe"
 
 	"runtime.link/api"
-	"runtime.link/nix"
 )
 
 // API specification.
@@ -86,11 +85,11 @@ type Target struct {
 
 // Uplift to apply to the surface of the world.
 type Uplift struct {
-	Time nix.Nanos `json:"time"`
-	Area Area      `json:"area"`
-	Cell Cell      `json:"cell"`
-	Size uint8     `json:"size"`
-	Lift int8      `json:"lift"`
+	Time Time  `json:"time"`
+	Area Area  `json:"area"`
+	Cell Cell  `json:"cell"`
+	Size uint8 `json:"size"`
+	Lift int8  `json:"lift"`
 }
 
 // Deltas represents an update to what the client can see.
