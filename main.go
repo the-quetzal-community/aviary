@@ -20,5 +20,6 @@ func main() {
 	gd.Register[internal.World](godot)
 	gd.Register[internal.UI](godot)
 	gd.Register[internal.PreviewRenderer](godot)
+	gd.Register[internal.VultureRenderer](godot)
 	gd.Register[internal.Main](godot)
 }

@@ -51,7 +51,6 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 	if Input.IsMouseButtonPressed(gd.MouseButtonLeft) {
 		if pr.Super().AsNode().GetChildCount(false) > 0 {
 			pr.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
-
 			pos := pr.Super().AsNode3D().GetPosition()
 			area := pr.Vulture.WorldSpaceToVultureSpace(pos)
 			cell := pr.Vulture.WorldSpaceToVultureCell(pos)
@@ -66,7 +65,7 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 				if err := pr.Vulture.api.Reform(ctx, []vulture.Deltas{{
 					Region: vulture.Region{int8(area[0]), int8(area[1])},
 					Packet: vulture.Time(time.Now().UnixNano()),
-					Packed: packed,
+					Append: packed,
 				}}); err != nil {
 					tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
 				}

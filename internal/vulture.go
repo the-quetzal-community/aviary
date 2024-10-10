@@ -37,3 +37,8 @@ func (v *Vulture) WorldSpaceToVultureSpace(world gd.Vector3) gd.Vector2i {
 	}
 	return flat.Divf(16).Vector2i()
 }
+
+func (v *Vulture) vultureCellToWorld(region vulture.Region, cell vulture.Cell) gd.Vector3 {
+	world := v.VultureSpaceToWorldSpace(gd.Vector2i{int32(region[0]), int32(region[1])})
+	return world.Add(gd.Vector3{float32(cell % 16), 0, float32(cell / 16)})
+}

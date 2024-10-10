@@ -137,15 +137,55 @@ type isElement interface {
 	Element() Element
 }
 
-func (el Elements) Add(element isElement) {
+func (el *Elements) Add(element isElement) {
 	add := element.Element()
-	el = append(el, add[:]...)
+	*el = append(*el, add[:]...)
 }
 
-func (el Elements) Iter() iter.Seq2[Offset, *Element] {
+func (el *Elements) Apply(delta Deltas) {
+	if delta.Append != nil {
+		*el = append(*el, delta.Append...)
+	}
+	if delta.Packed != nil {
+		if len(*el) < int(delta.Offset*16)+len(delta.Packed) {
+			*el = append(*el, make([]byte, int(delta.Offset*16)+len(delta.Packed)-len(*el))...)
+		}
+		copy((*el)[delta.Offset*16:], delta.Packed)
+	}
+	if delta.Sparse != nil {
+		for offset, element := range delta.Sparse {
+			if len(*el) < int(offset)+16 {
+				*el = append(*el, make([]byte, int(offset)+16-len(*el))...)
+			}
+			copy((*el)[offset:], element[:])
+		}
+	}
+}
+
+func (el Elements) Iter(off Offset) iter.Seq2[Offset, *Element] {
 	return func(yield func(Offset, *Element) bool) {
 		for i := 0; i < len(el); i += 16 {
-			if !yield(Offset(i), (*Element)(el[i:i+16])) {
+			if !yield(off+Offset(i/16), (*Element)(el[i:i+16])) {
+				break
+			}
+		}
+	}
+}
+
+func (el *Elements) Len() Offset {
+	return Offset(len(*el) / 16)
+}
+
+func (dt Deltas) Iter(append Offset) iter.Seq2[Offset, *Element] {
+	if dt.Packed != nil {
+		return dt.Packed.Iter(dt.Offset)
+	}
+	if dt.Append != nil {
+		return dt.Append.Iter(append)
+	}
+	return func(yield func(Offset, *Element) bool) {
+		for offset, element := range dt.Sparse {
+			if !yield(offset, &element) {
 				break
 			}
 		}
@@ -166,49 +206,49 @@ const (
 )
 
 func (el Element) Type() ElementType {
-	return ElementType(el[0] >> 5)
+	return ElementType(el[0] & 0b11100000)
 }
 
 func (el *Element) Sample() *ElementSample {
 	if el.Type() != ElementIsSample {
 		panic("element is not a sample")
 	}
-	return (*ElementSample)(unsafe.Pointer(&el))
+	return (*ElementSample)(unsafe.Pointer(el))
 }
 
 func (el *Element) Marker() *ElementMarker {
 	if el.Type() != ElementIsMarker {
 		panic("element is not a marker")
 	}
-	return (*ElementMarker)(unsafe.Pointer(&el))
+	return (*ElementMarker)(unsafe.Pointer(el))
 }
 
 func (el *Element) Future() *ElementFuture {
 	if el.Type() != ElementIsFuture {
 		panic("element is not a future")
 	}
-	return (*ElementFuture)(unsafe.Pointer(&el))
+	return (*ElementFuture)(unsafe.Pointer(el))
 }
 
 func (el *Element) Beizer() *ElementBeizer {
 	if el.Type() != ElementIsBeizer {
 		panic("element is not a sample")
 	}
-	return (*ElementBeizer)(unsafe.Pointer(&el))
+	return (*ElementBeizer)(unsafe.Pointer(el))
 }
 
 func (el *Element) Tether() *ElementTether {
 	if el.Type() != ElementIsTether {
 		panic("element is not a sample")
 	}
-	return (*ElementTether)(unsafe.Pointer(&el))
+	return (*ElementTether)(unsafe.Pointer(el))
 }
 
 func (el *Element) Sprite() *ElementSprite {
 	if el.Type() != ElementIsSprite {
 		panic("element is not a sample")
 	}
-	return (*ElementSprite)(unsafe.Pointer(&el))
+	return (*ElementSprite)(unsafe.Pointer(el))
 }
 
 // Hexagon represents the height and terrain type for

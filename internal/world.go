@@ -27,6 +27,7 @@ type World struct {
 
 	TerrainRenderer *TerrainRenderer
 	PreviewRenderer *PreviewRenderer
+	VultureRenderer *VultureRenderer
 
 	Vulture *Vulture
 }
@@ -41,6 +42,9 @@ func (world *World) Ready() {
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.Vulture = world.Vulture
 	world.PreviewRenderer.terrain = world.TerrainRenderer
+	world.VultureRenderer.Vulture = world.Vulture
+	world.VultureRenderer.start()
+	world.VultureRenderer.terrain = world.TerrainRenderer
 	editor_scene, ok := gd.Load[gd.PackedScene](world.KeepAlive, "res://ui/editor.tscn")
 	if ok {
 		editor, ok := gd.As[*UI](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))

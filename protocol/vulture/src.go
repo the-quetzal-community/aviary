@@ -140,9 +140,9 @@ func (I *refImpl) reform(ctx context.Context, changes []Deltas) error {
 		}
 		if change.Append != nil {
 			// convert to packed, so that we can broadcast change out-of-order.
-			changes[i].Offset = Offset(len(region.packed))
+			changes[i].Offset = region.packed.Len()
 			region.packed = append(region.packed, change.Append...)
-			changes[i].Packed = changes[i].Append
+			changes[i].Packed = change.Append
 			changes[i].Append = nil
 		}
 	}
@@ -157,7 +157,7 @@ func (I *refImpl) reform(ctx context.Context, changes []Deltas) error {
 }
 
 func (I *refImpl) rebase(region *refRegion, future int64) {
-	for _, el := range region.packed.Iter() {
+	for _, el := range region.packed.Iter(0) {
 		switch el.Type() {
 		case ElementIsMarker:
 			marker := el.Marker()
