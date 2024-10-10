@@ -107,6 +107,7 @@ func (vr *VultureRenderer) assert(regionID vulture.Region, region gd.Node, buf v
 	world := vr.Vulture.vultureCellToWorld(regionID, element.Cell)
 	world.SetY(vr.terrain.HeightAt(world))
 	parent.SetPosition(world)
+	parent.SetScale(gd.Vector3{0.3, 0.3, 0.3})
 	scene, ok := gd.Load[gd.PackedScene](tmp, "res://library/wildfire_games/foliage/acacia.glb")
 	if ok {
 		instance, ok := gd.As[gd.Node3D](tmp, scene.Instantiate(vr.KeepAlive, 0))

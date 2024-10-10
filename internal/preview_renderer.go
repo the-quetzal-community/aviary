@@ -37,6 +37,7 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 					if pr.Super().AsNode().GetChildCount(false) > 0 {
 						pr.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
 					}
+					instance.AsNode3D().SetScale(gd.Vector3{0.3, 0.3, 0.3})
 					pr.Super().AsNode().AddChild(instance.Super().AsNode(), false, 0)
 				}
 			}

@@ -69,7 +69,7 @@ func (tr *TerrainRenderer) Ready() {
 	tr.shader = *gd.Create(tr.KeepAlive, new(gd.ShaderMaterial))
 	tr.shader.SetShader(shader)
 	tr.shader.SetShaderParameter(tmp.StringName("albedo"), tmp.Variant(gd.Color{1, 1, 1, 1}))
-	tr.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{1, 1}))
+	tr.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{5, 5}))
 	tr.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(grass))
 	tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(2.0))
 	tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
@@ -160,11 +160,15 @@ func (tr *TerrainRenderer) Input(event gd.InputEvent) {
 	Input := gd.Input(tmp)
 	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok {
 		if Input.IsKeyPressed(gd.KeyShift) {
-			if event.GetButtonIndex() == gd.MouseButtonWheelUp {
-				tr.BrushRadius -= 1
-				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
-			}
 			if event.GetButtonIndex() == gd.MouseButtonWheelDown {
+				tr.BrushRadius -= 1
+				if tr.BrushRadius == 0 {
+					tr.BrushRadius = 1
+				}
+				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
+
+			}
+			if event.GetButtonIndex() == gd.MouseButtonWheelUp {
 				tr.BrushRadius += 1
 				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
 			}

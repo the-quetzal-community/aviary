@@ -62,9 +62,10 @@ func (world *World) Ready() {
 	gd.RenderingServer(world.Temporary).SetDebugGenerateWireframes(true)
 }
 
+const speed = 8
+
 func (world *World) Process(dt gd.Float) {
 	Input := gd.Input(world.Temporary)
-	const speed = 16
 	if Input.IsKeyPressed(gd.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(gd.Vector3{0, 1, 0}, -dt)
 	}
@@ -89,6 +90,12 @@ func (world *World) Process(dt gd.Float) {
 	if Input.IsKeyPressed(gd.KeyF) {
 		world.FocalPoint.Lens.AsNode3D().Rotate(gd.Vector3{1, 0, 0}, dt)
 	}
+	if Input.IsKeyPressed(gd.KeyEqual) {
+		world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.5})
+	}
+	if Input.IsKeyPressed(gd.KeyMinus) {
+		world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.5})
+	}
 	world.TerrainRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().GetPosition())
 }
 
@@ -98,10 +105,10 @@ func (world *World) UnhandledInput(event gd.InputEvent) {
 	// Tilt the camera up and down with R and F.
 	if event, ok := gd.As[gd.InputEventMouseButton](world.Temporary, event); ok && !Input.IsKeyPressed(gd.KeyShift) {
 		if event.GetButtonIndex() == gd.MouseButtonWheelUp {
-			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.5})
+			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.2})
 		}
 		if event.GetButtonIndex() == gd.MouseButtonWheelDown {
-			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.5})
+			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.2})
 		}
 	}
 	if event, ok := gd.As[gd.InputEventKey](world.Temporary, event); ok {
