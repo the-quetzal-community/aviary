@@ -81,7 +81,7 @@ func (tr *TerrainRenderer) Ready() {
 // nearby [vulture.Territory] enabling it to be rendered. The point should
 // be in world space.
 func (tr *TerrainRenderer) SetFocalPoint3D(world gd.Vector3) {
-	focal_point := tr.Vulture.WorldSpaceToVultureSpace(world)
+	focal_point, _, _ := tr.Vulture.worldToVulture(world)
 
 	/*if _, ok := tr.loadedTerritory[vulture.Area{}]; ok {
 		return
@@ -90,8 +90,8 @@ func (tr *TerrainRenderer) SetFocalPoint3D(world gd.Vector3) {
 	return*/
 
 	// we need to load all 9 neighboring areas
-	for x := int32(-1); x <= 1; x++ {
-		for y := int32(-1); y <= 1; y++ {
+	for x := int8(-1); x <= 1; x++ {
+		for y := int8(-1); y <= 1; y++ {
 			area := vulture.Area{int16(focal_point[0] + x), int16(focal_point[1] + y)}
 			if _, ok := tr.loadedTerritory[area]; ok {
 				continue
@@ -143,7 +143,7 @@ func (tr *TerrainRenderer) Process(dt gd.Float) {
 			if !Input.IsKeyPressed(gd.KeyShift) {
 				tr.mouseOver <- event.BrushTarget
 			} else {
-				event.BrushTarget = event.BrushTarget.Round().Addf(0.5)
+				event.BrushTarget = event.BrushTarget.Round()
 				tr.BrushTarget = event.BrushTarget
 				tr.BrushDeltaV = event.BrushDeltaV
 				if event.BrushDeltaV != 0 {
@@ -223,14 +223,13 @@ func (tr *TerrainRenderer) uploadEdits() {
 }
 
 func (tr *TerrainRenderer) HeightAt(world gd.Vector3) gd.Float {
-	space := tr.Vulture.WorldSpaceToVultureSpace(world)
-	area := vulture.Area{int16(space[0]), int16(space[1])}
-	cell := tr.Vulture.WorldSpaceToVultureCell(world)
+	region, cell, _ := tr.Vulture.worldToVulture(world)
+	area := vulture.Area{int16(region[0]), int16(region[1])}
 	data := tr.loadedTerritory[area].Vertices
 
 	// Ensure x and z are within bounds
-	x := math.Min(math.Max(float64(cell[0]), 0), float64(16-1))
-	z := math.Min(math.Max(float64(cell[1]), 0), float64(16-1))
+	x := math.Min(math.Max(float64(cell%16), 0), float64(16-1))
+	z := math.Min(math.Max(float64(cell/16), 0), float64(16-1))
 
 	// Calculate grid cell coordinates
 	x0, z0 := int(x), int(z)

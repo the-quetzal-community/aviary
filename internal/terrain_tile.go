@@ -83,9 +83,9 @@ func (tile *TerrainTile) Reload() {
 		0.5, 0, 0.5,
 	})
 	tile.Super().AsNode3D().SetPosition(gd.Vector3{
-		float32(tile.territory.Area[0])*15 + 8,
+		float32(tile.territory.Area[0])*15 + 8 - 0.5,
 		0,
-		float32(tile.territory.Area[1])*15 + 8,
+		float32(tile.territory.Area[1])*15 + 8 - 0.5,
 	})
 }
 
