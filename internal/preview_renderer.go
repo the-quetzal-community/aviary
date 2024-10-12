@@ -42,7 +42,7 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 				}
 			}
 		case pos := <-pr.mouseOver:
-			pr.Super().AsNode3D().SetPosition(pos)
+			pr.Super().AsNode3D().SetPosition(pr.Vulture.vultureToWorld(pr.Vulture.worldToVulture(pos)))
 			continue
 		default:
 
