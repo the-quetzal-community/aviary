@@ -102,6 +102,7 @@ func (vr *Renderer) Process(dt gd.Float) {
 		case event := <-vr.brushEvents:
 			if !Input.IsKeyPressed(gd.KeyShift) {
 				vr.mouseOver <- event.BrushTarget
+				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget.Round()))
 			} else {
 				event.BrushTarget = event.BrushTarget.Round()
 				vr.BrushTarget = event.BrushTarget

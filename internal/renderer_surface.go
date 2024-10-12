@@ -54,7 +54,6 @@ func (tr *Renderer) Input(event gd.InputEvent) {
 
 // submit uplift via Vulture API, so that it is persisted.
 func (tr *Renderer) uploadEdits() {
-	tmp := tr.Temporary
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	area, cell, _ := tr.Vulture.worldToVulture(tr.BrushTarget)
@@ -66,7 +65,6 @@ func (tr *Renderer) uploadEdits() {
 	}
 	tr.BrushActive = false
 	tr.BrushAmount = 0
-	tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
 	go func() {
 		tmp := gd.NewLifetime(tr.Temporary)
 		defer tmp.End()
