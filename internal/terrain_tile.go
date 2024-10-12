@@ -8,7 +8,9 @@ import (
 type TerrainTile struct {
 	gd.Class[TerrainTile, gd.StaticBody3D] `gd:"AviaryTerrainTile"`
 
-	territory   vulture.Territory
+	region vulture.Region
+	buffer vulture.Elements
+
 	brushEvents chan<- terrainBrushEvent
 
 	Mesh   gd.MeshInstance3D
@@ -26,36 +28,56 @@ func (tile *TerrainTile) Reload() {
 	tmp := tile.Temporary
 
 	var vertices = tmp.PackedVector3Array()
+	vertices.Resize(17 * 17)
 	var indicies = tmp.PackedInt32Array()
 	var normals = tmp.PackedVector3Array()
+	normals.Resize(17 * 17)
 	var uvs = tmp.PackedVector2Array()
+	uvs.Resize(17 * 17)
 
 	heights := tmp.PackedFloat32Array()
-	for i, vertex := range tile.territory.Vertices {
-		heights.PushBack(float64(vertex.Height()) / 32)
+	heights.Resize(17 * 17)
+
+	for i := range vertices.Len() {
+		//heights.PushBack(float64(vertex.Height()) / 32)
 		// calculate the position of the vertex in mesh-space
-		x := float32(i%16 - 8)
-		y := float32(i/16 - 8)
-		vertices.PushBack(gd.Vector3{x, float32(vertex.Height()) / 32, y})
-		uvs.PushBack(gd.Vector2{float32(i%16) / 16, float32(i/16) / 16})
-		normals.PushBack(gd.Vector3{0, 1, 0})
+		x := float32(i%17) - 8.5
+		y := float32(i/17) - 8.5
+		// float32(vertex.Height()) / 32
+		vertices.Set(gd.Int(i), gd.Vector3{x, 0, y})
+		uvs.Set(gd.Int(i), gd.Vector2{float32(i%17) / 16, float32(i/17) / 16})
+		normals.Set(gd.Int(i), gd.Vector3{0, 1, 0})
 	}
+
+	for _, element := range tile.buffer.Iter(0) {
+		if element.Type() == vulture.ElementIsPoints {
+			points := element.Points()
+			for i, height := range points.Height {
+				index := gd.Int(points.Cell%16) + gd.Int(17*(points.Cell/16)) + gd.Int(i%2) + 17*gd.Int(i/2)
+				heights.Set(gd.Int(index), gd.Float(height)/32)
+				vertex := vertices.Index(index)
+				vertex.SetY(gd.Float(height) / 32)
+				vertices.Set(index, vertex)
+			}
+		}
+	}
+
 	// add indices for each triangle.
-	for i := 0; i < 15; i++ {
-		for j := 0; j < 15; j++ {
+	for i := 0; i < 16; i++ {
+		for j := 0; j < 16; j++ {
 			// triangle 1
-			indicies.PushBack(gd.Int(i*16 + j))
-			indicies.PushBack(gd.Int(i*16 + j + 1))
-			indicies.PushBack(gd.Int((i+1)*16 + j + 1))
+			indicies.PushBack(gd.Int(i*17 + j))
+			indicies.PushBack(gd.Int(i*17 + j + 1))
+			indicies.PushBack(gd.Int((i+1)*17 + j + 1))
 			// triangle 2
-			indicies.PushBack(gd.Int(i*16 + j))
-			indicies.PushBack(gd.Int((i+1)*16 + j + 1))
-			indicies.PushBack(gd.Int((i+1)*16 + j))
+			indicies.PushBack(gd.Int(i*17 + j))
+			indicies.PushBack(gd.Int((i+1)*17 + j + 1))
+			indicies.PushBack(gd.Int((i+1)*17 + j))
 		}
 	}
 	shape := gd.Create(tmp, new(gd.HeightMapShape3D))
-	shape.SetMapDepth(16)
-	shape.SetMapWidth(16)
+	shape.SetMapDepth(17)
+	shape.SetMapWidth(17)
 	shape.SetMapData(heights)
 
 	var mesh = gd.Create(tmp, new(gd.ArrayMesh))
@@ -83,9 +105,9 @@ func (tile *TerrainTile) Reload() {
 		0.5, 0, 0.5,
 	})
 	tile.Super().AsNode3D().SetPosition(gd.Vector3{
-		float32(tile.territory.Area[0])*15 + 8 - 0.5,
+		float32(tile.region[0])*16 + 8.5 - 0.5,
 		0,
-		float32(tile.territory.Area[1])*15 + 8 - 0.5,
+		float32(tile.region[1])*16 + 8.5 - 0.5,
 	})
 }
 

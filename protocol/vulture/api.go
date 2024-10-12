@@ -25,7 +25,7 @@ type API struct {
 	Target func(context.Context, Target) error `http:"POST /vulture/v0/target"
 		returns a write-only stream for the client to report their
 		focus.`
-	Uplift func(context.Context, Uplift) ([]Territory, error) `http:"POST /vulture/v0/uplift"
+	Uplift func(context.Context, Uplift) error `http:"POST /vulture/v0/uplift"
 		can be used to modify the surface of a region.`
 	Reform func(context.Context, []Deltas) error `http:"POST /vulture/v0/reform"
 		can be used to undo/redo changes.`
@@ -36,7 +36,7 @@ type API struct {
 // Deprecated
 type Territory struct {
 	Area     Area            `json:"area"`
-	Vertices [16 * 16]Vertex `json:"vertices"`
+	Vertices [17 * 17]Vertex `json:"vertices"`
 }
 
 // Upload identifier.
@@ -61,7 +61,7 @@ type Vision struct {
 	Jump     uint16
 	Bump     uint8
 	Size     [2]uint16
-	Zoom     uint16 // if 0, then orbit
+	Zoom     uint16 // if 0, then FPS
 	Roll     uint16
 	Pitch    uint16
 	Yaw      uint16
@@ -85,11 +85,11 @@ type Target struct {
 
 // Uplift to apply to the surface of the world.
 type Uplift struct {
-	Time Time  `json:"time"`
-	Area Area  `json:"area"`
-	Cell Cell  `json:"cell"`
-	Size uint8 `json:"size"`
-	Lift int8  `json:"lift"`
+	Time Time   `json:"time"`
+	Area Region `json:"area"`
+	Cell Cell   `json:"cell"`
+	Size uint8  `json:"size"`
+	Lift int8   `json:"lift"`
 }
 
 // Deltas represents an update to what the client can see.
@@ -130,6 +130,8 @@ type Region [2]int8
 // Element can either be a [Thing], [Anime] or ?
 type Element [16]byte
 
+func (el Element) Element() Element { return el }
+
 type Elements []byte
 
 type isElement interface {
@@ -153,10 +155,10 @@ func (el *Elements) Apply(delta Deltas) {
 	}
 	if delta.Sparse != nil {
 		for offset, element := range delta.Sparse {
-			if len(*el) < int(offset)+16 {
-				*el = append(*el, make([]byte, int(offset)+16-len(*el))...)
+			if len(*el) < int(offset*16)+16 {
+				*el = append(*el, make([]byte, int(offset*16)+16-len(*el))...)
 			}
-			copy((*el)[offset:], element[:])
+			copy((*el)[offset*16:], element[:])
 		}
 	}
 }
@@ -195,7 +197,7 @@ type ElementType uint8
 
 const (
 	ElementIsVacant ElementType = iota << 5
-	ElementIsSample
+	ElementIsPoints
 	ElementIsMarker
 	ElementIsFuture
 	ElementIsTether
@@ -208,11 +210,11 @@ func (el Element) Type() ElementType {
 	return ElementType(el[0] & 0b11100000)
 }
 
-func (el *Element) Sample() *ElementSample {
-	if el.Type() != ElementIsSample {
+func (el *Element) Points() *ElementPoints {
+	if el.Type() != ElementIsPoints {
 		panic("element is not a sample")
 	}
-	return (*ElementSample)(unsafe.Pointer(el))
+	return (*ElementPoints)(unsafe.Pointer(el))
 }
 
 func (el *Element) Marker() *ElementMarker {
@@ -273,13 +275,19 @@ type Angle uint8
 type Height int16
 
 // ElementSample represents a grid 'cell' sample.
-type ElementSample [2]struct {
-	Shader uint8  // Shader to apply to the cell.
-	Height Height // Height of the cell.
-	Offset uint8  // Liquid/cover depth.
-	Motion uint8  // Motion direction of the liquid.
-	Vertex Cell   // Vertex identifies the cell being sampled.
-	Upload Upload // Upload identifies the cell's texture.
+type ElementPoints struct {
+	Motion int8
+	Liquid Upload
+	Offset int8
+	Cell   Cell
+	Upload Upload    // Upload identifies the cell's texture.
+	Height [4]Height // top left, top right, bottom left, bottom right
+}
+
+func (sample ElementPoints) Element() Element {
+	el := *(*Element)(unsafe.Pointer(&sample))
+	el[0] |= uint8(ElementIsPoints)
+	return el
 }
 
 // ElementMarker describes a fixed point within the region.

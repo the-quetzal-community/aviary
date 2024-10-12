@@ -2,8 +2,6 @@ package vulture
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -52,68 +50,107 @@ type refView struct {
 	Time Time
 }
 
-func (I *refImpl) uplift(ctx context.Context, uplift Uplift) ([]Territory, error) {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
+// deltas used to prepare changes to make to the space.
+type deltas []Deltas
 
-	results := []Territory{}
+func (d *deltas) forRegion(region Region) *Deltas {
+	var dt *Deltas
+	for i := range *d {
+		if (*d)[i].Region == region {
+			dt = &(*d)[i]
+			break
+		}
+	}
+	if dt == nil {
+		*d = append(*d, Deltas{Region: region})
+		dt = &(*d)[len(*d)-1]
+	}
+	return dt
+}
+
+func (d *deltas) Write(region Region, offset Offset, element Element) {
+	dt := d.forRegion(region)
+	if offset == dt.Packed.Len() {
+		dt.Packed.Add(element)
+	} else {
+		if dt.Sparse == nil {
+			dt.Sparse = make(map[Offset]Element)
+		}
+		dt.Sparse[offset] = element
+	}
+}
+
+func (d *deltas) Append(region Region, element Element) {
+	dt := d.forRegion(region)
+	dt.Append.Add(element)
+}
+
+func (I *refImpl) uplift(ctx context.Context, uplift Uplift) error {
+	var dt deltas
 	// apply requested uplift to the cell, ie. a circular
 	// terrain brush with a radius of uplift.Size
 	for X := -1; X <= 1; X++ {
 		for Y := -1; Y <= 1; Y++ {
-			area := Area{uplift.Area[0] + int16(X), uplift.Area[1] + int16(Y)}
-			mods := false
-			terrain, ok := I.chunks[area]
-			if !ok {
-				for x := 0; x < 16; x++ {
-					for y := 0; y < 16; y++ {
-						terrain.Vertices[y*16+x] = 0
+			var modified [16 * 16]bool
+			if uplift.Lift != 0 {
+				affected := func(x, y int) (Height, bool) {
+					dx := x + X*16 - int(uplift.Cell%16)
+					dy := y + Y*16 - int(uplift.Cell/16)
+					height := Height(float64(uplift.Lift) * (1 - float64(dx*dx+dy*dy)/float64(int(uplift.Size)*int(uplift.Size))))
+					return height, dx*dx+dy*dy <= int(uplift.Size)*int(uplift.Size) // uplift should smoothly decrease with distance
+				}
+				region := Region{uplift.Area[0] + int8(X), uplift.Area[1] + int8(Y)}
+				regionData, ok := I.regions[region]
+				if !ok {
+					regionData = new(refRegion)
+					I.regions[region] = regionData
+				}
+				for offset, el := range regionData.packed.Iter(0) {
+					if el.Type() == ElementIsPoints {
+						sample := *el.Points()
+						cell := sample.Cell
+						x := int(cell % 16)
+						y := int(cell / 16)
+						var edited bool
+						for i := range sample.Height {
+							height, ok := affected(x+i%2, y+i/2)
+							if ok {
+								edited = true
+								sample.Height[i] += height
+							}
+						}
+						if edited {
+							dt.Write(region, offset, sample.Element())
+							modified[y*16+x] = true
+						}
 					}
 				}
-			}
-			if uplift.Lift != 0 {
-				for x := 0; x < 16; x++ {
-					for y := 0; y < 16; y++ {
-						dx := (float64(x) + float64(X*16) - float64(X)) - (float64(uplift.Cell % 16))
-						dy := (float64(y) + float64(Y*16) - float64(Y)) - (float64(uplift.Cell / 16))
-						if dx*dx+dy*dy <= float64(uplift.Size*uplift.Size) { // uplift should smoothly decrease with distance
-							height := int16(float64(uplift.Lift) * (1 - (dx*dx+dy*dy)/float64(uplift.Size*uplift.Size)))
-							vertex := &terrain.Vertices[y*16+x]
-							vertex.SetHeight(vertex.Height() + height)
-							mods = true
+				for x := 0; x < 16; x += 1 {
+					for y := 0; y < 16; y += 1 {
+						if !modified[y*16+x] {
+							var heights [4]Height
+							for i := range heights {
+								if height, ok := affected(x+i%2, y+i/2); ok {
+									heights[i] = height
+								}
+							}
+							sample := ElementPoints{
+								Cell:   Cell(y*16 + x),
+								Height: heights,
+							}
+							if heights != [4]Height{} {
+								dt.Append(region, sample.Element())
+							}
 						}
 					}
 				}
 			}
-			terrain.Area = area
-			I.chunks[area] = terrain
-			if mods || area == uplift.Area {
-				results = append(results, terrain)
-			}
 		}
 	}
-	return results, nil
+	return I.reform(ctx, dt)
 }
 
 func (I *refImpl) reform(ctx context.Context, changes []Deltas) error {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
-
-	for _, change := range changes {
-		sum := 0
-		if change.Packed != nil {
-			sum++
-		}
-		if change.Sparse != nil {
-			sum++
-		}
-		if change.Append != nil {
-			sum++
-		}
-		if sum != 1 {
-			return errors.New("please provide exactly one of packed, sparse or append")
-		}
-	}
 	now := I.time()
 	for i, change := range changes {
 		region, ok := I.regions[change.Region]
@@ -128,29 +165,15 @@ func (I *refImpl) reform(ctx context.Context, changes []Deltas) error {
 		if future > math.MaxUint16 {
 			I.rebase(region, future)
 		}
-		if change.Packed != nil {
-			if len(change.Packed) > len(region.packed) {
-				region.packed = append(region.packed, make(Elements, len(change.Packed)-len(region.packed))...)
-			}
-			copy(region.packed[change.Offset:], change.Packed)
-		}
-		if change.Sparse != nil {
-			for i, el := range change.Sparse {
-				if change.Offset+i >= Offset(len(region.packed)) {
-					region.packed = append(region.packed, make(Elements, int(change.Offset+i)-len(region.packed)+1)...)
-				}
-				copy(region.packed[change.Offset+i:], el[:])
-			}
-		}
-		if change.Append != nil {
+		if change.Append != nil && change.Packed == nil {
 			// convert to packed, so that we can broadcast change out-of-order.
 			changes[i].Offset = region.packed.Len()
-			fmt.Println(changes[i].Offset)
-			region.packed = append(region.packed, change.Append...)
 			changes[i].Packed = change.Append
 			changes[i].Append = nil
 		}
+		region.packed.Apply(change)
 	}
+	//json.NewEncoder(os.Stdout).Encode(changes)
 	for _, client := range I.clients {
 		select {
 		case client.events <- changes:

@@ -28,9 +28,8 @@ type World struct {
 
 	mouseOver chan gd.Vector3
 
-	TerrainRenderer *TerrainRenderer
 	PreviewRenderer *PreviewRenderer
-	VultureRenderer *VultureRenderer
+	VultureRenderer *Renderer
 
 	Vulture *Vulture
 
@@ -46,10 +45,10 @@ func (world *World) Ready() {
 	world.PreviewRenderer.preview = make(chan string, 1)
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.Vulture = world.Vulture
-	world.PreviewRenderer.terrain = world.TerrainRenderer
+	world.PreviewRenderer.terrain = world.VultureRenderer
+	world.VultureRenderer.mouseOver = world.mouseOver
 	world.VultureRenderer.Vulture = world.Vulture
 	world.VultureRenderer.start()
-	world.VultureRenderer.terrain = world.TerrainRenderer
 	editor_scene, ok := gd.Load[gd.PackedScene](world.KeepAlive, "res://ui/editor.tscn")
 	if ok {
 		editor, ok := gd.As[*UI](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
@@ -58,12 +57,10 @@ func (world *World) Ready() {
 			world.Super().AsNode().AddChild(editor.Super().AsNode(), false, 0)
 		}
 	}
-	world.TerrainRenderer.mouseOver = world.mouseOver
-	world.TerrainRenderer.Vulture = world.Vulture
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(gd.Vector3{0, 1, 3})
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(gd.Vector3{0, 0, 0}, gd.Vector3{0, 1, 0}, false)
 	world.Light.AsNode3D().SetRotation(gd.Vector3{-math.Pi / 2, 0, 0})
-	world.TerrainRenderer.SetFocalPoint3D(gd.Vector3{})
+	world.VultureRenderer.SetFocalPoint3D(gd.Vector3{})
 	gd.RenderingServer(world.Temporary).SetDebugGenerateWireframes(true)
 }
 
@@ -102,7 +99,7 @@ func (world *World) Process(dt gd.Float) {
 	if Input.IsKeyPressed(gd.KeyMinus) {
 		world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.5})
 	}
-	world.TerrainRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().GetPosition())
+	world.VultureRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().GetPosition())
 
 	if !world.saving.Load() && Input.IsKeyPressed(gd.KeyCtrl) && Input.IsKeyPressed(gd.KeyS) {
 		world.saving.Store(true)

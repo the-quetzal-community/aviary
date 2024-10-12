@@ -19,7 +19,7 @@ type PreviewRenderer struct {
 	preview chan string // resource name
 
 	Vulture *Vulture
-	terrain *TerrainRenderer
+	terrain *Renderer
 }
 
 func (pr *PreviewRenderer) AsNode() gd.Node { return pr.Super().AsNode() }

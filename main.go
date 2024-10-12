@@ -15,11 +15,10 @@ func main() {
 	gd.Register[internal.Tree](godot)
 	gd.Register[internal.Rock](godot)
 	gd.Register[internal.TerrainTile](godot)
-	gd.Register[internal.TerrainRenderer](godot)
 	gd.Register[internal.Vulture](godot)
 	gd.Register[internal.World](godot)
 	gd.Register[internal.UI](godot)
 	gd.Register[internal.PreviewRenderer](godot)
-	gd.Register[internal.VultureRenderer](godot)
+	gd.Register[internal.Renderer](godot)
 	gd.Register[internal.Main](godot)
 }
