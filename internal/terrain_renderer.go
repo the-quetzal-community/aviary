@@ -69,7 +69,7 @@ func (tr *TerrainRenderer) Ready() {
 	tr.shader = *gd.Create(tr.KeepAlive, new(gd.ShaderMaterial))
 	tr.shader.SetShader(shader)
 	tr.shader.SetShaderParameter(tmp.StringName("albedo"), tmp.Variant(gd.Color{1, 1, 1, 1}))
-	tr.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{5, 5}))
+	tr.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{8, 8}))
 	tr.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(grass))
 	tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(2.0))
 	tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
