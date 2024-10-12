@@ -2,7 +2,9 @@ package vulture
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"os"
 	"sync"
 	"time"
 )
@@ -86,13 +88,14 @@ func (d *deltas) Append(region Region, element Element) {
 }
 
 func (I *refImpl) uplift(ctx context.Context, uplift Uplift) error {
+	json.NewEncoder(os.Stdout).Encode(uplift)
 	var dt deltas
 	// apply requested uplift to the cell, ie. a circular
 	// terrain brush with a radius of uplift.Size
-	for X := -1; X <= 1; X++ {
-		for Y := -1; Y <= 1; Y++ {
-			var modified [16 * 16]bool
-			if uplift.Lift != 0 {
+	if uplift.Lift != 0 || uplift.Draw != 0 {
+		for X := -1; X <= 1; X++ {
+			for Y := -1; Y <= 1; Y++ {
+				var modified [16 * 16]bool
 				affected := func(x, y int) (Height, bool) {
 					dx := x + X*16 - int(uplift.Cell%16)
 					dy := y + Y*16 - int(uplift.Cell/16)
@@ -117,6 +120,7 @@ func (I *refImpl) uplift(ctx context.Context, uplift Uplift) error {
 							if ok {
 								edited = true
 								sample.Height[i] += height
+								sample.Sample[i] = uint8(uplift.Draw)
 							}
 						}
 						if edited {
@@ -129,16 +133,21 @@ func (I *refImpl) uplift(ctx context.Context, uplift Uplift) error {
 					for y := 0; y < 16; y += 1 {
 						if !modified[y*16+x] {
 							var heights [4]Height
+							var samples [4]uint8
+							changed := false
 							for i := range heights {
 								if height, ok := affected(x+i%2, y+i/2); ok {
 									heights[i] = height
+									samples[i] = uint8(uplift.Draw)
+									changed = true
 								}
 							}
 							sample := ElementPoints{
 								Cell:   Cell(y*16 + x),
 								Height: heights,
+								Sample: samples,
 							}
-							if heights != [4]Height{} {
+							if changed && (heights != [4]Height{} || uplift.Draw != 0) {
 								dt.Append(region, sample.Element())
 							}
 						}

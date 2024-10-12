@@ -20,7 +20,7 @@ type Renderer struct {
 	ActiveRegions gd.Node
 	CachedRegions gd.Node
 
-	heightMapping map[vulture.Region][17 * 17]vulture.Height
+	heightMapping map[vulture.Region][16 * 16][4]vulture.Height
 
 	Vulture *Vulture
 
@@ -34,6 +34,8 @@ type Renderer struct {
 
 	shader gd.ShaderMaterial
 
+	texture chan string
+
 	//
 	// Terrain Brush parameters are used to represent modifications
 	// to the terrain. Either for texturing or height map adjustments.
@@ -44,6 +46,8 @@ type Renderer struct {
 	BrushAmount gd.Float
 	BrushDeltaV gd.Float
 	brushEvents chan terrainBrushEvent
+
+	PaintActive bool
 }
 
 func (tr *Renderer) Ready() {
@@ -56,11 +60,20 @@ func (tr *Renderer) Ready() {
 	if !ok {
 		return
 	}
+	cliff, ok := gd.Load[gd.Texture2D](tmp, "res://library/wildfire_games/texture/alpine_cliff.png")
+	if !ok {
+		return
+	}
+	textures := gd.Create(tmp, new(gd.Texture2DArray))
+	array := gd.NewArrayOf[gd.Image](tmp)
+	array.PushBack(grass.AsTexture2D().GetImage(tmp))
+	array.PushBack(cliff.AsTexture2D().GetImage(tmp))
+	textures.AsImageTextureLayered().CreateFromImages(array)
 	tr.shader = *gd.Create(tr.KeepAlive, new(gd.ShaderMaterial))
 	tr.shader.SetShader(shader)
 	tr.shader.SetShaderParameter(tmp.StringName("albedo"), tmp.Variant(gd.Color{1, 1, 1, 1}))
 	tr.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{8, 8}))
-	tr.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(grass))
+	tr.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(textures))
 	tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(2.0))
 	tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
 	tr.BrushRadius = 2.0
@@ -99,9 +112,19 @@ func (vr *Renderer) Process(dt gd.Float) {
 		select {
 		case deltas := <-vr.events:
 			vr.apply(deltas)
+		case res := <-vr.texture:
+			texture, ok := gd.Load[gd.Texture2D](tmp, res)
+			if !ok {
+				tmp.Printerr(tmp.Variant(tmp.String("Failed to load texture")))
+				break
+			}
+			vr.shader.SetShaderParameter(tmp.StringName("paint_texture"), tmp.Variant(texture))
+			vr.shader.SetShaderParameter(tmp.StringName("paint_active"), tmp.Variant(true))
+			vr.PaintActive = true
 		case event := <-vr.brushEvents:
 			if !Input.IsKeyPressed(gd.KeyShift) {
 				vr.mouseOver <- event.BrushTarget
+				vr.BrushTarget = event.BrushTarget.Round()
 				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget.Round()))
 			} else {
 				event.BrushTarget = event.BrushTarget.Round()
@@ -195,6 +218,7 @@ func (vr *Renderer) reload(region vulture.Region) {
 		area := gd.Create(vr.KeepAlive, new(TerrainTile))
 		area.buffer = vr.regions[region]
 		area.region = region
+		area.heightMapping = vr.heightMapping
 		area.brushEvents = vr.brushEvents
 		area.Shader = vr.shader
 		area.Super().AsNode().SetName(tmp.String(name))

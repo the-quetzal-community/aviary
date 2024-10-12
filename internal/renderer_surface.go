@@ -15,7 +15,7 @@ type terrainBrushEvent struct {
 }
 
 func (tr *Renderer) OnCreate() {
-	tr.heightMapping = make(map[vulture.Region][17 * 17]vulture.Height)
+	tr.heightMapping = make(map[vulture.Region][16 * 16][4]vulture.Height)
 	tr.brushEvents = make(chan terrainBrushEvent, 100)
 }
 
@@ -25,20 +25,28 @@ func (tr *Renderer) Input(event gd.InputEvent) {
 	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok {
 		if Input.IsKeyPressed(gd.KeyShift) {
 			if event.GetButtonIndex() == gd.MouseButtonWheelDown {
-				tr.BrushRadius -= 1
+				tr.BrushRadius -= 0.5
 				if tr.BrushRadius == 0 {
-					tr.BrushRadius = 1
+					tr.BrushRadius = 0.5
 				}
 				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
 
 			}
 			if event.GetButtonIndex() == gd.MouseButtonWheelUp {
-				tr.BrushRadius += 1
+				tr.BrushRadius += 0.5
 				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
 			}
 		}
 		if tr.BrushActive && event.GetButtonIndex() == gd.MouseButtonLeft || event.GetButtonIndex() == gd.MouseButtonRight && event.AsInputEvent().IsReleased() {
-			tr.uploadEdits()
+			tr.uploadEdits(vulture.Uplift{
+				Lift: int8(tr.BrushAmount * 32),
+			})
+		}
+		if event.GetButtonIndex() == gd.MouseButtonLeft && event.AsInputEvent().IsReleased() && tr.PaintActive {
+			tr.PaintActive = false
+			tr.uploadEdits(vulture.Uplift{
+				Draw: 1, // TODO upload ID
+			})
 		}
 	}
 	if event, ok := gd.As[gd.InputEventKey](tmp, event); ok {
@@ -53,16 +61,13 @@ func (tr *Renderer) Input(event gd.InputEvent) {
 }
 
 // submit uplift via Vulture API, so that it is persisted.
-func (tr *Renderer) uploadEdits() {
+func (tr *Renderer) uploadEdits(uplift vulture.Uplift) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	area, cell, _ := tr.Vulture.worldToVulture(tr.BrushTarget)
-	uplift := vulture.Uplift{
-		Area: area,
-		Cell: cell,
-		Size: uint8(tr.BrushRadius),
-		Lift: int8(tr.BrushAmount * 32),
-	}
+	uplift.Area = area
+	uplift.Cell = cell
+	uplift.Size = uint8(tr.BrushRadius)
 	tr.BrushActive = false
 	tr.BrushAmount = 0
 	go func() {
@@ -76,6 +81,7 @@ func (tr *Renderer) uploadEdits() {
 }
 
 func (tr *Renderer) HeightAt(world gd.Vector3) gd.Float {
+	return 0
 	region, cell, _ := tr.Vulture.worldToVulture(world)
 	data := tr.heightMapping[region]
 
@@ -102,9 +108,9 @@ func (tr *Renderer) HeightAt(world gd.Vector3) gd.Float {
 
 	if insideTriangle {
 		// We're in the triangle that includes (x0,z0), (x1,z0), and (x0,z1)
-		y00 := float64(data[z0*17+x0])
-		y10 := float64(data[z0*17+x1])
-		y01 := float64(data[z1*17+x0])
+		y00 := float64(data[z0*17+x0][0])
+		y10 := float64(data[z0*17+x1][0])
+		y01 := float64(data[z1*17+x0][0])
 
 		// Barycentric interpolation within the triangle
 		alpha := float64(x - float64(x0))
@@ -114,9 +120,9 @@ func (tr *Renderer) HeightAt(world gd.Vector3) gd.Float {
 
 	} else {
 		// We're in the other triangle that includes (x1,z1), (x1,z0), and (x0,z1)
-		y11 := float64(data[z1*17+x1])
-		y10 := float64(data[z0*17+x1])
-		y01 := float64(data[z1*17+x0])
+		y11 := float64(data[z1*17+x1][0])
+		y10 := float64(data[z0*17+x1][0])
+		y01 := float64(data[z1*17+x0][0])
 
 		// Barycentric interpolation within this triangle
 		alpha := float64(1 - (x - float64(x0)))

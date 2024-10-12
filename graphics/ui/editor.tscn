@@ -1,7 +1,8 @@
-[gd_scene load_steps=7 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=8 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Texture2D" uid="uid://cikmokf7owm08" path="res://emoji/twemoji/🌳.png" id="1_afnya"]
 [ext_resource type="Texture2D" uid="uid://ucuhd0xig3ve" path="res://emoji/twemoji/⛰.png" id="1_sspau"]
+[ext_resource type="Texture2D" uid="uid://ctys5n3fs8mnq" path="res://emoji/twemoji/🎨.png" id="2_hngsh"]
 [ext_resource type="Texture2D" uid="uid://kwpwttni4f7u" path="res://emoji/twemoji/🪨.png" id="3_ykgy4"]
 [ext_resource type="Texture2D" uid="uid://d02qugxpmsups" path="res://emoji/twemoji/🛖.png" id="4_rv2vw"]
 [ext_resource type="Texture2D" uid="uid://bngfvl7xp4vdo" path="res://emoji/twemoji/👫.png" id="5_5anuo"]
@@ -34,6 +35,10 @@ theme_override_constants/separation = 25
 [node name="Terrain" type="TextureButton" parent="Toolkit/Buttons"]
 layout_mode = 2
 texture_normal = ExtResource("1_sspau")
+
+[node name="Texture" type="TextureButton" parent="Toolkit/Buttons"]
+layout_mode = 2
+texture_normal = ExtResource("2_hngsh")
 
 [node name="Foliage" type="TextureButton" parent="Toolkit/Buttons"]
 layout_mode = 2

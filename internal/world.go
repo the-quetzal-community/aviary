@@ -43,6 +43,7 @@ func (world *World) Ready() {
 	}
 	world.mouseOver = make(chan gd.Vector3, 100)
 	world.PreviewRenderer.preview = make(chan string, 1)
+	world.VultureRenderer.texture = make(chan string, 1)
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.Vulture = world.Vulture
 	world.PreviewRenderer.terrain = world.VultureRenderer
@@ -54,6 +55,7 @@ func (world *World) Ready() {
 		editor, ok := gd.As[*UI](world.Temporary, editor_scene.Instantiate(world.KeepAlive, 0))
 		if ok {
 			editor.preview = world.PreviewRenderer.preview
+			editor.texture = world.VultureRenderer.texture
 			world.Super().AsNode().AddChild(editor.Super().AsNode(), false, 0)
 		}
 	}
@@ -123,10 +125,10 @@ func (world *World) UnhandledInput(event gd.InputEvent) {
 	// Tilt the camera up and down with R and F.
 	if event, ok := gd.As[gd.InputEventMouseButton](world.Temporary, event); ok && !Input.IsKeyPressed(gd.KeyShift) {
 		if event.GetButtonIndex() == gd.MouseButtonWheelUp {
-			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.2})
+			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, -0.4})
 		}
 		if event.GetButtonIndex() == gd.MouseButtonWheelDown {
-			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.2})
+			world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.4})
 		}
 	}
 	if event, ok := gd.As[gd.InputEventKey](world.Temporary, event); ok {

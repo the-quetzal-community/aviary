@@ -90,6 +90,7 @@ type Uplift struct {
 	Cell Cell   `json:"cell"`
 	Size uint8  `json:"size"`
 	Lift int8   `json:"lift"`
+	Draw Upload `json:"draw"`
 }
 
 // Deltas represents an update to what the client can see.
@@ -277,10 +278,10 @@ type Height int16
 // ElementSample represents a grid 'cell' sample.
 type ElementPoints struct {
 	Motion int8
-	Liquid Upload
 	Offset int8
+	Liquid uint8
 	Cell   Cell
-	Upload Upload    // Upload identifies the cell's texture.
+	Sample [4]uint8  // top left, top right, bottom left, bottom right
 	Height [4]Height // top left, top right, bottom left, bottom right
 }
 
