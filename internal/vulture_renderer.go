@@ -49,6 +49,7 @@ func (vr *VultureRenderer) listenForEvents(tmp gd.Lifetime) {
 	}
 	vr.events = deltas
 	vr.listening.Store(true)
+	vr.Vulture.load()
 }
 
 func (vr *VultureRenderer) Process(dt gd.Float) {

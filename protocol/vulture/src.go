@@ -3,6 +3,7 @@ package vulture
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -38,7 +39,6 @@ type refImpl struct {
 
 type refRegion struct {
 	period int64
-	bounds [6]float32
 	packed Elements
 }
 
@@ -129,16 +129,23 @@ func (I *refImpl) reform(ctx context.Context, changes []Deltas) error {
 			I.rebase(region, future)
 		}
 		if change.Packed != nil {
+			if len(change.Packed) > len(region.packed) {
+				region.packed = append(region.packed, make(Elements, len(change.Packed)-len(region.packed))...)
+			}
 			copy(region.packed[change.Offset:], change.Packed)
 		}
 		if change.Sparse != nil {
 			for i, el := range change.Sparse {
+				if change.Offset+i >= Offset(len(region.packed)) {
+					region.packed = append(region.packed, make(Elements, int(change.Offset+i)-len(region.packed)+1)...)
+				}
 				copy(region.packed[change.Offset+i:], el[:])
 			}
 		}
 		if change.Append != nil {
 			// convert to packed, so that we can broadcast change out-of-order.
 			changes[i].Offset = region.packed.Len()
+			fmt.Println(changes[i].Offset)
 			region.packed = append(region.packed, change.Append...)
 			changes[i].Packed = change.Append
 			changes[i].Append = nil

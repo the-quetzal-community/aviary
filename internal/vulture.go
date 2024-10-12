@@ -1,7 +1,11 @@
 package internal
 
 import (
+	"context"
+	"encoding/gob"
+	"fmt"
 	"math"
+	"os"
 
 	"grow.graphics/gd"
 	"the.quetzal.community/aviary/protocol/vulture"
@@ -16,6 +20,34 @@ type Vulture struct {
 
 func (v *Vulture) OnCreate() {
 	v.api = vulture.New() // in-memory for now, will be replaced with a remote connection
+}
+
+func (v *Vulture) load() {
+	tmp := v.Temporary
+
+	var regions map[vulture.Region]vulture.Elements
+	file, err := os.Open("save.vult")
+	if err != nil {
+		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		return
+	}
+	defer file.Close()
+	if err := gob.NewDecoder(file).Decode(&regions); err != nil {
+		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		return
+	}
+	var deltas []vulture.Deltas
+	for region, packed := range regions {
+		deltas = append(deltas, vulture.Deltas{
+			Region: region,
+			Packed: packed,
+		})
+	}
+	fmt.Println(len(deltas))
+	if err := v.api.Reform(context.TODO(), deltas); err != nil {
+		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		return
+	}
 }
 
 func (v *Vulture) vultureToWorld(region vulture.Region, cell vulture.Cell, bump uint8) gd.Vector3 {

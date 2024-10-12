@@ -10,6 +10,7 @@ var categories = []string{
 	"shelter",
 	"terrain",
 	"citizen",
+	"trinket",
 	"critter",
 }
 

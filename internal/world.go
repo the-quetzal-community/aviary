@@ -1,7 +1,10 @@
 package internal
 
 import (
+	"encoding/gob"
 	"math"
+	"os"
+	"sync/atomic"
 
 	"grow.graphics/gd"
 )
@@ -30,6 +33,8 @@ type World struct {
 	VultureRenderer *VultureRenderer
 
 	Vulture *Vulture
+
+	saving atomic.Bool
 }
 
 // Ready does a bunch of dependency injection and setup.
@@ -65,7 +70,8 @@ func (world *World) Ready() {
 const speed = 8
 
 func (world *World) Process(dt gd.Float) {
-	Input := gd.Input(world.Temporary)
+	tmp := world.Temporary
+	Input := gd.Input(tmp)
 	if Input.IsKeyPressed(gd.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(gd.Vector3{0, 1, 0}, -dt)
 	}
@@ -97,6 +103,21 @@ func (world *World) Process(dt gd.Float) {
 		world.FocalPoint.Lens.Camera.AsNode3D().Translate(gd.Vector3{0, 0, 0.5})
 	}
 	world.TerrainRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().GetPosition())
+
+	if !world.saving.Load() && Input.IsKeyPressed(gd.KeyCtrl) && Input.IsKeyPressed(gd.KeyS) {
+		world.saving.Store(true)
+		save, err := os.Create("save.vult")
+		if err != nil {
+			tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+			return
+		}
+		defer save.Close()
+		if err := gob.NewEncoder(save).Encode(world.VultureRenderer.regions); err != nil {
+			tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+			return
+		}
+		world.saving.Store(false)
+	}
 }
 
 func (world *World) UnhandledInput(event gd.InputEvent) {
