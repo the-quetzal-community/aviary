@@ -3,7 +3,6 @@ package internal
 import (
 	"context"
 	"encoding/gob"
-	"fmt"
 	"math"
 	"os"
 
@@ -43,7 +42,6 @@ func (v *Vulture) load() {
 			Packed: packed,
 		})
 	}
-	fmt.Println(len(deltas))
 	if err := v.api.Reform(context.TODO(), deltas); err != nil {
 		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
 		return

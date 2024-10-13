@@ -42,11 +42,11 @@ func (tr *Renderer) Input(event gd.InputEvent) {
 				Lift: int8(tr.BrushAmount * 32),
 			})
 		}
-		if event.GetButtonIndex() == gd.MouseButtonLeft && event.AsInputEvent().IsReleased() && tr.PaintActive {
-			tr.PaintActive = false
-			tr.uploadEdits(vulture.Uplift{
-				Draw: 1, // TODO upload ID
-			})
+		if event.GetButtonIndex() == gd.MouseButtonLeft && tr.PaintActive {
+			if event.AsInputEvent().IsReleased() {
+				tr.PaintActive = false
+
+			}
 		}
 	}
 	if event, ok := gd.As[gd.InputEventKey](tmp, event); ok {

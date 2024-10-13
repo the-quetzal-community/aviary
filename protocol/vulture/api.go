@@ -33,12 +33,6 @@ type API struct {
 		returns events visible to the client.`
 }
 
-// Deprecated
-type Territory struct {
-	Area     Area            `json:"area"`
-	Vertices [17 * 17]Vertex `json:"vertices"`
-}
-
 // Upload identifier.
 type Upload uint16
 
@@ -203,8 +197,8 @@ const (
 	ElementIsFuture
 	ElementIsTether
 	ElementIsBeizer
-	ElementIsSprite
-	_ // reserved
+	ElementIsShaped
+	ElementIsBinary
 )
 
 func (el Element) Type() ElementType {
@@ -246,27 +240,18 @@ func (el *Element) Tether() *ElementTether {
 	return (*ElementTether)(unsafe.Pointer(el))
 }
 
-func (el *Element) Sprite() *ElementSprite {
-	if el.Type() != ElementIsSprite {
+func (el *Element) Sprite() *ElementShaped {
+	if el.Type() != ElementIsShaped {
 		panic("element is not a sample")
 	}
-	return (*ElementSprite)(unsafe.Pointer(el))
+	return (*ElementShaped)(unsafe.Pointer(el))
 }
 
-// Hexagon represents the height and terrain type for
-// a hexagon in the world-space.
-type Vertex uint64
-
-const vertexHeight = 0x000000000000FFFF
-
-func (v Vertex) Height() int16 {
-	bits := uint16(v & vertexHeight)
-	return *(*int16)(unsafe.Pointer(&bits))
-}
-
-func (v *Vertex) SetHeight(height int16) {
-	bits := *(*uint16)(unsafe.Pointer(&height))
-	*v = (*v &^ vertexHeight) | Vertex(bits)
+func (el *Element) Binary() *ElementBinary {
+	if el.Type() != ElementIsBinary {
+		panic("element is not a sample")
+	}
+	return (*ElementBinary)(unsafe.Pointer(el))
 }
 
 // Angle represents an angle mapped from 0 to 256.
@@ -371,22 +356,8 @@ func (future ElementFuture) Element() Element {
 	return el
 }
 
-// ElementSprite represents a sprite.
-type ElementSprite struct {
-	Fade uint8    // transparency
-	Tint [3]uint8 // color
-	Cell Cell     // within the area where the sprite is located.
-	Bump uint8    // offsets the sprite within the cell by this amount.
-	Turn uint8    // around the y-axis.
-	Cuts uint8    // atlas
-	Uses uint8    // atlas index
-	Icon Upload   // identifies the sprite.
-	Time Ticks    // when the sprite is active from.
-	Next Offset   // Next sprite.
-}
-
-func (sprite ElementSprite) Element() Element {
+func (sprite ElementShaped) Element() Element {
 	el := *(*Element)(unsafe.Pointer(&sprite))
-	el[0] |= uint8(ElementIsSprite)
+	el[0] |= uint8(ElementIsShaped)
 	return el
 }

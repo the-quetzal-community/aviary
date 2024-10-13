@@ -2,9 +2,7 @@ package vulture
 
 import (
 	"context"
-	"encoding/json"
 	"math"
-	"os"
 	"sync"
 	"time"
 )
@@ -12,15 +10,22 @@ import (
 // New returns a reference in-memory implementation of the Vulture API.
 func New() API {
 	var I refImpl
-	I.chunks = make(map[Area]Territory)
 	I.views = make(map[Area][]refView)
 	I.regions = make(map[Region]*refRegion)
 	I.time = time.Now
 	return API{
 		//Vision: I.vision,
 		//Vision: I.vision,
-		Uplift: I.uplift,
-		Reform: I.reform,
+		Uplift: func(ctx context.Context, u Uplift) error {
+			I.mutex.Lock()
+			defer I.mutex.Unlock()
+			return I.uplift(ctx, u)
+		},
+		Reform: func(ctx context.Context, r []Deltas) error {
+			I.mutex.Lock()
+			defer I.mutex.Unlock()
+			return I.reform(ctx, r)
+		},
 		Events: I.events,
 		//Render: I.render,
 	}
@@ -30,7 +35,6 @@ type refImpl struct {
 	mutex   sync.Mutex
 	time    func() time.Time
 	clients []refClient
-	chunks  map[Area]Territory
 	views   map[Area][]refView
 
 	globals Global
@@ -88,7 +92,7 @@ func (d *deltas) Append(region Region, element Element) {
 }
 
 func (I *refImpl) uplift(ctx context.Context, uplift Uplift) error {
-	json.NewEncoder(os.Stdout).Encode(uplift)
+	//json.NewEncoder(os.Stdout).Encode(uplift)
 	var dt deltas
 	// apply requested uplift to the cell, ie. a circular
 	// terrain brush with a radius of uplift.Size

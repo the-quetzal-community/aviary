@@ -122,7 +122,13 @@ func (vr *Renderer) Process(dt gd.Float) {
 			vr.shader.SetShaderParameter(tmp.StringName("paint_active"), tmp.Variant(true))
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
-			if !Input.IsKeyPressed(gd.KeyShift) {
+			if vr.PaintActive && Input.IsMouseButtonPressed(gd.MouseButtonLeft) {
+				vr.BrushTarget = event.BrushTarget.Round()
+				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget.Round()))
+				vr.uploadEdits(vulture.Uplift{
+					Draw: 1, // TODO upload ID
+				})
+			} else if !Input.IsKeyPressed(gd.KeyShift) {
 				vr.mouseOver <- event.BrushTarget
 				vr.BrushTarget = event.BrushTarget.Round()
 				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget.Round()))
