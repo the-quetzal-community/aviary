@@ -124,12 +124,12 @@ func (tile *TerrainTile) Reload() {
 	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.Shader.AsMaterial())
 	tile.Mesh.SetMesh(mesh.AsMesh())
 	tile.Mesh.AsNode3D().SetPosition(gd.Vector3{
-		0.5, 0, 0.5,
+		-8, 0, -8,
 	})
 	tile.Super().AsNode3D().SetPosition(gd.Vector3{
-		float32(tile.region[0])*16 - 0.5,
+		float32(tile.region[0])*16 + 8 - 0.5,
 		0,
-		float32(tile.region[1])*16 - 0.5,
+		float32(tile.region[1])*16 + 8 - 0.5,
 	})
 }
 

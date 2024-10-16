@@ -72,15 +72,15 @@ func (v *Vulture) worldToVulture(world gd.Vector3) (region vulture.Region, cell 
 	if world[2] < 0 {
 		region[1]--
 	}
-	local := world.Sub(gd.Vector3{float32(region[0]) * 16, 0, float32(region[1]) * 16}).Abs()
+	local := world.Sub(gd.Vector3{float32(region[0]) * 16, 0, float32(region[1]) * 16})
 	cell = vulture.Cell(int32(local[0]) + int32(local[2])*16)
 	_, a := math.Modf(float64(world[0]))
-	if a < 0 {
-		a = 1 - a
-	}
 	_, b := math.Modf(float64(world[2]))
+	if a < 0 {
+		a = -a
+	}
 	if b < 0 {
-		b = 1 - b
+		b = -b
 	}
 	bump = uint8(a*16) + uint8(b*16)*16
 	return

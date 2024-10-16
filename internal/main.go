@@ -12,6 +12,7 @@ var categories = []string{
 	"citizen",
 	"trinket",
 	"critter",
+	"special",
 }
 
 type Main struct {
