@@ -16,12 +16,13 @@ type API struct {
 		provides access to collaborative and creative community spaces.
 	`
 	Vision func(context.Context) (chan<- Vision, error) `http:"GET /vulture/v0/vision"
-		can be used to project your vision onto the space, if successful, will
-		generate an [Event].`
-	Upload func(context.Context, Upload) (fs.File, error) `http:"GET /vulture/v0/upload/{upload=%v}"
-		can be used to download an uploaded visual resource by ID.`
-	Lookup func(context.Context, fs.File) (Upload, error) `http:"POST /vulture/v0/lookup"
-		returns the ID associated with the specified visual resource.`
+		can be opened by a client to control their view of the island. Rendering updates
+		will be delivered to the client through the returned channel.`
+	Upload func(context.Context, Upload, fs.File) (fs.File, error) `http:"POST /vulture/v0/upload/{upload=%v}"
+		writes the specified file to the the specified upload, if the file is nil, then the existing
+		file will be returned.`
+	Lookup func(context.Context, string) (Upload, error) `http:"POST /vulture/v0/lookup"
+		returns the upload associated with the given lookup string.`
 	Target func(context.Context, Target) error `http:"POST /vulture/v0/target"
 		returns a write-only stream for the client to report their
 		focus.`
@@ -278,16 +279,15 @@ func (sample ElementPoints) Element() Element {
 
 // ElementMarker describes a fixed point within the region.
 type ElementMarker struct {
-	Pose uint8  // animation number.
-	Size uint8  // in 1/2 units
 	Link Offset // element with an relationship to this one.
+	Icon Upload // symbolic representation of the marker.
 	Cell Cell   // within the area where this view is located.
 	Face Angle  // is the direction the view is facing (z axiz).
 	Flip Angle  // around the x-axis.
 	Spin Angle  // around the z-axis.
 	Jump Height // up by the specified height.
 	Bump uint8  // offsets the view within the cell by this amount.
-	Mesh Upload // identifies the mesh that represents this anchor.
+	Mesh Upload // identifies the mesh to place at this marker.
 	Time Ticks  // when the anchor is active from.
 }
 
