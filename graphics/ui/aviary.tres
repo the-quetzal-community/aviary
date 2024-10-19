@@ -1,0 +1,60 @@
+[gd_resource type="Theme" load_steps=16 format=3 uid="uid://dtppp6q43eiuc"]
+
+[ext_resource type="StyleBox" uid="uid://h4nwukf2mpep" path="res://ui/aviary_stylebox.tres" id="1_qhiib"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_rulru"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_u81bn"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_qtdup"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_slgof"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_djggn"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_7yeyq"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_72be2"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ewvp0"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_tqp4k"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_prqmo"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_t0ppr"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5atwb"]
+bg_color = Color(1, 1, 1, 0.431373)
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ydl51"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_w3xdq"]
+bg_color = Color(1, 1, 1, 0.431373)
+
+[resource]
+HBoxContainer/constants/separation = 20
+OptionButton/font_sizes/font_size = 27
+OptionButton/icons/arrow = null
+OptionButton/styles/disabled = SubResource("StyleBoxEmpty_rulru")
+OptionButton/styles/disabled_mirrored = SubResource("StyleBoxEmpty_u81bn")
+OptionButton/styles/focus = SubResource("StyleBoxEmpty_qtdup")
+OptionButton/styles/hover = SubResource("StyleBoxEmpty_slgof")
+OptionButton/styles/hover_mirrored = SubResource("StyleBoxEmpty_djggn")
+OptionButton/styles/hover_pressed = SubResource("StyleBoxEmpty_7yeyq")
+OptionButton/styles/hover_pressed_mirrored = SubResource("StyleBoxEmpty_72be2")
+OptionButton/styles/normal = SubResource("StyleBoxEmpty_ewvp0")
+OptionButton/styles/normal_mirrored = SubResource("StyleBoxEmpty_tqp4k")
+OptionButton/styles/pressed = SubResource("StyleBoxEmpty_prqmo")
+OptionButton/styles/pressed_mirrored = SubResource("StyleBoxEmpty_t0ppr")
+PanelContainer/styles/panel = SubResource("StyleBoxFlat_5atwb")
+TabContainer/colors/font_selected_color = Color(1, 1, 1, 1)
+TabContainer/colors/font_unselected_color = Color(1, 1, 1, 1)
+TabContainer/constants/side_margin = 28
+TabContainer/font_sizes/font_size = 19
+TabContainer/styles/panel = ExtResource("1_qhiib")
+TabContainer/styles/tab_disabled = ExtResource("1_qhiib")
+TabContainer/styles/tab_focus = SubResource("StyleBoxEmpty_ydl51")
+TabContainer/styles/tab_hovered = ExtResource("1_qhiib")
+TabContainer/styles/tab_selected = ExtResource("1_qhiib")
+TabContainer/styles/tab_unselected = SubResource("StyleBoxFlat_w3xdq")

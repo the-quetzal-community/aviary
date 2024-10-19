@@ -1,61 +1,39 @@
-[gd_scene load_steps=8 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=2 format=3 uid="uid://di3hxgqi78me4"]
 
-[ext_resource type="Texture2D" uid="uid://cikmokf7owm08" path="res://emoji/twemoji/🌳.png" id="1_afnya"]
-[ext_resource type="Texture2D" uid="uid://ucuhd0xig3ve" path="res://emoji/twemoji/⛰.png" id="1_sspau"]
-[ext_resource type="Texture2D" uid="uid://ctys5n3fs8mnq" path="res://emoji/twemoji/🎨.png" id="2_hngsh"]
-[ext_resource type="Texture2D" uid="uid://kwpwttni4f7u" path="res://emoji/twemoji/🪨.png" id="3_ykgy4"]
-[ext_resource type="Texture2D" uid="uid://d02qugxpmsups" path="res://emoji/twemoji/🛖.png" id="4_rv2vw"]
-[ext_resource type="Texture2D" uid="uid://bngfvl7xp4vdo" path="res://emoji/twemoji/👫.png" id="5_5anuo"]
-[ext_resource type="Texture2D" uid="uid://dae1lu27epm8p" path="res://emoji/twemoji/🐾.png" id="6_20vre"]
+[ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 
-[node name="Editor" type="AviaryUI"]
+[node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 1839.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
-mouse_force_pass_scroll_events = false
 
-[node name="Toolkit" type="PanelContainer" parent="."]
+[node name="Editor" type="TabContainer" parent="."]
+visible = false
 layout_mode = 1
-anchors_preset = 11
-anchor_left = 1.0
+anchors_preset = 12
+anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -78.0
-grow_horizontal = 0
-grow_vertical = 2
+offset_top = -340.0
+grow_horizontal = 2
+grow_vertical = 0
+theme = ExtResource("1_hi2iw")
 
-[node name="Buttons" type="VBoxContainer" parent="Toolkit"]
-layout_mode = 2
-theme_override_constants/separation = 25
-
-[node name="Terrain" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("1_sspau")
-
-[node name="Texture" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("2_hngsh")
-
-[node name="Foliage" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("1_afnya")
-
-[node name="Mineral" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("3_ykgy4")
-
-[node name="Shelter" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("4_rv2vw")
-
-[node name="Citizen" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("5_5anuo")
-
-[node name="Critter" type="TextureButton" parent="Toolkit/Buttons"]
-layout_mode = 2
-texture_normal = ExtResource("6_20vre")
+[node name="Theme" type="OptionButton" parent="."]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -74.0
+offset_right = 74.0
+offset_bottom = 31.0
+grow_horizontal = 2
+theme = ExtResource("1_hi2iw")
+selected = 0
+item_count = 3
+popup/item_0/text = "select a theme"
+popup/item_1/text = "Kenney"
+popup/item_2/text = "WildfireGames"

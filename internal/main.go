@@ -4,17 +4,6 @@ import (
 	"grow.graphics/gd"
 )
 
-var categories = []string{
-	"foliage",
-	"mineral",
-	"shelter",
-	"terrain",
-	"citizen",
-	"trinket",
-	"critter",
-	"special",
-}
-
 type Main struct {
 	gd.Class[Main, gd.SceneTree] `gd:"AviaryMain"`
 }
