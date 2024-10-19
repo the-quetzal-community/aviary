@@ -3,7 +3,7 @@ module the.quetzal.community/aviary
 go 1.23.2
 
 require (
-	grow.graphics/gd v0.0.0-20241006114915-30574d0ebf3e
+	grow.graphics/gd v0.0.0-20241019094830-eef685d91b1b
 	grow.graphics/xy v0.0.0-20240603021049-7427233fc3a9
 	runtime.link v0.0.0-20241005094610-e19c9804d053
 )
