@@ -25,29 +25,40 @@ import (
 	"math"
 	"math/rand"
 
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/ArrayMesh"
+	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/FastNoiseLite"
+	"graphics.gd/classdb/Mesh"
+	"graphics.gd/variant"
+	"graphics.gd/variant/Array"
+	"graphics.gd/variant/Callable"
+	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
+	"graphics.gd/variant/Packed"
+	"graphics.gd/variant/Vector3"
+	"graphics.gd/variant/Vector3i"
 	"grow.graphics/xy"
-	"grow.graphics/xy/vector3"
 )
 
 // Rock that is procedurally generated.
 type Rock struct {
-	gd.Class[Tree, gd.ArrayMesh] `gd:"AviaryRock"`
+	classdb.Extension[Tree, ArrayMesh.Instance] `gd:"AviaryRock"`
 
-	Seed gd.Int `gd:"seed" range:"0,1000,or_greater,or_less" default:"100"`
+	Seed int `gd:"seed" range:"0,1000,or_greater,or_less" default:"100"`
 
-	NoiseScale     gd.Float `gd:"noise_scale" range:"0.5,5,or_greater,or_less" default:"2"`
-	NoiseStrength  gd.Float `gd:"noise_strength" range:"0,0.5,or_greater,or_less" default:"0.2"`
-	ScrapeCount    gd.Int   `gd:"scrape_count" range:"0,15,or_greater" default:"7"`
-	ScrapeMinDist  gd.Float `gd:"scrape_min_dist" range:"0.1,1,or_greater" default:"0.8"`
-	ScrapeStrength gd.Float `gd:"scrape_strength" range:"0.1,0.6,or_greater" default:"0.2"`
-	ScrapeRadius   gd.Float `gd:"scrape_radius" range:"0.1,0.5,or_greater" default:"0.3"`
+	NoiseScale     Float.X `gd:"noise_scale" range:"0.5,5,or_greater,or_less" default:"2"`
+	NoiseStrength  Float.X `gd:"noise_strength" range:"0,0.5,or_greater,or_less" default:"0.2"`
+	ScrapeCount    int     `gd:"scrape_count" range:"0,15,or_greater" default:"7"`
+	ScrapeMinDist  Float.X `gd:"scrape_min_dist" range:"0.1,1,or_greater" default:"0.8"`
+	ScrapeStrength Float.X `gd:"scrape_strength" range:"0.1,0.6,or_greater" default:"0.2"`
+	ScrapeRadius   Float.X `gd:"scrape_radius" range:"0.1,0.5,or_greater" default:"0.3"`
 
 	random     func() float32
 	generating bool
 }
 
-func (rock *Rock) getNeighbours(positions []xy.Vector3, cells []xy.Vector3i) []map[uint32]struct{} {
+func (rock *Rock) getNeighbours(positions []Vector3.XYZ, cells []Vector3i.XYZ) []map[uint32]struct{} {
 	/*
 	   adjacentVertices[i] contains a set containing all the indices of the neighbours of the vertex with
 	   index i.
@@ -58,16 +69,16 @@ func (rock *Rock) getNeighbours(positions []xy.Vector3, cells []xy.Vector3i) []m
 	for _, cellPositions := range cells {
 		wrap := func(i int) int {
 			if i < 0 {
-				return len(cellPositions) + i
+				return 3 + i
 			}
-			return i % len(cellPositions)
+			return i % 3
 		}
 		// go through all the points of the face.
-		for iPosition := 0; iPosition < len(cellPositions); iPosition++ {
+		for iPosition := 0; iPosition < 3; iPosition++ {
 			// the neighbours of this points are the previous and next points(in the array)
-			var cur = cellPositions[wrap(iPosition+0)]
-			var prev = cellPositions[wrap(iPosition-1)]
-			var next = cellPositions[wrap(iPosition+1)]
+			var cur = Vector3i.Index(cellPositions, wrap(iPosition+0))
+			var prev = Vector3i.Index(cellPositions, wrap(iPosition-1))
+			var next = Vector3i.Index(cellPositions, wrap(iPosition+1))
 			// create set on the fly if necessary.
 			if adjacentVertices[cur] == nil {
 				adjacentVertices[cur] = make(map[uint32]struct{})
@@ -80,8 +91,8 @@ func (rock *Rock) getNeighbours(positions []xy.Vector3, cells []xy.Vector3i) []m
 	return adjacentVertices
 }
 
-func (rock *Rock) scrape(positionIndex int, positions []xy.Vector3, normals []xy.Vector3,
-	adjacentVertices []map[uint32]struct{}, strength float64, radius float64) {
+func (rock *Rock) scrape(positionIndex int, positions []Vector3.XYZ, normals []Vector3.XYZ,
+	adjacentVertices []map[uint32]struct{}, strength Float.X, radius Float.X) {
 	var (
 		traversed      = make([]bool, len(positions))
 		centerPosition = positions[positionIndex]
@@ -94,7 +105,7 @@ func (rock *Rock) scrape(positionIndex int, positions []xy.Vector3, normals []xy
 		n  = normals[positionIndex]
 		r0 = centerPosition
 	)
-	vector3.Add(r0, vector3.Mulf(n, -strength))
+	Vector3.Add(r0, Vector3.MulX(n, -strength))
 	var (
 		stack []int
 	)
@@ -102,11 +113,11 @@ func (rock *Rock) scrape(positionIndex int, positions []xy.Vector3, normals []xy
 	/*
 		Projects the point `p` onto the plane defined by the normal `n` and the point `r0`
 	*/
-	project := func(n, r0, p gd.Vector3) gd.Vector3 {
+	project := func(n, r0, p Vector3.XYZ) Vector3.XYZ {
 		// For an explanation of the math, see http://math.stackexchange.com/a/100766
 		var (
-			t          = vector3.Dot(n, vector3.Sub(r0, p)) / vector3.Dot(n, n)
-			projectedP = vector3.Add(p, vector3.Mulf(n, t))
+			t          = Vector3.Dot(n, Vector3.Sub(r0, p)) / Vector3.Dot(n, n)
+			projectedP = Vector3.Add(p, Vector3.MulX(n, t))
 		)
 		return projectedP
 	}
@@ -129,7 +140,7 @@ func (rock *Rock) scrape(positionIndex int, positions []xy.Vector3, normals []xy
 			p          = topPosition
 			projectedP = project(n, r0, p)
 		)
-		if vector3.Distance(projectedP, r0) < radius {
+		if Vector3.Distance(projectedP, r0) < radius {
 			positions[topIndex] = projectedP
 			normals[topIndex] = n
 		} else {
@@ -142,30 +153,30 @@ func (rock *Rock) scrape(positionIndex int, positions []xy.Vector3, normals []xy
 	}
 }
 
-func (rock *Rock) OnSet(godot gd.Context, name gd.StringName, value gd.Variant) {
+func (rock *Rock) OnSet(name string, value any) {
 	if !rock.generating {
-		godot.Callable(rock.generate).CallDeferred()
+		Callable.New(rock.generate).CallDeferred()
 		rock.generating = true
 	}
 }
 
-func (rock *Rock) OnFree(godot gd.Context) {
+func (rock *Rock) OnFree() {
 	rock.generating = false
 }
 
-func (rock *Rock) AsArrayMesh() gd.ArrayMesh { return *rock.Super() }
+func (rock *Rock) AsArrayMesh() ArrayMesh.Instance { return rock.Super() }
 
 func (rock *Rock) sphere(radius float64, precision int) (mesh struct {
-	Vertices []xy.Vector3
-	Indicies []xy.Vector3i
-	Normals  []xy.Vector3
+	Vertices []Vector3.XYZ
+	Indicies []Vector3i.XYZ
+	Normals  []Vector3.XYZ
 }) {
 	var (
 		stacks    = float64(precision)
 		slices    = float64(precision)
-		positions []xy.Vector3
-		cells     []xy.Vector3i
-		normals   []xy.Vector3
+		positions []Vector3.XYZ
+		cells     []Vector3i.XYZ
+		normals   []Vector3.XYZ
 	)
 	// keeps track of the index of the next vertex that we create.
 	var index = 0
@@ -195,8 +206,8 @@ func (rock *Rock) sphere(radius float64, precision int) (mesh struct {
 				y = xy.Cos(phi)
 				z = xy.Sin(theta) * xy.Sin(phi)
 			)
-			positions = append(positions, vector3.New(R*x, R*y, R*z))
-			normals = append(normals, vector3.New(x, y, z))
+			positions = append(positions, Vector3.New(R*x, R*y, R*z))
+			normals = append(normals, Vector3.New(x, y, z))
 			if (i + 1) != int(stacks) { // for the last stack, we don't need to add faces.
 				var (
 					i1, i2, i3, i4 uint32
@@ -215,8 +226,8 @@ func (rock *Rock) sphere(radius float64, precision int) (mesh struct {
 					i4 = uint32(index + int(slices) + 1)
 				}
 				// add quad face
-				cells = append(cells, xy.Vector3i{int32(i1), int32(i2), int32(i3)})
-				cells = append(cells, xy.Vector3i{int32(i4), int32(i3), int32(i2)})
+				cells = append(cells, Vector3i.XYZ{int32(i1), int32(i2), int32(i3)})
+				cells = append(cells, Vector3i.XYZ{int32(i4), int32(i3), int32(i2)})
 			}
 			index++
 		}
@@ -226,21 +237,21 @@ func (rock *Rock) sphere(radius float64, precision int) (mesh struct {
 	*/
 	var topIndex = index
 	index++
-	positions = append(positions, vector3.New(0.0, radius, 0.0))
-	normals = append(normals, vector3.New(0, 1, 0))
+	positions = append(positions, Vector3.New(0.0, radius, 0.0))
+	normals = append(normals, Vector3.New(0, 1, 0))
 	var bottomIndex = index
 	index++
-	positions = append(positions, vector3.New(0, -radius, 0))
-	normals = append(normals, vector3.New(0, -1, 0))
+	positions = append(positions, Vector3.New(0, -radius, 0))
+	normals = append(normals, Vector3.New(0, -1, 0))
 	for i := 0; i < int(slices); i++ {
 		var i1 = uint32(topIndex)
 		var i2 = uint32(i + 0)
 		var i3 = uint32(i+1) % uint32(slices)
-		cells = append(cells, xy.Vector3i{int32(i3), int32(i2), int32(i1)})
+		cells = append(cells, Vector3i.XYZ{int32(i3), int32(i2), int32(i1)})
 		i1 = uint32(bottomIndex)
 		i2 = uint32(bottomIndex-1) - uint32(slices) + uint32(i+0)
 		i3 = uint32(bottomIndex-1) - uint32(slices) + uint32((i+1))%uint32(slices)
-		cells = append(cells, xy.Vector3i{int32(i1), int32(i2), int32(i3)})
+		cells = append(cells, Vector3i.XYZ{int32(i1), int32(i2), int32(i3)})
 	}
 	mesh.Vertices = positions
 	mesh.Indicies = cells
@@ -248,30 +259,30 @@ func (rock *Rock) sphere(radius float64, precision int) (mesh struct {
 	return
 }
 
-func (rock *Rock) calculateNormals(vertices []xy.Vector3, indicies []xy.Vector3i) (normals []xy.Vector3) {
-	normals = make([]xy.Vector3, len(vertices))
+func (rock *Rock) calculateNormals(vertices []Vector3.XYZ, indicies []Vector3i.XYZ) (normals []Vector3.XYZ) {
+	normals = make([]Vector3.XYZ, len(vertices))
 	for _, index := range indicies {
-		var va, vb, vc xy.Vector3 = vertices[index[0]],
-			vertices[index[1]],
-			vertices[index[2]]
-		e1 := vector3.Sub(vb, va)
-		e2 := vector3.Sub(vc, va)
-		no := vector3.Cross(e1, e2)
-		normals[index[0]] = vector3.Add(normals[index[0]], no)
-		normals[index[1]] = vector3.Add(normals[index[1]], no)
-		normals[index[2]] = vector3.Add(normals[index[2]], no)
+		var va, vb, vc Vector3.XYZ = vertices[index.X],
+			vertices[index.Y],
+			vertices[index.Z]
+		e1 := Vector3.Sub(vb, va)
+		e2 := Vector3.Sub(vc, va)
+		no := Vector3.Cross(e1, e2)
+		normals[index.X] = Vector3.Add(normals[index.X], no)
+		normals[index.Y] = Vector3.Add(normals[index.Y], no)
+		normals[index.Z] = Vector3.Add(normals[index.Z], no)
 	}
 	return normals
 }
 
-func (rock *Rock) generate(godot gd.Context) {
+func (rock *Rock) generate() {
 	if !rock.generating {
 		return
 	}
 	rock.generating = false
 	rock.random = rand.New(rand.NewSource(int64(rock.Seed))).Float32
 	var (
-		noise     = gd.Create(godot, new(gd.FastNoiseLite))
+		noise     = FastNoiseLite.New()
 		sphere    = rock.sphere(1, 20)
 		positions = sphere.Vertices
 		cells     = sphere.Indicies
@@ -301,7 +312,7 @@ func (rock *Rock) generate(godot gd.Context) {
 				var (
 					q = positions[scrapeIndices[j]]
 				)
-				if vector3.Distance(p, q) < rock.ScrapeMinDist {
+				if Vector3.Distance(p, q) < rock.ScrapeMinDist {
 					tooClose = true
 					break
 				}
@@ -330,38 +341,38 @@ func (rock *Rock) generate(godot gd.Context) {
 	for i := 0; i < len(positions); i++ {
 		var p = positions[i]
 		var noise = rock.NoiseStrength * noise.AsNoise().GetNoise3d(
-			rock.NoiseScale*float64(p[0]),
-			rock.NoiseScale*float64(p[1]),
-			rock.NoiseScale*float64(p[2]))
-		positions[i][0] += xy.Float(noise)
-		positions[i][1] += xy.Float(noise)
-		positions[i][2] += xy.Float(noise)
+			rock.NoiseScale*p.X,
+			rock.NoiseScale*p.Y,
+			rock.NoiseScale*p.Z)
+		positions[i].X += Float.X(noise)
+		positions[i].Y += Float.X(noise)
+		positions[i].Z += Float.X(noise)
 	}
 	normals = rock.calculateNormals(positions, cells)
 	ArrayMesh := rock.AsArrayMesh()
-	ArrayMesh.AsObject().SetBlockSignals(true)
-	defer ArrayMesh.AsObject().SetBlockSignals(false)
+	Object.Instance(ArrayMesh.AsObject()).SetSignalsBlocked(true)
+	defer Object.Instance(ArrayMesh.AsObject()).SetSignalsBlocked(false)
 	ArrayMesh.ClearSurfaces()
 	{
-		var vertices = godot.PackedVector3Array()
+		var vertices = Packed.NewVector3Array()
 		for _, vertex := range positions {
 			vertices.Append(vertex)
 		}
-		var indicies = godot.PackedInt32Array()
+		var indicies = Packed.NewInt32Array()
 		for _, index := range cells {
-			indicies.Append(int64(index[2]))
-			indicies.Append(int64(index[1]))
-			indicies.Append(int64(index[0]))
+			indicies.Append(Engine.Int(index.Z))
+			indicies.Append(Engine.Int(index.Y))
+			indicies.Append(Engine.Int(index.Z))
 		}
-		var norm = godot.PackedVector3Array()
+		var norm = Packed.NewVector3Array()
 		for _, normal := range normals {
 			norm.Append(normal)
 		}
-		var arrays = godot.Array()
-		arrays.Resize(int64(gd.MeshArrayMax))
-		arrays.SetIndex(int64(gd.MeshArrayVertex), godot.Variant(vertices))
-		arrays.SetIndex(int64(gd.MeshArrayIndex), godot.Variant(indicies))
-		arrays.SetIndex(int64(gd.MeshArrayNormal), godot.Variant(norm))
-		ArrayMesh.AddSurfaceFromArrays(gd.MeshPrimitiveTriangles, arrays, gd.NewArrayOf[gd.Array](godot), godot.Dictionary(), gd.MeshArrayFormatVertex)
+		var arrays = Array.Empty()
+		arrays.Resize(Engine.Int(Mesh.ArrayMax))
+		arrays.SetIndex(Engine.Int(Mesh.ArrayVertex), variant.New(vertices))
+		arrays.SetIndex(Engine.Int(Mesh.ArrayIndex), variant.New(indicies))
+		arrays.SetIndex(Engine.Int(Mesh.ArrayNormal), variant.New(norm))
+		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays)
 	}
 }

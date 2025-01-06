@@ -1,24 +1,22 @@
 package main
 
 import (
-	"grow.graphics/gd"
-	"grow.graphics/gd/gdextension"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/SceneTree"
+	"graphics.gd/startup"
 
 	"the.quetzal.community/aviary/internal"
 )
 
 func main() {
-	godot, ok := gdextension.Link()
-	if !ok {
-		return
-	}
-	gd.Register[internal.Tree](godot)
-	gd.Register[internal.Rock](godot)
-	gd.Register[internal.TerrainTile](godot)
-	gd.Register[internal.Vulture](godot)
-	gd.Register[internal.World](godot)
-	gd.Register[internal.UI](godot)
-	gd.Register[internal.PreviewRenderer](godot)
-	gd.Register[internal.Renderer](godot)
-	gd.Register[internal.Main](godot)
+	classdb.Register[internal.Tree]()
+	classdb.Register[internal.Rock]()
+	classdb.Register[internal.TerrainTile]()
+	classdb.Register[internal.Vulture]()
+	classdb.Register[internal.World]()
+	classdb.Register[internal.UI]()
+	classdb.Register[internal.PreviewRenderer]()
+	classdb.Register[internal.Renderer]()
+	startup.Wait()
+	SceneTree.Add(new(internal.World))
 }

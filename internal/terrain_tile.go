@@ -1,12 +1,30 @@
 package internal
 
 import (
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/ArrayMesh"
+	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/HeightMapShape3D"
+	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventMouseButton"
+	"graphics.gd/classdb/Mesh"
+	"graphics.gd/classdb/MeshInstance3D"
+	"graphics.gd/classdb/ShaderMaterial"
+	"graphics.gd/classdb/StaticBody3D"
+	"graphics.gd/variant"
+	"graphics.gd/variant/Array"
+	"graphics.gd/variant/Dictionary"
+	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Packed"
+	"graphics.gd/variant/Vector2"
+	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
 
 type TerrainTile struct {
-	gd.Class[TerrainTile, gd.StaticBody3D] `gd:"AviaryTerrainTile"`
+	classdb.Extension[TerrainTile, StaticBody3D.Instance] `gd:"AviaryTerrainTile"`
 
 	region vulture.Region
 	buffer vulture.Elements
@@ -15,11 +33,11 @@ type TerrainTile struct {
 
 	brushEvents chan<- terrainBrushEvent
 
-	Mesh    gd.MeshInstance3D
-	Shader  gd.ShaderMaterial
+	Mesh    MeshInstance3D.Instance
+	Shader  ShaderMaterial.Instance
 	Vulture *Vulture
 
-	shape_owner gd.Int
+	shape_owner int
 }
 
 func (tile *TerrainTile) Ready() {
@@ -28,24 +46,22 @@ func (tile *TerrainTile) Ready() {
 }
 
 func (tile *TerrainTile) Reload() {
-	tmp := tile.Temporary
-	tile.Shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
-	tile.Shader.SetShaderParameter(tmp.StringName("paint_active"), tmp.Variant(false))
+	tile.Shader.SetShaderParameter("height", 0.0)
+	tile.Shader.SetShaderParameter("paint_active", false)
 
-	var vertices = tmp.PackedVector3Array()
+	var vertices = Packed.NewVector3Array()
 	vertices.Resize(16 * 16 * 6)
-	var normals = tmp.PackedVector3Array()
+	var normals = Packed.NewVector3Array()
 	normals.Resize(16 * 16 * 6)
-	var uvs = tmp.PackedVector2Array()
+	var uvs = Packed.NewVector2Array()
 	uvs.Resize(16 * 16 * 6)
 
-	var textures = tmp.PackedFloat32Array()
+	var textures = Packed.NewFloat32Array()
 	textures.Resize(16 * 16 * 6 * 4)
 
-	heights := tmp.PackedFloat32Array()
-	heights.Resize(17 * 17)
+	heights := make([]float32, 17*17)
 
-	weights := tmp.PackedFloat32Array()
+	weights := Packed.NewFloat32Array()
 	weights.Resize(16 * 16 * 6 * 4)
 
 	heightm := tile.heightMapping[tile.region]
@@ -54,8 +70,8 @@ func (tile *TerrainTile) Reload() {
 		if element.Type() == vulture.ElementIsPoints {
 			points := element.Points()
 			for i, height := range points.Height {
-				index := gd.Int(points.Cell%16) + gd.Int(17*(points.Cell/16)) + gd.Int(i%2) + 17*gd.Int(i/2)
-				heights.Set(gd.Int(index), gd.Float(height)/32)
+				index := int(points.Cell%16) + int(17*(points.Cell/16)) + int(i%2) + 17*int(i/2)
+				heights[index] = float32(height) / 32
 			}
 			sample[points.Cell] = points.Sample
 			heightm[points.Cell] = points.Height
@@ -63,25 +79,25 @@ func (tile *TerrainTile) Reload() {
 	}
 	tile.heightMapping[tile.region] = heightm
 
-	add := func(index gd.Int, cell vulture.Cell, x, y gd.Int, w1, w2, w3, w4 gd.Float) {
-		vertices.Set(index, gd.Vector3{float32(x), heights.Index(x + y*17), float32(y)})
-		normals.Set(index, gd.Vector3{0, 1, 0})
-		uvs.Set(index, gd.Vector2{float32(x) / 16, float32(y) / 16})
+	add := func(index int, cell vulture.Cell, x, y int, w1, w2, w3, w4 Float.X) {
+		vertices.Set(Engine.Int(index), Vector3.XYZ{float32(x), Float.X(heights[x+y*17]), float32(y)})
+		normals.Set(Engine.Int(index), Vector3.XYZ{0, 1, 0})
+		uvs.Set(Engine.Int(index), Vector2.XY{Float.X(x) / 16, Float.X(y) / 16})
 
 		// Need to blend these correctly.w
-		textures.Set((index * 4), gd.Float(sample[cell][0])) // top left
-		textures.Set((index*4)+1, gd.Float(sample[cell][1])) // top right
-		textures.Set((index*4)+2, gd.Float(sample[cell][2])) // bottom left
-		textures.Set((index*4)+3, gd.Float(sample[cell][3])) // bottom right
+		textures.Set(Engine.Int(index*4), Engine.FloatX(sample[cell][0]))   // top left
+		textures.Set(Engine.Int(index*4+1), Engine.FloatX(sample[cell][1])) // top right
+		textures.Set(Engine.Int(index*4+2), Engine.FloatX(sample[cell][2])) // bottom left
+		textures.Set(Engine.Int(index*4+3), Engine.FloatX(sample[cell][3])) // bottom right
 
-		weights.Set((index * 4), w1)
-		weights.Set((index*4)+1, w2)
-		weights.Set((index*4)+2, w3)
-		weights.Set((index*4)+3, w4)
+		weights.Set(Engine.Int(index*4), Engine.FloatX(w1))
+		weights.Set(Engine.Int(index*4+1), Engine.FloatX(w2))
+		weights.Set(Engine.Int(index*4+2), Engine.FloatX(w3))
+		weights.Set(Engine.Int(index*4+3), Engine.FloatX(w4))
 	}
 	// generate the triangle pairs of the plane mesh
-	for x := gd.Int(0); x < 16; x++ {
-		for y := gd.Int(0); y < 16; y++ {
+	for x := 0; x < 16; x++ {
+		for y := 0; y < 16; y++ {
 			cell := vulture.Cell(x + 16*y)
 			add(6*(x+16*y)+0, cell, x, y, 1, 0, 0, 0)     // top left
 			add(6*(x+16*y)+1, cell, x+1, y, 0, 1, 0, 0)   // top right
@@ -92,24 +108,24 @@ func (tile *TerrainTile) Reload() {
 		}
 	}
 
-	shape := gd.Create(tmp, new(gd.HeightMapShape3D))
+	shape := HeightMapShape3D.New()
 	shape.SetMapDepth(17)
 	shape.SetMapWidth(17)
 	shape.SetMapData(heights)
 
-	var mesh = gd.Create(tmp, new(gd.ArrayMesh))
-	var arrays = tmp.Array()
-	arrays.Resize(int64(gd.MeshArrayMax))
-	arrays.SetIndex(int64(gd.MeshArrayVertex), tmp.Variant(vertices))
-	arrays.SetIndex(int64(gd.MeshArrayTexUv), tmp.Variant(uvs))
-	arrays.SetIndex(int64(gd.MeshArrayNormal), tmp.Variant(normals))
-	arrays.SetIndex(int64(gd.MeshArrayCustom0), tmp.Variant(textures))
-	arrays.SetIndex(int64(gd.MeshArrayCustom1), tmp.Variant(weights))
+	var mesh = ArrayMesh.New()
+	var arrays = Array.Empty()
+	arrays.Resize(Engine.Int(Mesh.ArrayMax))
+	arrays.SetIndex(Engine.Int(Mesh.ArrayVertex), variant.New(vertices))
+	arrays.SetIndex(Engine.Int(Mesh.ArrayTexUv), variant.New(uvs))
+	arrays.SetIndex(Engine.Int(Mesh.ArrayNormal), variant.New(normals))
+	arrays.SetIndex(Engine.Int(Mesh.ArrayCustom0), variant.New(textures))
+	arrays.SetIndex(Engine.Int(Mesh.ArrayCustom1), variant.New(weights))
 
-	mesh.AddSurfaceFromArrays(gd.MeshPrimitiveTriangles, arrays, gd.NewArrayOf[gd.Array](tmp), tmp.Dictionary(),
-		gd.MeshArrayFormatVertex|
-			gd.MeshArrayFormat(gd.MeshArrayCustomRgbaFloat)<<gd.MeshArrayFormatCustom0Shift|
-			gd.MeshArrayFormat(gd.MeshArrayCustomRgbaFloat)<<gd.MeshArrayFormatCustom1Shift,
+	ArrayMesh.Advanced(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays, Array.Empty(), Dictionary.Empty(),
+		Mesh.ArrayFormatVertex|
+			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
+			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
 	)
 
 	// generate mesh with pre-baked heights.
@@ -123,21 +139,19 @@ func (tile *TerrainTile) Reload() {
 
 	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.Shader.AsMaterial())
 	tile.Mesh.SetMesh(mesh.AsMesh())
-	tile.Mesh.AsNode3D().SetPosition(gd.Vector3{
+	tile.Mesh.AsNode3D().SetPosition(Vector3.XYZ{
 		-8, 0, -8,
 	})
-	tile.Super().AsNode3D().SetPosition(gd.Vector3{
+	tile.Super().AsNode3D().SetPosition(Vector3.XYZ{
 		float32(tile.region[0])*16 + 8 - 0.5,
 		0,
 		float32(tile.region[1])*16 + 8 - 0.5,
 	})
 }
 
-func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos, normal gd.Vector3, shape gd.Int) {
-	tmp := tile.Temporary
-	Input := gd.Input(tmp)
-	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok && Input.IsKeyPressed(gd.KeyShift) {
-		if event.GetButtonIndex() == gd.MouseButtonLeft {
+func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {
+	if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && Input.IsKeyPressed(Input.KeyShift) {
+		if event.ButtonIndex() == InputEventMouseButton.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				select {
 				case tile.brushEvents <- terrainBrushEvent{
@@ -148,7 +162,7 @@ func (tile *TerrainTile) InputEvent(camera gd.Camera3D, event gd.InputEvent, pos
 				}
 			}
 		}
-		if event.GetButtonIndex() == gd.MouseButtonRight {
+		if event.ButtonIndex() == InputEventMouseButton.MouseButtonRight {
 			if event.AsInputEvent().IsPressed() {
 				select {
 				case tile.brushEvents <- terrainBrushEvent{

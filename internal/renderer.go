@@ -5,20 +5,37 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/Shader"
+	"graphics.gd/classdb/ShaderMaterial"
+	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/classdb/Texture2DArray"
+	"graphics.gd/variant"
+	"graphics.gd/variant/Array"
+	"graphics.gd/variant/Color"
+	"graphics.gd/variant/Float"
+	"graphics.gd/variant/NodePath"
+	"graphics.gd/variant/Vector2"
+	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
 
 // Renderer will open a Vulture Events stream and render all
 // neighboring regions around the focal point.
 type Renderer struct {
-	gd.Class[Renderer, gd.Node3D] `gd:"VultureRenderer"`
+	classdb.Extension[Renderer, Node3D.Instance] `gd:"VultureRenderer"`
 
-	ActiveContent gd.Node
-	CachedContent gd.Node
+	ActiveContent Node.Instance
+	CachedContent Node.Instance
 
-	ActiveRegions gd.Node
-	CachedRegions gd.Node
+	ActiveRegions Node.Instance
+	CachedRegions Node.Instance
 
 	heightMapping map[vulture.Region][16 * 16][4]vulture.Height
 
@@ -30,71 +47,59 @@ type Renderer struct {
 	regions map[vulture.Region]vulture.Elements
 	reloads map[vulture.Region]bool
 
-	mouseOver chan gd.Vector3
+	mouseOver chan Vector3.XYZ
 
-	shader gd.ShaderMaterial
+	shader ShaderMaterial.Instance
 
-	texture chan string
+	texture chan Resource.Path
 
 	//
 	// Terrain Brush parameters are used to represent modifications
 	// to the terrain. Either for texturing or height map adjustments.
 	//
 	BrushActive bool
-	BrushTarget gd.Vector3
-	BrushRadius gd.Float
-	BrushAmount gd.Float
-	BrushDeltaV gd.Float
+	BrushTarget Vector3.XYZ
+	BrushRadius Float.X
+	BrushAmount Float.X
+	BrushDeltaV Float.X
 	brushEvents chan terrainBrushEvent
 
 	PaintActive bool
 }
 
 func (tr *Renderer) Ready() {
-	tmp := tr.Temporary
-	shader, ok := gd.Load[gd.Shader](tmp, "res://shader/terrain.gdshader")
-	if !ok {
-		return
-	}
-	grass, ok := gd.Load[gd.Texture2D](tmp, "res://terrain/alpine_grass.png")
-	if !ok {
-		return
-	}
-	cliff, ok := gd.Load[gd.Texture2D](tmp, "res://library/wildfire_games/texture/alpine_cliff.png")
-	if !ok {
-		return
-	}
-	textures := gd.Create(tmp, new(gd.Texture2DArray))
-	array := gd.NewArrayOf[gd.Image](tmp)
-	array.PushBack(grass.AsTexture2D().GetImage(tmp))
-	array.PushBack(cliff.AsTexture2D().GetImage(tmp))
+	shader := Resource.Load[Shader.Instance]("res://shader/terrain.gdshader")
+	grass := Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png")
+	cliff := Resource.Load[Texture2D.Instance]("res://library/wildfire_games/texture/alpine_cliff.png")
+	textures := Texture2DArray.New()
+	var array = Array.Empty()
+	array.Append(variant.New(grass.AsTexture2D().GetImage()))
+	array.Append(variant.New(cliff.AsTexture2D().GetImage()))
 	textures.AsImageTextureLayered().CreateFromImages(array)
-	tr.shader = *gd.Create(tr.KeepAlive, new(gd.ShaderMaterial))
+	tr.shader = ShaderMaterial.New()
 	tr.shader.SetShader(shader)
-	tr.shader.SetShaderParameter(tmp.StringName("albedo"), tmp.Variant(gd.Color{1, 1, 1, 1}))
-	tr.shader.SetShaderParameter(tmp.StringName("uv1_scale"), tmp.Variant(gd.Vector2{8, 8}))
-	tr.shader.SetShaderParameter(tmp.StringName("texture_albedo"), tmp.Variant(textures))
-	tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(2.0))
-	tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
+	tr.shader.SetShaderParameter("albedo", Color.RGBA{1, 1, 1, 1})
+	tr.shader.SetShaderParameter("uv1_scale", Vector2.New(8, 8))
+	tr.shader.SetShaderParameter("texture_albedo", textures)
+	tr.shader.SetShaderParameter("radius", 2.0)
+	tr.shader.SetShaderParameter("height", 0.0)
 	tr.BrushRadius = 2.0
 }
 
-func (vr *Renderer) AsNode() gd.Node { return vr.Super().AsNode() }
+func (vr *Renderer) AsNode() Node.Instance { return vr.Super().AsNode() }
 
 func (vr *Renderer) start() {
-	tmp := gd.NewLifetime(vr.Temporary)
 	vr.reloads = make(map[vulture.Region]bool)
 	vr.regions = make(map[vulture.Region]vulture.Elements)
-	go vr.listenForEvents(tmp)
+	go vr.listenForEvents()
 }
 
-func (vr *Renderer) listenForEvents(tmp gd.Lifetime) {
-	defer tmp.End()
+func (vr *Renderer) listenForEvents() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	deltas, err := vr.Vulture.api.Events(ctx)
 	if err != nil {
-		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		Engine.Raise(err)
 		return
 	}
 	vr.events = deltas
@@ -102,9 +107,9 @@ func (vr *Renderer) listenForEvents(tmp gd.Lifetime) {
 	vr.Vulture.load()
 }
 
-func (vr *Renderer) Process(dt gd.Float) {
-	tmp := vr.Temporary
-	Input := gd.Input(tmp)
+func (vr *Renderer) Process(dt Float.X) {
+	variant.Use(vr.shader[0])
+
 	if !vr.listening.Load() {
 		return
 	}
@@ -113,33 +118,29 @@ func (vr *Renderer) Process(dt gd.Float) {
 		case deltas := <-vr.events:
 			vr.apply(deltas)
 		case res := <-vr.texture:
-			texture, ok := gd.Load[gd.Texture2D](tmp, res)
-			if !ok {
-				tmp.Printerr(tmp.Variant(tmp.String("Failed to load texture")))
-				break
-			}
-			vr.shader.SetShaderParameter(tmp.StringName("paint_texture"), tmp.Variant(texture))
-			vr.shader.SetShaderParameter(tmp.StringName("paint_active"), tmp.Variant(true))
+			texture := Resource.Load[Texture2D.Instance](res)
+			vr.shader.SetShaderParameter("paint_texture", texture)
+			vr.shader.SetShaderParameter("paint_active", true)
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
-			if vr.PaintActive && Input.IsMouseButtonPressed(gd.MouseButtonLeft) {
-				vr.BrushTarget = event.BrushTarget.Round()
-				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget.Round()))
+			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
+				vr.BrushTarget = Vector3.Round(event.BrushTarget)
+				vr.shader.SetShaderParameter("uplift", Vector3.Round(event.BrushTarget))
 				vr.uploadEdits(vulture.Uplift{
 					Draw: 1, // TODO upload ID
 				})
-			} else if !Input.IsKeyPressed(gd.KeyShift) {
+			} else if !Input.IsKeyPressed(Input.KeyShift) {
 				vr.mouseOver <- event.BrushTarget
-				vr.BrushTarget = event.BrushTarget.Round()
-				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget.Round()))
+				vr.BrushTarget = Vector3.Round(event.BrushTarget)
+				vr.shader.SetShaderParameter("uplift", Vector3.Round(event.BrushTarget))
 			} else {
-				event.BrushTarget = event.BrushTarget.Round()
+				event.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.BrushTarget = event.BrushTarget
 				vr.BrushDeltaV = event.BrushDeltaV
 				if event.BrushDeltaV != 0 {
 					vr.BrushActive = true
 				}
-				vr.shader.SetShaderParameter(tmp.StringName("uplift"), tmp.Variant(event.BrushTarget))
+				vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			}
 			continue
 		default:
@@ -149,12 +150,11 @@ func (vr *Renderer) Process(dt gd.Float) {
 	}
 	if vr.BrushActive {
 		vr.BrushAmount += dt * vr.BrushDeltaV
-		vr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(vr.BrushAmount))
+		vr.shader.SetShaderParameter("height", vr.BrushAmount)
 	}
 }
 
 func (vr *Renderer) apply(deltas []vulture.Deltas) {
-	tmp := vr.Temporary
 	for _, delta := range deltas {
 		buf, ok := vr.regions[delta.Region]
 		if !ok {
@@ -164,12 +164,12 @@ func (vr *Renderer) apply(deltas []vulture.Deltas) {
 		buf.Apply(delta)
 		vr.regions[delta.Region] = buf
 		name := fmt.Sprint(delta.Region)
-		node := vr.ActiveContent.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
-		if node == (gd.Node{}) {
-			area := *gd.Create(vr.KeepAlive, new(gd.Node))
-			area.SetName(tmp.String(name))
-			vr.ActiveContent.AsNode().AddChild(area, false, 0)
-			node = vr.ActiveContent.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
+		node := vr.ActiveContent.AsNode().GetNodeOrNull(NodePath.String(name))
+		if node == (Node.Instance{}) {
+			area := Node.New()
+			area.SetName(name)
+			vr.ActiveContent.AsNode().AddChild(area)
+			node = vr.ActiveContent.AsNode().GetNodeOrNull(NodePath.String(name))
 		}
 		for offset, element := range delta.Iter(end) {
 			switch element.Type() {
@@ -185,52 +185,48 @@ func (vr *Renderer) apply(deltas []vulture.Deltas) {
 	}
 }
 
-func (vr *Renderer) assertMarker(regionID vulture.Region, region gd.Node, buf vulture.Elements, offset vulture.Offset, element *vulture.ElementMarker) {
-	tmp := vr.Temporary
+func (vr *Renderer) assertMarker(regionID vulture.Region, region Node.Instance, buf vulture.Elements, offset vulture.Offset, element *vulture.ElementMarker) {
 	name := fmt.Sprint(offset)
-	node := region.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
-	if node == (gd.Node{}) {
-		area := gd.Create(vr.KeepAlive, new(gd.Node3D))
-		area.Super().AsNode().SetName(tmp.String(name))
-		region.AsNode().AddChild(area.Super().AsNode(), false, 0)
-		node = region.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
+	node := Node.Instance(region.AsNode().GetNodeOrNull(NodePath.String(name)))
+	if node == (Node.Instance{}) {
+		area := Node3D.New()
+		area.AsNode().SetName(name)
+		region.AsNode().AddChild(area.AsNode())
+		node = region.AsNode().GetNodeOrNull(NodePath.String(name))
 	}
-	parent, ok := gd.As[gd.Node3D](tmp, node)
+	parent, ok := classdb.As[Node3D.Instance](node)
 	if !ok {
 		return
 	}
 	world := vr.Vulture.vultureToWorld(regionID, element.Cell, element.Bump)
-	world.SetY(vr.HeightAt(world))
+	world.Y = (vr.HeightAt(world))
 	parent.SetPosition(world)
-	parent.SetScale(gd.Vector3{0.3, 0.3, 0.3})
-	scene, ok := gd.Load[gd.PackedScene](tmp, "res://library/wildfire_games/foliage/acacia.glb")
+	parent.SetScale(Vector3.XYZ{0.3, 0.3, 0.3})
+	scene := Resource.Load[PackedScene.Instance]("res://library/wildfire_games/foliage/acacia.glb")
+	instance, ok := classdb.As[Node3D.Instance](Node.Instance(scene.Instantiate()))
 	if ok {
-		instance, ok := gd.As[gd.Node3D](tmp, scene.Instantiate(vr.KeepAlive, 0))
-		if ok {
-			if parent.Super().AsNode().GetChildCount(false) > 0 {
-				parent.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
-			}
-			parent.Super().AsNode().AddChild(instance.Super().AsNode(), false, 0)
+		if parent.AsNode().GetChildCount() > 0 {
+			Node.Instance(parent.AsNode().GetChild(0)).QueueFree()
 		}
+		parent.AsNode().AddChild(instance.AsNode())
 	}
 }
 
 func (vr *Renderer) reload(region vulture.Region) {
 	vr.reloads[region] = false
-	tmp := vr.Temporary
 	name := fmt.Sprint(region)
-	existing := vr.ActiveRegions.AsNode().GetNodeOrNull(tmp, tmp.String(name).NodePath(tmp))
-	if existing == (gd.Node{}) {
-		area := gd.Create(vr.KeepAlive, new(TerrainTile))
+	existing := Node.Instance(vr.ActiveRegions.AsNode().GetNodeOrNull(NodePath.String(name)))
+	if existing == (Node.Instance{}) {
+		area := new(TerrainTile)
 		area.buffer = vr.regions[region]
 		area.region = region
 		area.heightMapping = vr.heightMapping
 		area.brushEvents = vr.brushEvents
 		area.Shader = vr.shader
-		area.Super().AsNode().SetName(tmp.String(name))
-		vr.ActiveRegions.AsNode().AddChild(area.Super().AsNode(), false, 0)
+		area.Super().AsNode().SetName(name)
+		vr.ActiveRegions.AsNode().AddChild(area.Super().AsNode())
 	}
-	tile, ok := gd.As[*TerrainTile](tmp, existing)
+	tile, ok := classdb.As[*TerrainTile](existing)
 	if ok {
 		tile.buffer = vr.regions[region]
 		tile.Reload()
@@ -241,7 +237,7 @@ func (vr *Renderer) reload(region vulture.Region) {
 // where the camera is focused on. The [TerrainRenderer] will then fetch all
 // nearby [vulture.Territory] enabling it to be rendered. The point should
 // be in world space.
-func (tr *Renderer) SetFocalPoint3D(world gd.Vector3) {
+func (tr *Renderer) SetFocalPoint3D(world Vector3.XYZ) {
 	focal_point, _, _ := tr.Vulture.worldToVulture(world)
 
 	/*if _, ok := tr.loadedTerritory[vulture.Area{}]; ok {

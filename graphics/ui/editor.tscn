@@ -36,4 +36,6 @@ selected = 0
 item_count = 3
 popup/item_0/text = "select a theme"
 popup/item_1/text = "Kenney"
+popup/item_1/id = 1
 popup/item_2/text = "WildfireGames"
+popup/item_2/id = 2

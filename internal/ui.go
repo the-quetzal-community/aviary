@@ -3,21 +3,32 @@ package internal
 import (
 	"slices"
 
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/Control"
+	"graphics.gd/classdb/DirAccess"
+	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/OptionButton"
+	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/TabContainer"
+	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/variant/String"
+	"graphics.gd/variant/Vector2"
+	"graphics.gd/variant/Vector2i"
 )
 
 /*
 UI for editing a space in Aviary.
 */
 type UI struct {
-	gd.Class[UI, gd.Control] `gd:"AviaryUI"`
-	gd.Tool
+	classdb.Extension[UI, Control.Instance] `gd:"AviaryUI"`
+	classdb.Tool
 
-	preview chan string
-	texture chan string
+	preview chan Resource.Path
+	texture chan Resource.Path
 
-	Editor gd.TabContainer
-	Theme  gd.OptionButton
+	Editor TabContainer.Instance
+	Theme  OptionButton.Instance
 	themes []string
 }
 
@@ -38,22 +49,20 @@ var categories = []string{
 }
 
 func (ui *UI) Ready() {
-	tmp := ui.Temporary
-
 	ui.Theme.Clear()
 	ui.themes = append(ui.themes, "")
-	ui.Theme.AddItem(tmp.String("select a theme"), 0)
+	ui.Theme.AddItem("select a theme")
 
-	DirAccess := gd.DirAccess.Open(gd.DirAccess{}, tmp, tmp.String("res://library"))
-	if DirAccess == (gd.DirAccess{}) {
+	Dir := DirAccess.Instance(DirAccess.Open("res://library"))
+	if Dir == (DirAccess.Instance{}) {
 		return
 	}
-	for name := range DirAccess.Iter() {
-		ui.themes = append(ui.themes, name.String())
-		ui.Theme.AddItem(name.ToPascalCase(tmp), 0)
+	for name := range Dir.Iter() {
+		ui.themes = append(ui.themes, name)
+		ui.Theme.AddItem(String.ToPascalCase(name))
 	}
 	ui.onThemeSelected(0)
-	ui.Theme.AsObject().Connect(tmp.StringName("item_selected"), tmp.Callable(ui.onThemeSelected), 0)
+	ui.Theme.OnItemSelected(ui.onThemeSelected)
 
 	/*ui.Toolkit.Buttons.Foliage.AsObject().Connect(tmp.StringName("pressed"), tmp.Callable(func() {
 	select {
@@ -63,72 +72,69 @@ func (ui *UI) Ready() {
 	}), 0)*/
 }
 
-func (ui *UI) generatePreview(span gd.Lifetime, res gd.Resource, size gd.Vector2i) gd.Texture2D {
-	return gd.Texture2D{}
+func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D.Instance {
+	return Texture2D.Instance{}
 }
 
 // onThemeSelected regenerates the palette picker.
-func (ui *UI) onThemeSelected(idx gd.Int) {
-	tmp := ui.Temporary
-	themes := gd.DirAccess.Open(gd.DirAccess{}, tmp, tmp.String("res://library/"+ui.themes[idx]))
-	if themes == (gd.DirAccess{}) {
+func (ui *UI) onThemeSelected(idx int) {
+	themes := DirAccess.Instance(DirAccess.Open("res://library/" + ui.themes[idx]))
+	if themes == (DirAccess.Instance{}) {
 		return
 	}
-	for _, node := range ui.Editor.AsNode().GetChildren(tmp, false).Iter() {
-		node.AsObject().Free()
+	for _, node := range ui.Editor.AsNode().GetChildren().Iter() {
+		container, ok := node.Interface().(classdb.HBoxContainer)
+		if ok {
+			HBoxContainer.Instance(container).AsObject()[0].Free()
+		}
 	}
-	var glb = tmp.String(".glb")
-	var png = tmp.String(".png")
-	var i gd.Int
+	var glb = ".glb"
+	var png = ".png"
+	var i int
 	for name := range themes.Iter() {
-		sname := name.String()
-		if slices.Contains(categories, sname) {
-			hlayout := gd.Create(tmp, new(gd.HBoxContainer))
+		if slices.Contains(categories, name) {
+			hlayout := HBoxContainer.New()
 			hlayout.AsNode().SetName(name)
-			resources := gd.DirAccess.Open(gd.DirAccess{}, tmp, tmp.String("res://library/"+ui.themes[idx]+"/"+sname))
-			if resources == (gd.DirAccess{}) {
+			resources := DirAccess.Instance(DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name))
+			if resources == (DirAccess.Instance{}) {
 				continue
 			}
 			var ext = glb
-			if sname == "texture" {
+			if name == "texture" {
 				ext = png
 			}
 			for resource := range resources.Iter() {
-				if !resource.EndsWith(ext) {
+				if !String.EndsWith(ext, resource) {
 					continue
 				}
-				var path = "res://library/" + ui.themes[idx] + "/" + sname + "/" + resource.String()
+				var path = Resource.Path("res://library/" + ui.themes[idx] + "/" + name + "/" + resource)
 				switch ext {
 				case glb:
-					mesh, ok := gd.Load[gd.PackedScene](tmp, path)
+					/*mesh, ok := gd.Load[gd.PackedScene](tmp, path)
 					if ok {
 
-					}
+					}*/
 				case png:
-					texture, ok := gd.Load[gd.Texture2D](tmp, path)
-					if ok {
-						ImageButton := gd.Create(tmp, new(gd.TextureButton))
-						ImageButton.AsTextureButton().SetTextureNormal(texture)
-						ImageButton.AsTextureButton().SetIgnoreTextureSize(true)
-						ImageButton.AsTextureButton().SetStretchMode(gd.TextureButtonStretchKeepAspectCentered)
-						ImageButton.AsControl().SetCustomMinimumSize(gd.Vector2{128, 128})
-						ImageButton.AsObject().Connect(tmp.StringName("pressed"), tmp.Callable(func() {
-							select {
-							case ui.texture <- path:
-							default:
-							}
-						}), 0)
-						hlayout.AsNode().AddChild(ImageButton.AsNode(), false, 0)
-					}
+					texture := Resource.Load[Texture2D.Instance](path)
+					ImageButton := TextureButton.New()
+					ImageButton.AsTextureButton().SetTextureNormal(texture)
+					ImageButton.AsTextureButton().SetIgnoreTextureSize(true)
+					ImageButton.AsTextureButton().SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(128, 128))
+					ImageButton.AsBaseButton().OnPressed(func() {
+						select {
+						case ui.texture <- path:
+						default:
+						}
+					})
+					hlayout.AsNode().AddChild(ImageButton.AsNode())
 				}
 			}
-			texture, ok := gd.Load[gd.Texture2D](tmp, "res://ui/"+sname+".svg")
-			if ok {
-				ui.Editor.AsNode().AddChild(hlayout.AsNode(), false, 0)
-				ui.Editor.SetTabIcon(i, texture)
-				ui.Editor.SetTabTitle(i, tmp.String(""))
-				i++
-			}
+			texture := Resource.Load[Texture2D.Instance]("res://ui/" + Resource.Path(name) + ".svg")
+			ui.Editor.AsNode().AddChild(hlayout.AsNode())
+			ui.Editor.SetTabIcon(i, texture)
+			ui.Editor.SetTabTitle(i, "")
+			i++
 		}
 	}
 	ui.Editor.AsCanvasItem().SetVisible(i > 0)

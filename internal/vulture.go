@@ -6,13 +6,16 @@ import (
 	"math"
 	"os"
 
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Resource"
+	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
 
 // Vulture API client resource, connects to a remote server.
 type Vulture struct {
-	gd.Class[Vulture, gd.Resource]
+	classdb.Extension[Vulture, Resource.Instance]
 
 	api vulture.API
 }
@@ -22,17 +25,15 @@ func (v *Vulture) OnCreate() {
 }
 
 func (v *Vulture) load() {
-	tmp := v.Temporary
-
 	var regions map[vulture.Region]vulture.Elements
 	file, err := os.Open("save.vult")
 	if err != nil {
-		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		Engine.Raise(err)
 		return
 	}
 	defer file.Close()
 	if err := gob.NewDecoder(file).Decode(&regions); err != nil {
-		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		Engine.Raise(err)
 		return
 	}
 	var deltas []vulture.Deltas
@@ -43,39 +44,39 @@ func (v *Vulture) load() {
 		})
 	}
 	if err := v.api.Reform(context.TODO(), deltas); err != nil {
-		tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+		Engine.Raise(err)
 		return
 	}
 }
 
-func (v *Vulture) vultureToWorld(region vulture.Region, cell vulture.Cell, bump uint8) gd.Vector3 {
-	world := gd.Vector3{float32(region[0]), 0, float32(region[1])}
-	world = world.Mulf(16)
-	world = world.Add(gd.Vector3{float32(cell % 16), 0, float32(cell / 16)})
-	bumps := gd.Vector3{float32(bump%16) / 16, 0, float32(bump/16) / 16}
+func (v *Vulture) vultureToWorld(region vulture.Region, cell vulture.Cell, bump uint8) Vector3.XYZ {
+	world := Vector3.New(region[0], 0, region[1])
+	world = Vector3.MulX(world, 16)
+	world = Vector3.Add(world, Vector3.New(int(cell%16), 0, int(cell/16)))
+	bumps := Vector3.New(float32(bump%16)/16, 0, float32(bump/16)/16)
 	if region[0] < 0 {
-		bumps[0] = 1 - bumps[0]
+		bumps.X = 1 - bumps.X
 	}
 	if region[1] < 0 {
-		bumps[2] = 1 - bumps[2]
+		bumps.Z = 1 - bumps.Z
 	}
-	world = world.Add(bumps)
+	world = Vector3.Add(world, bumps)
 	return world
 }
 
 // worldToVulture is the inverse of [Vulture.vultureToWorld]
-func (v *Vulture) worldToVulture(world gd.Vector3) (region vulture.Region, cell vulture.Cell, bump uint8) {
-	region = vulture.Region{int8(world[0] / 16), int8(world[2] / 16)}
-	if world[0] < 0 {
+func (v *Vulture) worldToVulture(world Vector3.XYZ) (region vulture.Region, cell vulture.Cell, bump uint8) {
+	region = vulture.Region{int8(world.X / 16), int8(world.Z / 16)}
+	if world.X < 0 {
 		region[0]--
 	}
-	if world[2] < 0 {
+	if world.Z < 0 {
 		region[1]--
 	}
-	local := world.Sub(gd.Vector3{float32(region[0]) * 16, 0, float32(region[1]) * 16})
-	cell = vulture.Cell(int32(local[0]) + int32(local[2])*16)
-	_, a := math.Modf(float64(world[0]))
-	_, b := math.Modf(float64(world[2]))
+	local := Vector3.Sub(world, Vector3.New(region[0]*16, 0, region[1]*16))
+	cell = vulture.Cell(int32(local.X) + int32(local.Z)*16)
+	_, a := math.Modf(float64(world.X))
+	_, b := math.Modf(float64(world.Z))
 	if a < 0 {
 		a = -a
 	}

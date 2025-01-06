@@ -5,13 +5,20 @@ import (
 	"math"
 	"time"
 
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/InputEventMouseButton"
+	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
 
 type terrainBrushEvent struct {
-	BrushTarget gd.Vector3
-	BrushDeltaV gd.Float
+	BrushTarget Vector3.XYZ
+	BrushDeltaV Float.X
 }
 
 func (tr *Renderer) OnCreate() {
@@ -19,43 +26,40 @@ func (tr *Renderer) OnCreate() {
 	tr.brushEvents = make(chan terrainBrushEvent, 100)
 }
 
-func (tr *Renderer) Input(event gd.InputEvent) {
-	tmp := tr.Temporary
-	Input := gd.Input(tmp)
-	if event, ok := gd.As[gd.InputEventMouseButton](tmp, event); ok {
-		if Input.IsKeyPressed(gd.KeyShift) {
-			if event.GetButtonIndex() == gd.MouseButtonWheelDown {
+func (tr *Renderer) Input(event InputEvent.Instance) {
+	if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok {
+		if Input.IsKeyPressed(Input.KeyShift) {
+			if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelDown {
 				tr.BrushRadius -= 0.5
 				if tr.BrushRadius == 0 {
 					tr.BrushRadius = 0.5
 				}
-				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
-
+				tr.shader.SetShaderParameter("radius", tr.BrushRadius)
 			}
-			if event.GetButtonIndex() == gd.MouseButtonWheelUp {
+			if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelUp {
 				tr.BrushRadius += 0.5
-				tr.shader.SetShaderParameter(tmp.StringName("radius"), tmp.Variant(tr.BrushRadius))
+				tr.shader.SetShaderParameter("radius", tr.BrushRadius)
 			}
 		}
-		if tr.BrushActive && event.GetButtonIndex() == gd.MouseButtonLeft || event.GetButtonIndex() == gd.MouseButtonRight && event.AsInputEvent().IsReleased() {
+		if tr.BrushActive && event.ButtonIndex() == InputEventMouseButton.MouseButtonLeft || event.ButtonIndex() == InputEventMouseButton.MouseButtonRight && event.AsInputEvent().IsReleased() {
 			tr.uploadEdits(vulture.Uplift{
 				Lift: int8(tr.BrushAmount * 32),
 			})
 		}
-		if event.GetButtonIndex() == gd.MouseButtonLeft && tr.PaintActive {
+		if event.ButtonIndex() == InputEventMouseButton.MouseButtonLeft && tr.PaintActive {
 			if event.AsInputEvent().IsReleased() {
 				tr.PaintActive = false
 
 			}
 		}
 	}
-	if event, ok := gd.As[gd.InputEventKey](tmp, event); ok {
-		if event.GetKeycode() == gd.KeyShift && event.AsInputEvent().IsPressed() {
-			tr.shader.SetShaderParameter(tmp.StringName("brush_active"), tmp.Variant(true))
+	if event, ok := classdb.As[InputEventKey.Instance](event); ok {
+		if event.Keycode() == InputEventKey.KeyShift && event.AsInputEvent().IsPressed() {
+			tr.shader.SetShaderParameter("brush_active", true)
 		}
-		if event.GetKeycode() == gd.KeyShift && event.AsInputEvent().IsReleased() {
-			tr.shader.SetShaderParameter(tmp.StringName("height"), tmp.Variant(0.0))
-			tr.shader.SetShaderParameter(tmp.StringName("brush_active"), tmp.Variant(false))
+		if event.Keycode() == InputEventKey.KeyShift && event.AsInputEvent().IsReleased() {
+			tr.shader.SetShaderParameter("height", 0.0)
+			tr.shader.SetShaderParameter("brush_active", false)
 		}
 	}
 }
@@ -71,16 +75,14 @@ func (tr *Renderer) uploadEdits(uplift vulture.Uplift) {
 	tr.BrushActive = false
 	tr.BrushAmount = 0
 	go func() {
-		tmp := gd.NewLifetime(tr.Temporary)
-		defer tmp.End()
 		if err := tr.Vulture.api.Uplift(ctx, uplift); err != nil {
-			tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+			Engine.Raise(err)
 			return
 		}
 	}()
 }
 
-func (tr *Renderer) HeightAt(world gd.Vector3) gd.Float {
+func (tr *Renderer) HeightAt(world Vector3.XYZ) Float.X {
 	return 0
 	region, cell, _ := tr.Vulture.worldToVulture(world)
 	data := tr.heightMapping[region]
@@ -130,5 +132,5 @@ func (tr *Renderer) HeightAt(world gd.Vector3) gd.Float {
 		gamma := 1 - alpha - beta
 		y = y11*gamma + y10*alpha + y01*beta
 	}
-	return y / 32
+	return Float.X(y / 32)
 }

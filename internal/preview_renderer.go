@@ -4,7 +4,16 @@ import (
 	"context"
 	"time"
 
-	"grow.graphics/gd"
+	"graphics.gd/classdb"
+	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
 
@@ -12,34 +21,30 @@ import (
 // is planning where to place it. As such, these items will follow
 // the cursor and will be submitted to the Vulture API on click.
 type PreviewRenderer struct {
-	gd.Class[PreviewRenderer, gd.Node3D]
+	classdb.Extension[PreviewRenderer, Node3D.Instance]
 
-	mouseOver chan gd.Vector3
+	mouseOver chan Vector3.XYZ
 
-	preview chan string // resource name
+	preview chan Resource.Path // resource name
 
 	Vulture *Vulture
 	terrain *Renderer
 }
 
-func (pr *PreviewRenderer) AsNode() gd.Node { return pr.Super().AsNode() }
+func (pr *PreviewRenderer) AsNode() Node.Instance { return pr.Super().AsNode() }
 
-func (pr *PreviewRenderer) Process(dt gd.Float) {
-	tmp := pr.Temporary
-	Input := gd.Input(tmp)
+func (pr *PreviewRenderer) Process(dt Float.X) {
 	for {
 		select {
 		case resource := <-pr.preview:
-			scene, ok := gd.Load[gd.PackedScene](tmp, resource)
+			scene := Resource.Load[PackedScene.Instance](resource)
+			instance, ok := classdb.As[Node3D.Instance](Node.Instance(scene.Instantiate()))
 			if ok {
-				instance, ok := gd.As[gd.Node3D](tmp, scene.Instantiate(pr.KeepAlive, 0))
-				if ok {
-					if pr.Super().AsNode().GetChildCount(false) > 0 {
-						pr.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
-					}
-					instance.AsNode3D().SetScale(gd.Vector3{0.3, 0.3, 0.3})
-					pr.Super().AsNode().AddChild(instance.Super().AsNode(), false, 0)
+				if pr.Super().AsNode().GetChildCount() > 0 {
+					Node.Instance(pr.Super().AsNode().GetChild(0)).QueueFree()
 				}
+				instance.AsNode3D().SetScale(Vector3.New(0.3, 0.3, 0.3))
+				pr.Super().AsNode().AddChild(instance.AsNode())
 			}
 		case pos := <-pr.mouseOver:
 			pr.Super().AsNode3D().SetPosition(pr.Vulture.vultureToWorld(pr.Vulture.worldToVulture(pos)))
@@ -49,10 +54,10 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 		}
 		break
 	}
-	if Input.IsMouseButtonPressed(gd.MouseButtonLeft) {
-		if pr.Super().AsNode().GetChildCount(false) > 0 {
-			pr.Super().AsNode().GetChild(tmp, 0, false).QueueFree()
-			pos := pr.Super().AsNode3D().GetPosition()
+	if Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
+		if pr.Super().AsNode().GetChildCount() > 0 {
+			Node.Instance(pr.Super().AsNode().GetChild(0)).QueueFree()
+			pos := pr.Super().AsNode3D().Position()
 			area, cell, bump := pr.Vulture.worldToVulture(pos)
 			packed := vulture.Elements{}
 			packed.Add(vulture.ElementMarker{
@@ -68,12 +73,20 @@ func (pr *PreviewRenderer) Process(dt gd.Float) {
 					Packet: vulture.Time(time.Now().UnixNano()),
 					Append: packed,
 				}}); err != nil {
-					tmp.Printerr(tmp.Variant(tmp.String(err.Error())))
+					Engine.Raise(err)
 				}
 			}()
 		}
 	}
-	pos := pr.Super().AsNode3D().GetPosition()
-	pos.SetY(pr.terrain.HeightAt(pos))
+	pos := pr.Super().AsNode3D().Position()
+	pos.Y = (pr.terrain.HeightAt(pos))
 	pr.Super().AsNode3D().SetPosition(pos)
+}
+
+func (pr *PreviewRenderer) Ready() {
+
+}
+
+func (pr *PreviewRenderer) GenerateTexture2D(scene PackedScene.Instance) Texture2D.Instance {
+	return Texture2D.Instance{}
 }
