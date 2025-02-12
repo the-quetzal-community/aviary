@@ -27,11 +27,8 @@ import (
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/ArrayMesh"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FastNoiseLite"
 	"graphics.gd/classdb/Mesh"
-	"graphics.gd/variant"
-	"graphics.gd/variant/Array"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -155,7 +152,7 @@ func (rock *Rock) scrape(positionIndex int, positions []Vector3.XYZ, normals []V
 
 func (rock *Rock) OnSet(name string, value any) {
 	if !rock.generating {
-		Callable.New(rock.generate).CallDeferred()
+		Callable.Defer(Callable.New(rock.generate))
 		rock.generating = true
 	}
 }
@@ -354,25 +351,19 @@ func (rock *Rock) generate() {
 	defer Object.Instance(ArrayMesh.AsObject()).SetSignalsBlocked(false)
 	ArrayMesh.ClearSurfaces()
 	{
-		var vertices = Packed.NewVector3Array()
-		for _, vertex := range positions {
-			vertices.Append(vertex)
-		}
-		var indicies = Packed.NewInt32Array()
+		var vertices = Packed.New[Vector3.XYZ](positions...)
+		var indicies = Packed.New[int32]()
 		for _, index := range cells {
-			indicies.Append(Engine.Int(index.Z))
-			indicies.Append(Engine.Int(index.Y))
-			indicies.Append(Engine.Int(index.Z))
+			indicies.Append(index.Z)
+			indicies.Append(index.Y)
+			indicies.Append(index.Z)
 		}
-		var norm = Packed.NewVector3Array()
-		for _, normal := range normals {
-			norm.Append(normal)
+		var norm = Packed.New(normals...)
+		var arrays = [Mesh.ArrayMax]any{
+			Mesh.ArrayVertex: vertices,
+			Mesh.ArrayIndex:  indicies,
+			Mesh.ArrayNormal: norm,
 		}
-		var arrays = Array.Empty()
-		arrays.Resize(Engine.Int(Mesh.ArrayMax))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayVertex), variant.New(vertices))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayIndex), variant.New(indicies))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayNormal), variant.New(norm))
-		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays)
+		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
 }

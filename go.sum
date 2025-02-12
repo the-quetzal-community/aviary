@@ -1,7 +1,5 @@
 golang.org/x/text v0.15.0 h1:h1V/4gjBv8v9cjcR6+AR5+/cIYK5N/WAgiv4xlsEtAk=
 golang.org/x/text v0.15.0/go.mod h1:18ZOQIKpY8NJVqYksKHtTdi31H5itFRjB5/qKTNYzSU=
-graphics.gd v0.0.0-20250105031729-00ad9e9d54b7 h1:8tmJyDyZvOHrvdDqUvJvjw6iYd00JkMU/ZaGIxmDh1s=
-graphics.gd v0.0.0-20250105031729-00ad9e9d54b7/go.mod h1:RMdoN+VfxCLNREjtVL346Ip7lOtePp6s1TXWGrO76Vs=
 graphics.gd v0.0.0-20250106002323-e0f7095af53f h1:mJip17kWSaR++2HmAYI+QiYudnLHd2jf05LHfm/EvMA=
 graphics.gd v0.0.0-20250106002323-e0f7095af53f/go.mod h1:RMdoN+VfxCLNREjtVL346Ip7lOtePp6s1TXWGrO76Vs=
 grow.graphics/xy v0.0.0-20240603021049-7427233fc3a9 h1:7DTN0CCvKzohFhaeb1vNC1XackvyL4u1UwQDBzQixJo=

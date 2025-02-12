@@ -17,10 +17,9 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
 	"graphics.gd/variant"
-	"graphics.gd/variant/Array"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
-	"graphics.gd/variant/NodePath"
+	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
@@ -51,7 +50,7 @@ type Renderer struct {
 
 	shader ShaderMaterial.Instance
 
-	texture chan Resource.Path
+	texture chan Path.ToResource
 
 	//
 	// Terrain Brush parameters are used to represent modifications
@@ -72,10 +71,10 @@ func (tr *Renderer) Ready() {
 	grass := Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png")
 	cliff := Resource.Load[Texture2D.Instance]("res://library/wildfire_games/texture/alpine_cliff.png")
 	textures := Texture2DArray.New()
-	var array = Array.Empty()
-	array.Append(variant.New(grass.AsTexture2D().GetImage()))
-	array.Append(variant.New(cliff.AsTexture2D().GetImage()))
-	textures.AsImageTextureLayered().CreateFromImages(array)
+	textures.AsImageTextureLayered().CreateFromImages([]classdb.Image{
+		grass.AsTexture2D().GetImage(),
+		cliff.AsTexture2D().GetImage(),
+	})
 	tr.shader = ShaderMaterial.New()
 	tr.shader.SetShader(shader)
 	tr.shader.SetShaderParameter("albedo", Color.RGBA{1, 1, 1, 1})
@@ -164,12 +163,12 @@ func (vr *Renderer) apply(deltas []vulture.Deltas) {
 		buf.Apply(delta)
 		vr.regions[delta.Region] = buf
 		name := fmt.Sprint(delta.Region)
-		node := vr.ActiveContent.AsNode().GetNodeOrNull(NodePath.String(name))
+		node := vr.ActiveContent.AsNode().GetNodeOrNull(name)
 		if node == (Node.Instance{}) {
 			area := Node.New()
 			area.SetName(name)
 			vr.ActiveContent.AsNode().AddChild(area)
-			node = vr.ActiveContent.AsNode().GetNodeOrNull(NodePath.String(name))
+			node = vr.ActiveContent.AsNode().GetNodeOrNull(name)
 		}
 		for offset, element := range delta.Iter(end) {
 			switch element.Type() {
@@ -187,12 +186,12 @@ func (vr *Renderer) apply(deltas []vulture.Deltas) {
 
 func (vr *Renderer) assertMarker(regionID vulture.Region, region Node.Instance, buf vulture.Elements, offset vulture.Offset, element *vulture.ElementMarker) {
 	name := fmt.Sprint(offset)
-	node := Node.Instance(region.AsNode().GetNodeOrNull(NodePath.String(name)))
+	node := Node.Instance(region.AsNode().GetNodeOrNull(name))
 	if node == (Node.Instance{}) {
 		area := Node3D.New()
 		area.AsNode().SetName(name)
 		region.AsNode().AddChild(area.AsNode())
-		node = region.AsNode().GetNodeOrNull(NodePath.String(name))
+		node = region.AsNode().GetNodeOrNull(name)
 	}
 	parent, ok := classdb.As[Node3D.Instance](node)
 	if !ok {
@@ -215,7 +214,7 @@ func (vr *Renderer) assertMarker(regionID vulture.Region, region Node.Instance, 
 func (vr *Renderer) reload(region vulture.Region) {
 	vr.reloads[region] = false
 	name := fmt.Sprint(region)
-	existing := Node.Instance(vr.ActiveRegions.AsNode().GetNodeOrNull(NodePath.String(name)))
+	existing := Node.Instance(vr.ActiveRegions.AsNode().GetNodeOrNull(name))
 	if existing == (Node.Instance{}) {
 		area := new(TerrainTile)
 		area.buffer = vr.regions[region]

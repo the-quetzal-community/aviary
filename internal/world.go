@@ -21,6 +21,7 @@ import (
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
@@ -64,8 +65,8 @@ func (world *World) Ready() {
 		}
 	}
 	world.mouseOver = make(chan Vector3.XYZ, 100)
-	world.PreviewRenderer.preview = make(chan Resource.Path, 1)
-	world.VultureRenderer.texture = make(chan Resource.Path, 1)
+	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
+	world.VultureRenderer.texture = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.Vulture = world.Vulture
 	world.PreviewRenderer.terrain = world.VultureRenderer

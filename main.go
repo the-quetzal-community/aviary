@@ -17,6 +17,7 @@ func main() {
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
 	classdb.Register[internal.Renderer]()
-	startup.Wait()
+	startup.LoadingScene()
 	SceneTree.Add(new(internal.World))
+	startup.Scene()
 }

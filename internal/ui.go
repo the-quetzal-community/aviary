@@ -7,11 +7,13 @@ import (
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OptionButton"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/variant/Path"
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
@@ -24,8 +26,8 @@ type UI struct {
 	classdb.Extension[UI, Control.Instance] `gd:"AviaryUI"`
 	classdb.Tool
 
-	preview chan Resource.Path
-	texture chan Resource.Path
+	preview chan Path.ToResource
+	texture chan Path.ToResource
 
 	Editor TabContainer.Instance
 	Theme  OptionButton.Instance
@@ -82,8 +84,8 @@ func (ui *UI) onThemeSelected(idx int) {
 	if themes == (DirAccess.Instance{}) {
 		return
 	}
-	for _, node := range ui.Editor.AsNode().GetChildren().Iter() {
-		container, ok := node.Interface().(classdb.HBoxContainer)
+	for _, node := range ui.Editor.AsNode().GetChildren() {
+		container, ok := classdb.As[HBoxContainer.Instance](Node.Instance(node))
 		if ok {
 			HBoxContainer.Instance(container).AsObject()[0].Free()
 		}
@@ -104,10 +106,10 @@ func (ui *UI) onThemeSelected(idx int) {
 				ext = png
 			}
 			for resource := range resources.Iter() {
-				if !String.EndsWith(ext, resource) {
+				if !String.HasSuffix(resource, ext) {
 					continue
 				}
-				var path = Resource.Path("res://library/" + ui.themes[idx] + "/" + name + "/" + resource)
+				var path = Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + resource))
 				switch ext {
 				case glb:
 					/*mesh, ok := gd.Load[gd.PackedScene](tmp, path)
@@ -130,7 +132,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					hlayout.AsNode().AddChild(ImageButton.AsNode())
 				}
 			}
-			texture := Resource.Load[Texture2D.Instance]("res://ui/" + Resource.Path(name) + ".svg")
+			texture := Resource.Load[Texture2D.Instance]("res://ui/" + name + ".svg")
 			ui.Editor.AsNode().AddChild(hlayout.AsNode())
 			ui.Editor.SetTabIcon(i, texture)
 			ui.Editor.SetTabTitle(i, "")

@@ -13,6 +13,7 @@ import (
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
 )
@@ -25,7 +26,7 @@ type PreviewRenderer struct {
 
 	mouseOver chan Vector3.XYZ
 
-	preview chan Resource.Path // resource name
+	preview chan Path.ToResource // resource name
 
 	Vulture *Vulture
 	terrain *Renderer

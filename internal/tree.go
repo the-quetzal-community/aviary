@@ -34,12 +34,9 @@ import (
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/ArrayMesh"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
-	"graphics.gd/variant"
 	"graphics.gd/variant/Angle"
-	"graphics.gd/variant/Array"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -112,7 +109,7 @@ func (tree *Tree) OnCreate() {
 
 func (tree *Tree) OnSet(name string, value any) {
 	if !tree.recalculating {
-		Callable.New(tree.recalculate).CallDeferred()
+		Callable.Defer(Callable.New(tree.recalculate))
 		tree.recalculating = true
 	}
 }
@@ -155,52 +152,48 @@ func (tree *Tree) recalculate() {
 
 	ArrayMesh.ClearSurfaces()
 	{
-		var vertices = Packed.NewVector3Array()
+		var vertices = Packed.New[Vector3.XYZ]()
 		for _, vertex := range tree.mesh.verts {
 			vertices.Append(vertex)
 		}
-		var indicies = Packed.NewInt32Array()
+		var indicies = Packed.New[int32]()
 		for _, index := range tree.mesh.faces {
-			indicies.Append(Engine.Int(index.Z))
-			indicies.Append(Engine.Int(index.Y))
-			indicies.Append(Engine.Int(index.X))
+			indicies.Append(index.Z)
+			indicies.Append(index.Y)
+			indicies.Append(index.X)
 		}
-		var normals = Packed.NewVector3Array()
+		var normals = Packed.New[Vector3.XYZ]()
 		for _, normal := range tree.mesh.normals {
 			normals.Append(normal)
 		}
-
-		var arrays = Array.Empty()
-		arrays.Resize(Engine.Int(Mesh.ArrayMax))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayVertex), variant.New(vertices))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayIndex), variant.New(indicies))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayNormal), variant.New(normals))
-
-		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays)
+		var arrays = [Mesh.ArrayMax]any{
+			Mesh.ArrayVertex: vertices,
+			Mesh.ArrayIndex:  indicies,
+			Mesh.ArrayNormal: normals,
+		}
+		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
 	{
-		var vertices = Packed.NewVector3Array()
+		var vertices = Packed.New[Vector3.XYZ]()
 		for _, vertex := range tree.twig.verts {
 			vertices.Append(vertex)
 		}
-		var indicies = Packed.NewInt32Array()
+		var indicies = Packed.New[int32]()
 		for _, index := range tree.twig.faces {
-			indicies.Append(Engine.Int(index.Z))
-			indicies.Append(Engine.Int(index.Y))
-			indicies.Append(Engine.Int(index.X))
+			indicies.Append(index.Z)
+			indicies.Append(index.Y)
+			indicies.Append(index.X)
 		}
-		var normals = Packed.NewVector3Array()
+		var normals = Packed.New[Vector3.XYZ]()
 		for _, normal := range tree.twig.normals {
 			normals.Append(normal)
 		}
-
-		var arrays = Array.Empty()
-		arrays.Resize(Engine.Int(Mesh.ArrayMax))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayVertex), variant.New(vertices))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayIndex), variant.New(indicies))
-		arrays.SetIndex(Engine.Int(Mesh.ArrayNormal), variant.New(normals))
-
-		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays)
+		var arrays = [Mesh.ArrayMax]any{
+			Mesh.ArrayVertex: vertices,
+			Mesh.ArrayIndex:  indicies,
+			Mesh.ArrayNormal: normals,
+		}
+		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
 	if restoreMats {
 		ArrayMesh.AsMesh().SurfaceSetMaterial(0, mat1)

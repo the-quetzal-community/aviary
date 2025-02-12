@@ -4,7 +4,6 @@ import (
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/Camera3D"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/HeightMapShape3D"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
@@ -49,19 +48,19 @@ func (tile *TerrainTile) Reload() {
 	tile.Shader.SetShaderParameter("height", 0.0)
 	tile.Shader.SetShaderParameter("paint_active", false)
 
-	var vertices = Packed.NewVector3Array()
+	var vertices = Packed.New[Vector3.XYZ]()
 	vertices.Resize(16 * 16 * 6)
-	var normals = Packed.NewVector3Array()
+	var normals = Packed.New[Vector3.XYZ]()
 	normals.Resize(16 * 16 * 6)
-	var uvs = Packed.NewVector2Array()
+	var uvs = Packed.New[Vector2.XY]()
 	uvs.Resize(16 * 16 * 6)
 
-	var textures = Packed.NewFloat32Array()
+	var textures = Packed.New[float32]()
 	textures.Resize(16 * 16 * 6 * 4)
 
 	heights := make([]float32, 17*17)
 
-	weights := Packed.NewFloat32Array()
+	weights := Packed.New[float32]()
 	weights.Resize(16 * 16 * 6 * 4)
 
 	heightm := tile.heightMapping[tile.region]
@@ -80,20 +79,20 @@ func (tile *TerrainTile) Reload() {
 	tile.heightMapping[tile.region] = heightm
 
 	add := func(index int, cell vulture.Cell, x, y int, w1, w2, w3, w4 Float.X) {
-		vertices.Set(Engine.Int(index), Vector3.XYZ{float32(x), Float.X(heights[x+y*17]), float32(y)})
-		normals.Set(Engine.Int(index), Vector3.XYZ{0, 1, 0})
-		uvs.Set(Engine.Int(index), Vector2.XY{Float.X(x) / 16, Float.X(y) / 16})
+		vertices.SetIndex(index, Vector3.XYZ{float32(x), Float.X(heights[x+y*17]), float32(y)})
+		normals.SetIndex(index, Vector3.XYZ{0, 1, 0})
+		uvs.SetIndex(index, Vector2.XY{Float.X(x) / 16, Float.X(y) / 16})
 
 		// Need to blend these correctly.w
-		textures.Set(Engine.Int(index*4), Engine.FloatX(sample[cell][0]))   // top left
-		textures.Set(Engine.Int(index*4+1), Engine.FloatX(sample[cell][1])) // top right
-		textures.Set(Engine.Int(index*4+2), Engine.FloatX(sample[cell][2])) // bottom left
-		textures.Set(Engine.Int(index*4+3), Engine.FloatX(sample[cell][3])) // bottom right
+		textures.SetIndex(index*4, float32(sample[cell][0]))   // top left
+		textures.SetIndex(index*4+1, float32(sample[cell][1])) // top right
+		textures.SetIndex(index*4+2, float32(sample[cell][2])) // bottom left
+		textures.SetIndex(index*4+3, float32(sample[cell][3])) // bottom right
 
-		weights.Set(Engine.Int(index*4), Engine.FloatX(w1))
-		weights.Set(Engine.Int(index*4+1), Engine.FloatX(w2))
-		weights.Set(Engine.Int(index*4+2), Engine.FloatX(w3))
-		weights.Set(Engine.Int(index*4+3), Engine.FloatX(w4))
+		weights.SetIndex(index*4, float32(w1))
+		weights.SetIndex(index*4+1, float32(w2))
+		weights.SetIndex(index*4+2, float32(w3))
+		weights.SetIndex(index*4+3, float32(w4))
 	}
 	// generate the triangle pairs of the plane mesh
 	for x := 0; x < 16; x++ {
@@ -114,15 +113,15 @@ func (tile *TerrainTile) Reload() {
 	shape.SetMapData(heights)
 
 	var mesh = ArrayMesh.New()
-	var arrays = Array.Empty()
-	arrays.Resize(Engine.Int(Mesh.ArrayMax))
-	arrays.SetIndex(Engine.Int(Mesh.ArrayVertex), variant.New(vertices))
-	arrays.SetIndex(Engine.Int(Mesh.ArrayTexUv), variant.New(uvs))
-	arrays.SetIndex(Engine.Int(Mesh.ArrayNormal), variant.New(normals))
-	arrays.SetIndex(Engine.Int(Mesh.ArrayCustom0), variant.New(textures))
-	arrays.SetIndex(Engine.Int(Mesh.ArrayCustom1), variant.New(weights))
+	var arrays = Array.New[variant.Any]()
+	arrays.Resize(int(Mesh.ArrayMax))
+	arrays.SetIndex(int(Mesh.ArrayVertex), variant.New(vertices))
+	arrays.SetIndex(int(Mesh.ArrayTexUv), variant.New(uvs))
+	arrays.SetIndex(int(Mesh.ArrayNormal), variant.New(normals))
+	arrays.SetIndex(int(Mesh.ArrayCustom0), variant.New(textures))
+	arrays.SetIndex(int(Mesh.ArrayCustom1), variant.New(weights))
 
-	ArrayMesh.Advanced(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays, Array.Empty(), Dictionary.Empty(),
+	ArrayMesh.Advanced(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays, Array.New[Array.Any](), Dictionary.New[variant.Any, variant.Any](),
 		Mesh.ArrayFormatVertex|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
