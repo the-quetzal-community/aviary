@@ -83,24 +83,23 @@ func (tr *Renderer) uploadEdits(uplift vulture.Uplift) {
 }
 
 func (tr *Renderer) HeightAt(world Vector3.XYZ) Float.X {
-	return 0
 	region, cell, _ := tr.Vulture.worldToVulture(world)
 	data := tr.heightMapping[region]
 
 	// Ensure x and z are within bounds
-	x := math.Min(math.Max(float64(cell%16), 0), float64(17))
-	z := math.Min(math.Max(float64(cell/16), 0), float64(17))
+	x := math.Min(math.Max(float64(cell%16), 0), float64(16))
+	z := math.Min(math.Max(float64(cell/16), 0), float64(16))
 
 	// Calculate grid cell coordinates
 	x0, z0 := int(x), int(z)
 	x1, z1 := x0+1, z0+1
 
 	// Ensure we don't go out of bounds due to float precision
-	if x1 >= 17 {
-		x1 = 17 - 1
+	if x1 >= 16 {
+		x1 = 16 - 1
 	}
-	if z1 >= 17 {
-		z1 = 17 - 1
+	if z1 >= 16 {
+		z1 = 16 - 1
 	}
 
 	// Determine which triangle we're in within the cell (assuming we're using a grid where each square is split into two triangles)
@@ -110,9 +109,9 @@ func (tr *Renderer) HeightAt(world Vector3.XYZ) Float.X {
 
 	if insideTriangle {
 		// We're in the triangle that includes (x0,z0), (x1,z0), and (x0,z1)
-		y00 := float64(data[z0*17+x0][0])
-		y10 := float64(data[z0*17+x1][0])
-		y01 := float64(data[z1*17+x0][0])
+		y00 := float64(data[z0*16+x0][0])
+		y10 := float64(data[z0*16+x1][0])
+		y01 := float64(data[z1*16+x0][0])
 
 		// Barycentric interpolation within the triangle
 		alpha := float64(x - float64(x0))
@@ -122,9 +121,9 @@ func (tr *Renderer) HeightAt(world Vector3.XYZ) Float.X {
 
 	} else {
 		// We're in the other triangle that includes (x1,z1), (x1,z0), and (x0,z1)
-		y11 := float64(data[z1*17+x1][0])
-		y10 := float64(data[z0*17+x1][0])
-		y01 := float64(data[z1*17+x0][0])
+		y11 := float64(data[z1*16+x1][0])
+		y10 := float64(data[z0*16+x1][0])
+		y01 := float64(data[z1*16+x0][0])
 
 		// Barycentric interpolation within this triangle
 		alpha := float64(1 - (x - float64(x0)))
