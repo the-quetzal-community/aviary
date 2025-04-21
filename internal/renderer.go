@@ -224,6 +224,7 @@ func (vr *Renderer) reload(region vulture.Region) {
 		area.Shader = vr.shader
 		area.Super().AsNode().SetName(name)
 		vr.ActiveRegions.AsNode().AddChild(area.Super().AsNode())
+		existing = Node.Instance(vr.ActiveRegions.AsNode().GetNodeOrNull(name))
 	}
 	tile, ok := classdb.As[*TerrainTile](existing)
 	if ok {

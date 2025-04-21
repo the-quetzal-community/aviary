@@ -112,16 +112,29 @@ func (ui *UI) onThemeSelected(idx int) {
 				var path = Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + resource))
 				switch ext {
 				case glb:
-					/*mesh, ok := gd.Load[gd.PackedScene](tmp, path)
-					if ok {
-
-					}*/
+					renamed := String.TrimSuffix(resource, glb) + ".png"
+					preview := Resource.Load[Texture2D.Instance](Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + renamed)))
+					if preview == Texture2D.Nil {
+						continue
+					}
+					ImageButton := TextureButton.New()
+					ImageButton.SetTextureNormal(preview)
+					ImageButton.SetIgnoreTextureSize(true)
+					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(128, 128))
+					ImageButton.AsBaseButton().OnPressed(func() {
+						select {
+						case ui.preview <- path:
+						default:
+						}
+					})
+					hlayout.AsNode().AddChild(ImageButton.AsNode())
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
 					ImageButton := TextureButton.New()
-					ImageButton.AsTextureButton().SetTextureNormal(texture)
-					ImageButton.AsTextureButton().SetIgnoreTextureSize(true)
-					ImageButton.AsTextureButton().SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					ImageButton.SetTextureNormal(texture)
+					ImageButton.SetIgnoreTextureSize(true)
+					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
 					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(128, 128))
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
