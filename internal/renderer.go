@@ -122,16 +122,17 @@ func (vr *Renderer) Process(dt Float.X) {
 			vr.shader.SetShaderParameter("paint_active", true)
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
+			event.BrushTarget = Vector3.Round(event.BrushTarget)
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
-				vr.shader.SetShaderParameter("uplift", Vector3.Round(event.BrushTarget))
+				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
 				vr.uploadEdits(vulture.Uplift{
 					Draw: 1, // TODO upload ID
 				})
 			} else if !Input.IsKeyPressed(Input.KeyShift) {
 				vr.mouseOver <- event.BrushTarget
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
-				vr.shader.SetShaderParameter("uplift", Vector3.Round(event.BrushTarget))
+				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
 			} else {
 				event.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.BrushTarget = event.BrushTarget
@@ -139,7 +140,7 @@ func (vr *Renderer) Process(dt Float.X) {
 				if event.BrushDeltaV != 0 {
 					vr.BrushActive = true
 				}
-				vr.shader.SetShaderParameter("uplift", event.BrushTarget)
+				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
 			}
 			continue
 		default:
