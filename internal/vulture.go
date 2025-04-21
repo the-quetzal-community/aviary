@@ -18,6 +18,10 @@ type Vulture struct {
 	classdb.Extension[Vulture, Resource.Instance]
 
 	api vulture.API
+
+	uploads     vulture.Upload
+	name2upload map[string]vulture.Upload
+	upload2name map[vulture.Upload]string
 }
 
 func (v *Vulture) OnCreate() {
@@ -25,6 +29,9 @@ func (v *Vulture) OnCreate() {
 }
 
 func (v *Vulture) load() {
+	v.name2upload = make(map[string]vulture.Upload)
+	v.upload2name = make(map[vulture.Upload]string)
+
 	var regions map[vulture.Region]vulture.Elements
 	file, err := os.Open("save.vult")
 	if err != nil {

@@ -87,49 +87,37 @@ func (tr *Renderer) HeightAt(world Vector3.XYZ) Float.X {
 	data := tr.heightMapping[region]
 
 	// Ensure x and z are within bounds
-	x := math.Min(math.Max(float64(cell%16), 0), float64(16))
-	z := math.Min(math.Max(float64(cell/16), 0), float64(16))
+	x := math.Min(math.Max(float64(cell%16), 0), 15.0)
+	z := math.Min(math.Max(float64(cell/16), 0), 15.0)
 
 	// Calculate grid cell coordinates
 	x0, z0 := int(x), int(z)
 	x1, z1 := x0+1, z0+1
 
-	// Ensure we don't go out of bounds due to float precision
+	// Clamp to avoid out-of-bounds access
 	if x1 >= 16 {
-		x1 = 16 - 1
+		x1 = 15
 	}
 	if z1 >= 16 {
-		z1 = 16 - 1
+		z1 = 15
 	}
 
-	// Determine which triangle we're in within the cell (assuming we're using a grid where each square is split into two triangles)
-	insideTriangle := (x-float64(x0))+(z-float64(z0)) < 1.0
+	// Get the four corner heights
+	y00 := float64(data[z0*16+x0][0])
+	y10 := float64(data[z0*16+x1][0])
+	y01 := float64(data[z1*16+x0][0])
+	y11 := float64(data[z1*16+x1][0])
 
-	var y float64
+	// Fractional components for interpolation
+	fx := x - float64(x0)
+	fz := z - float64(z0)
 
-	if insideTriangle {
-		// We're in the triangle that includes (x0,z0), (x1,z0), and (x0,z1)
-		y00 := float64(data[z0*16+x0][0])
-		y10 := float64(data[z0*16+x1][0])
-		y01 := float64(data[z1*16+x0][0])
+	// Bilinear interpolation
+	// Interpolate along x for z0 and z1
+	y0 := y00*(1-fx) + y10*fx
+	y1 := y01*(1-fx) + y11*fx
+	// Interpolate along z
+	y := y0*(1-fz) + y1*fz
 
-		// Barycentric interpolation within the triangle
-		alpha := float64(x - float64(x0))
-		beta := float64(z - float64(z0))
-		gamma := 1 - alpha - beta
-		y = y00*gamma + y10*alpha + y01*beta
-
-	} else {
-		// We're in the other triangle that includes (x1,z1), (x1,z0), and (x0,z1)
-		y11 := float64(data[z1*16+x1][0])
-		y10 := float64(data[z0*16+x1][0])
-		y01 := float64(data[z1*16+x0][0])
-
-		// Barycentric interpolation within this triangle
-		alpha := float64(1 - (x - float64(x0)))
-		beta := float64(1 - (z - float64(z0)))
-		gamma := 1 - alpha - beta
-		y = y11*gamma + y10*alpha + y01*beta
-	}
 	return Float.X(y / 32)
 }

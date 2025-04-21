@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"context"
 	"slices"
+	"strings"
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Control"
@@ -17,6 +19,8 @@ import (
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
+	"runtime.link/api/unix"
+	"the.quetzal.community/aviary/internal/dependencies/f3d"
 )
 
 /*
@@ -112,9 +116,14 @@ func (ui *UI) onThemeSelected(idx int) {
 				var path = Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + resource))
 				switch ext {
 				case glb:
-					renamed := String.TrimSuffix(resource, glb) + ".png"
-					preview := Resource.Load[Texture2D.Instance](Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + renamed)))
+					renamed := Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".png"))
+					preview := Resource.Load[Texture2D.Instance](Path.ToResource(renamed))
 					if preview == Texture2D.Nil {
+						f3d.Command.Run(context.Background(), unix.Path(strings.TrimPrefix(path.String(), "res://")), f3d.Options{
+							Output:       unix.Path(strings.TrimPrefix(renamed.String(), "res://")),
+							NoBackground: true,
+							Resolution:   "128,128",
+						})
 						continue
 					}
 					ImageButton := TextureButton.New()

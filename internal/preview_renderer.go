@@ -30,6 +30,8 @@ type PreviewRenderer struct {
 
 	Vulture *Vulture
 	terrain *Renderer
+
+	current vulture.Upload
 }
 
 func (pr *PreviewRenderer) AsNode() Node.Instance { return pr.Super().AsNode() }
@@ -47,6 +49,14 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 				instance.AsNode3D().SetScale(Vector3.New(0.3, 0.3, 0.3))
 				pr.Super().AsNode().AddChild(instance.AsNode())
 			}
+			upload, ok := pr.Vulture.name2upload[resource.String()]
+			if !ok {
+				pr.Vulture.uploads++
+				upload = pr.Vulture.uploads
+				pr.Vulture.name2upload[resource.String()] = upload
+				pr.Vulture.upload2name[upload] = resource.String()
+			}
+			pr.current = upload
 		case pos := <-pr.mouseOver:
 			pr.Super().AsNode3D().SetPosition(pr.Vulture.vultureToWorld(pr.Vulture.worldToVulture(pos)))
 			continue
@@ -63,7 +73,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 			packed := vulture.Elements{}
 			packed.Add(vulture.ElementMarker{
 				Cell: cell,
-				Mesh: 1,
+				Mesh: pr.current,
 				Bump: bump,
 			})
 			go func() {

@@ -122,7 +122,6 @@ func (vr *Renderer) Process(dt Float.X) {
 			vr.shader.SetShaderParameter("paint_active", true)
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
-			event.BrushTarget = Vector3.Round(event.BrushTarget)
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
@@ -202,7 +201,13 @@ func (vr *Renderer) assertMarker(regionID vulture.Region, region Node.Instance, 
 	world.Y = (vr.HeightAt(world))
 	parent.SetPosition(world)
 	parent.SetScale(Vector3.XYZ{0.3, 0.3, 0.3})
-	scene := Resource.Load[PackedScene.Instance]("res://library/wildfire_games/foliage/acacia.glb")
+
+	resource, ok := vr.Vulture.upload2name[element.Mesh]
+	if !ok {
+		resource = "res://library/wildfire_games/foliage/acacia.glb"
+	}
+
+	scene := Resource.Load[PackedScene.Instance](resource)
 	instance, ok := classdb.As[Node3D.Instance](Node.Instance(scene.Instantiate()))
 	if ok {
 		if parent.AsNode().GetChildCount() > 0 {
