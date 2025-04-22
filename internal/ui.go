@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -129,6 +130,10 @@ func (ui *UI) onThemeSelected(idx int) {
 						})
 						continue
 					}
+					renamed = Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"))
+					if Resource.Load[Resource.Instance](Path.ToResource(renamed)) != Resource.Nil {
+						path = renamed
+					}
 					ImageButton := TextureButton.New()
 					ImageButton.SetTextureNormal(preview)
 					ImageButton.SetIgnoreTextureSize(true)
@@ -137,6 +142,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
 						case ui.preview <- path:
+							fmt.Println(path)
 						default:
 						}
 					})
