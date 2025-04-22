@@ -64,6 +64,9 @@ func (ui *UI) Ready() {
 		return
 	}
 	for name := range Dir.Iter() {
+		if strings.Contains(name, ".") {
+			continue
+		}
 		ui.themes = append(ui.themes, name)
 		ui.Theme.AddItem(String.ToPascalCase(name))
 	}
