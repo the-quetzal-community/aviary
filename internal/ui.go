@@ -133,8 +133,9 @@ func (ui *UI) onThemeSelected(idx int) {
 						})
 						continue
 					}
-					if FileAccess.FileExists("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn") {
-						path = renamed
+					tscn := "res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"
+					if FileAccess.FileExists(tscn) {
+						path = Path.ToResource(String.New(tscn))
 					}
 					ImageButton := TextureButton.New()
 					ImageButton.SetTextureNormal(preview)
