@@ -26,7 +26,7 @@ func (tr *Renderer) OnCreate() {
 	tr.brushEvents = make(chan terrainBrushEvent, 100)
 }
 
-func (tr *Renderer) Input(event InputEvent.Instance) {
+func (tr *Renderer) UnhandledInput(event InputEvent.Instance) {
 	if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok {
 		if Input.IsKeyPressed(Input.KeyShift) {
 			if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelDown {

@@ -9,6 +9,7 @@ import (
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OptionButton"
@@ -103,8 +104,10 @@ func (ui *UI) onThemeSelected(idx int) {
 	var i int
 	for name := range themes.Iter() {
 		if slices.Contains(categories, name) {
-			hlayout := HBoxContainer.New()
-			hlayout.AsNode().SetName(name)
+			gridflow := new(GridFlowContainer)
+			gridflow.AsNode().SetName(name)
+			ui.Editor.AsNode().AddChild(gridflow.AsNode())
+			elements := gridflow.Scrollable.GridContainer
 			resources := DirAccess.Instance(DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name))
 			if resources == (DirAccess.Instance{}) {
 				continue
@@ -130,8 +133,7 @@ func (ui *UI) onThemeSelected(idx int) {
 						})
 						continue
 					}
-					renamed = Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"))
-					if Resource.Load[Resource.Instance](Path.ToResource(renamed)) != Resource.Nil {
+					if FileAccess.FileExists("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn") {
 						path = renamed
 					}
 					ImageButton := TextureButton.New()
@@ -146,7 +148,7 @@ func (ui *UI) onThemeSelected(idx int) {
 						default:
 						}
 					})
-					hlayout.AsNode().AddChild(ImageButton.AsNode())
+					elements.AsNode().AddChild(ImageButton.AsNode())
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
 					ImageButton := TextureButton.New()
@@ -160,11 +162,11 @@ func (ui *UI) onThemeSelected(idx int) {
 						default:
 						}
 					})
-					hlayout.AsNode().AddChild(ImageButton.AsNode())
+					elements.AsNode().AddChild(ImageButton.AsNode())
 				}
 			}
 			texture := Resource.Load[Texture2D.Instance]("res://ui/" + name + ".svg")
-			ui.Editor.AsNode().AddChild(hlayout.AsNode())
+			gridflow.Update()
 			ui.Editor.SetTabIcon(i, texture)
 			ui.Editor.SetTabTitle(i, "")
 			i++
