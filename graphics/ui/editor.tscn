@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=3 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
+[ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
 
 [node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
@@ -19,7 +20,7 @@ anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = -340.0
+offset_top = -360.0
 grow_horizontal = 2
 grow_vertical = 0
 theme = ExtResource("1_hi2iw")
@@ -42,3 +43,21 @@ popup/item_1/text = "Kenney"
 popup/item_1/id = 1
 popup/item_2/text = "Wildfire_games"
 popup/item_2/id = 2
+
+[node name="ExpansionIndicator" type="Button" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -161.0
+offset_top = -26.0
+offset_right = 162.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_styles/normal = ExtResource("2_fx2qn")
+toggle_mode = true
+text = "^"

@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"graphics.gd/classdb"
+	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
+	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/Node"
@@ -17,6 +20,8 @@ import (
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
@@ -24,6 +29,9 @@ import (
 	"runtime.link/api/unix"
 	"the.quetzal.community/aviary/internal/dependencies/f3d"
 )
+
+var DrawExpanded atomic.Bool
+var DrawExpansion Float.X
 
 /*
 UI for editing a space in Aviary.
@@ -37,6 +45,9 @@ type UI struct {
 
 	Editor TabContainer.Instance
 	Theme  OptionButton.Instance
+
+	ExpansionIndicator Button.Instance
+
 	themes []string
 }
 
@@ -65,15 +76,41 @@ func (ui *UI) Ready() {
 	if Dir == (DirAccess.Instance{}) {
 		return
 	}
+	var count int
 	for name := range Dir.Iter() {
 		if strings.Contains(name, ".") {
 			continue
 		}
 		ui.themes = append(ui.themes, name)
 		ui.Theme.AddItem(String.ToPascalCase(name))
+		count++
 	}
 	ui.onThemeSelected(0)
 	ui.Theme.OnItemSelected(ui.onThemeSelected)
+	if count > 0 {
+		ui.Theme.Select(count)
+		ui.onThemeSelected(count)
+	}
+
+	fmt.Println(Object.Instance(ui.ExpansionIndicator.AsObject()).ClassName())
+	ui.Editor.AsControl().OnMouseExited(func() {
+		ui.closeDrawer()
+	})
+
+	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
+	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
+	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(func() {
+		if !DrawExpanded.CompareAndSwap(false, true) {
+			return
+		}
+		window_size := DisplayServer.WindowGetSize(0)
+		// Expand close to the top of the screen.
+		var amount Float.X = -(Float.X(window_size.Y) - 370) * 0.8
+		ui.Editor.AsControl().SetPosition(Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount))
+		ui.Editor.AsControl().SetSize(Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount))
+		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
+		DrawExpansion = amount
+	})
 
 	/*ui.Toolkit.Buttons.Foliage.AsObject().Connect(tmp.StringName("pressed"), tmp.Callable(func() {
 	select {
@@ -81,6 +118,15 @@ func (ui *UI) Ready() {
 	default:
 	}
 	}), 0)*/
+}
+
+func (ui *UI) closeDrawer() {
+	if !DrawExpanded.CompareAndSwap(true, false) {
+		return
+	}
+	ui.Editor.AsControl().SetPosition(Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y-DrawExpansion))
+	ui.Editor.AsControl().SetSize(Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y+DrawExpansion))
+	ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
 }
 
 func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D.Instance {
@@ -141,11 +187,12 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.SetTextureNormal(preview)
 					ImageButton.SetIgnoreTextureSize(true)
 					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(128, 128))
+					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterPass)
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
 						case ui.preview <- path:
-							fmt.Println(path)
+							ui.closeDrawer()
 						default:
 						}
 					})
@@ -156,10 +203,12 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.SetTextureNormal(texture)
 					ImageButton.SetIgnoreTextureSize(true)
 					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(128, 128))
+					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterPass)
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
 						case ui.texture <- path:
+							ui.closeDrawer()
 						default:
 						}
 					})
@@ -174,4 +223,5 @@ func (ui *UI) onThemeSelected(idx int) {
 		}
 	}
 	ui.Editor.AsCanvasItem().SetVisible(i > 0)
+	ui.ExpansionIndicator.AsCanvasItem().SetVisible(i > 0)
 }

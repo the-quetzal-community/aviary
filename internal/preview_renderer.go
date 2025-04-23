@@ -28,7 +28,7 @@ type PreviewRenderer struct {
 
 	preview chan Path.ToResource // resource name
 
-	Vulture *Vulture
+	vulture *Vulture
 	terrain *Renderer
 
 	current vulture.Upload
@@ -49,16 +49,16 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 				instance.AsNode3D().SetScale(Vector3.New(0.3, 0.3, 0.3))
 				pr.Super().AsNode().AddChild(instance.AsNode())
 			}
-			upload, ok := pr.Vulture.name2upload[resource.String()]
+			upload, ok := pr.vulture.name2upload[resource.String()]
 			if !ok {
-				pr.Vulture.uploads++
-				upload = pr.Vulture.uploads
-				pr.Vulture.name2upload[resource.String()] = upload
-				pr.Vulture.upload2name[upload] = resource.String()
+				pr.vulture.uploads++
+				upload = pr.vulture.uploads
+				pr.vulture.name2upload[resource.String()] = upload
+				pr.vulture.upload2name[upload] = resource.String()
 			}
 			pr.current = upload
 		case pos := <-pr.mouseOver:
-			pr.Super().AsNode3D().SetPosition(pr.Vulture.vultureToWorld(pr.Vulture.worldToVulture(pos)))
+			pr.Super().AsNode3D().SetPosition(pr.vulture.vultureToWorld(pr.vulture.worldToVulture(pos)))
 			continue
 		default:
 
@@ -69,7 +69,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 		if pr.Super().AsNode().GetChildCount() > 0 {
 			Node.Instance(pr.Super().AsNode().GetChild(0)).QueueFree()
 			pos := pr.Super().AsNode3D().Position()
-			area, cell, bump := pr.Vulture.worldToVulture(pos)
+			area, cell, bump := pr.vulture.worldToVulture(pos)
 			packed := vulture.Elements{}
 			packed.Add(vulture.ElementMarker{
 				Cell: cell,
@@ -79,7 +79,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				if err := pr.Vulture.api.Reform(ctx, []vulture.Deltas{{
+				if err := pr.vulture.api.Reform(ctx, []vulture.Deltas{{
 					Region: area,
 					Packet: vulture.Time(time.Now().UnixNano()),
 					Append: packed,

@@ -50,7 +50,7 @@ type World struct {
 	PreviewRenderer *PreviewRenderer
 	VultureRenderer *Renderer
 
-	Vulture *Vulture
+	vulture *Vulture
 
 	saving atomic.Bool
 }
@@ -59,8 +59,8 @@ func (world *World) AsNode() Node.Instance { return world.Super().AsNode() }
 
 // Ready does a bunch of dependency injection and setup.
 func (world *World) Ready() {
-	if world.Vulture == nil {
-		world.Vulture = &Vulture{
+	if world.vulture == nil {
+		world.vulture = &Vulture{
 			api: vulture.New(),
 		}
 	}
@@ -68,10 +68,10 @@ func (world *World) Ready() {
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
 	world.VultureRenderer.texture = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.mouseOver = world.mouseOver
-	world.PreviewRenderer.Vulture = world.Vulture
+	world.PreviewRenderer.vulture = world.vulture
 	world.PreviewRenderer.terrain = world.VultureRenderer
 	world.VultureRenderer.mouseOver = world.mouseOver
-	world.VultureRenderer.Vulture = world.Vulture
+	world.VultureRenderer.vulture = world.vulture
 	world.VultureRenderer.start()
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := Node.Instance(editor_scene.Instantiate())
@@ -141,12 +141,14 @@ func (world *World) Process(dt Float.X) {
 
 func (world *World) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
-	if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {
-		if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelUp {
-			world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
-		}
-		if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelDown {
-			world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
+	if !DrawExpanded.Load() {
+		if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {
+			if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelUp {
+				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
+			}
+			if event.ButtonIndex() == InputEventMouseButton.MouseButtonWheelDown {
+				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
+			}
 		}
 	}
 	if event, ok := classdb.As[InputEventKey.Instance](event); ok {

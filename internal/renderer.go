@@ -38,7 +38,7 @@ type Renderer struct {
 
 	heightMapping map[vulture.Region][16 * 16][4]vulture.Height
 
-	Vulture *Vulture
+	vulture *Vulture
 
 	listening atomic.Bool
 	events    <-chan []vulture.Deltas
@@ -96,14 +96,14 @@ func (vr *Renderer) start() {
 func (vr *Renderer) listenForEvents() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	deltas, err := vr.Vulture.api.Events(ctx)
+	deltas, err := vr.vulture.api.Events(ctx)
 	if err != nil {
 		Engine.Raise(err)
 		return
 	}
 	vr.events = deltas
 	vr.listening.Store(true)
-	vr.Vulture.load()
+	vr.vulture.load()
 }
 
 func (vr *Renderer) Process(dt Float.X) {
@@ -197,12 +197,12 @@ func (vr *Renderer) assertMarker(regionID vulture.Region, region Node.Instance, 
 	if !ok {
 		return
 	}
-	world := vr.Vulture.vultureToWorld(regionID, element.Cell, element.Bump)
+	world := vr.vulture.vultureToWorld(regionID, element.Cell, element.Bump)
 	world.Y = (vr.HeightAt(world))
 	parent.SetPosition(world)
 	parent.SetScale(Vector3.XYZ{0.3, 0.3, 0.3})
 
-	resource, ok := vr.Vulture.upload2name[element.Mesh]
+	resource, ok := vr.vulture.upload2name[element.Mesh]
 	if !ok {
 		resource = "res://library/wildfire_games/foliage/acacia.glb"
 	}
@@ -244,7 +244,7 @@ func (vr *Renderer) reload(region vulture.Region) {
 // nearby [vulture.Territory] enabling it to be rendered. The point should
 // be in world space.
 func (tr *Renderer) SetFocalPoint3D(world Vector3.XYZ) {
-	focal_point, _, _ := tr.Vulture.worldToVulture(world)
+	focal_point, _, _ := tr.vulture.worldToVulture(world)
 
 	/*if _, ok := tr.loadedTerritory[vulture.Area{}]; ok {
 		return

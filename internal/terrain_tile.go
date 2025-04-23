@@ -34,7 +34,7 @@ type TerrainTile struct {
 
 	Mesh    MeshInstance3D.Instance
 	Shader  ShaderMaterial.Instance
-	Vulture *Vulture
+	vulture *Vulture
 
 	shape_owner int
 }

@@ -68,14 +68,14 @@ func (tr *Renderer) UnhandledInput(event InputEvent.Instance) {
 func (tr *Renderer) uploadEdits(uplift vulture.Uplift) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	area, cell, _ := tr.Vulture.worldToVulture(tr.BrushTarget)
+	area, cell, _ := tr.vulture.worldToVulture(tr.BrushTarget)
 	uplift.Area = area
 	uplift.Cell = cell
 	uplift.Size = uint8(tr.BrushRadius)
 	tr.BrushActive = false
 	tr.BrushAmount = 0
 	go func() {
-		if err := tr.Vulture.api.Uplift(ctx, uplift); err != nil {
+		if err := tr.vulture.api.Uplift(ctx, uplift); err != nil {
 			Engine.Raise(err)
 			return
 		}
@@ -83,7 +83,7 @@ func (tr *Renderer) uploadEdits(uplift vulture.Uplift) {
 }
 
 func (tr *Renderer) HeightAt(world Vector3.XYZ) Float.X {
-	region, cell, _ := tr.Vulture.worldToVulture(world)
+	region, cell, _ := tr.vulture.worldToVulture(world)
 	data := tr.heightMapping[region]
 
 	// Ensure x and z are within bounds

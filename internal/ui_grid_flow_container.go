@@ -25,14 +25,20 @@ func (grid *GridFlowContainer) AsNode() Node.Instance { return grid.Super().AsNo
 func (grid *GridFlowContainer) Ready() {
 	grid.Scrollable.AsControl().SetAnchorsPreset(Control.PresetFullRect)
 	grid.Scrollable.SetHorizontalScrollMode(ScrollContainer.ScrollModeDisabled)
-	grid.Scrollable.SetVerticalScrollMode(ScrollContainer.ScrollModeAuto)
+	grid.Scrollable.SetVerticalScrollMode(ScrollContainer.ScrollModeDisabled)
 	grid.Super().AsControl().SetClipContents(true)
 }
 
 func (grid *GridFlowContainer) Update() {
-	new_columns := int(Object.To[Control.Instance](Node.Instance(grid.Super().AsNode().GetParent())).Size().X / 128)
+	new_columns := int(Object.To[Control.Instance](Node.Instance(grid.Super().AsNode().GetParent())).Size().X / 256)
 	new_columns = max(1, new_columns)
 	grid.Scrollable.GridContainer.SetColumns(new_columns)
+	grid.Scrollable.SetHorizontalScrollMode(ScrollContainer.ScrollModeDisabled)
+	if DrawExpanded.Load() {
+		grid.Scrollable.SetVerticalScrollMode(ScrollContainer.ScrollModeAuto)
+	} else {
+		grid.Scrollable.SetVerticalScrollMode(ScrollContainer.ScrollModeDisabled)
+	}
 }
 
 func (grid *GridFlowContainer) Notification(what int, reversed bool) {
