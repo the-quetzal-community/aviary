@@ -1,8 +1,7 @@
-[gd_scene load_steps=4 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=3 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
-[ext_resource type="PackedScene" uid="uid://cx4ywwf6waw7a" path="res://library/wildfire_games/foliage/baobab_new_sapling.glb" id="3_kb8m1"]
 
 [node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
@@ -62,5 +61,3 @@ theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_styles/normal = ExtResource("2_fx2qn")
 toggle_mode = true
 text = "^"
-
-[node name="baobab_new_sapling" parent="." instance=ExtResource("3_kb8m1")]

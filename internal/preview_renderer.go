@@ -47,7 +47,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 				if pr.Super().AsNode().GetChildCount() > 0 {
 					Node.Instance(pr.Super().AsNode().GetChild(0)).QueueFree()
 				}
-				instance.AsNode3D().SetScale(Vector3.New(0.3, 0.3, 0.3))
+				instance.AsNode3D().SetScale(Vector3.MulX(instance.AsNode3D().Scale(), 0.3))
 				pr.Super().AsNode().AddChild(instance.AsNode())
 			}
 			upload, ok := pr.vulture.name2upload[resource.String()]

@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -25,8 +25,6 @@ import (
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
-	"runtime.link/api/unix"
-	"the.quetzal.community/aviary/internal/dependencies/f3d"
 )
 
 var DrawExpanded atomic.Bool
@@ -92,7 +90,10 @@ func (ui *UI) Ready() {
 	}
 
 	ui.Editor.AsControl().OnMouseExited(func() {
-		ui.closeDrawer()
+		height := DisplayServer.WindowGetSize(0).Y
+		if ui.Editor.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
+			ui.closeDrawer()
+		}
 	})
 
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
@@ -151,6 +152,8 @@ func (ui *UI) onThemeSelected(idx int) {
 			gridflow := new(GridFlowContainer)
 			gridflow.AsNode().SetName(name)
 			ui.Editor.AsNode().AddChild(gridflow.AsNode())
+			gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
+			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			elements := gridflow.Scrollable.GridContainer
 			resources := DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name)
 			if resources == DirAccess.Nil {
@@ -170,11 +173,6 @@ func (ui *UI) onThemeSelected(idx int) {
 					renamed := Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".png"))
 					preview := Resource.Load[Texture2D.Instance](Path.ToResource(renamed))
 					if preview == Texture2D.Nil {
-						f3d.Command.Run(context.Background(), unix.Path(strings.TrimPrefix(path.String(), "res://")), f3d.Options{
-							Output:       unix.Path(strings.TrimPrefix(renamed.String(), "res://")),
-							NoBackground: true,
-							Resolution:   "128,128",
-						})
 						continue
 					}
 					tscn := "res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"
@@ -190,6 +188,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
 						case ui.preview <- path:
+							fmt.Println(path)
 							ui.closeDrawer()
 						default:
 						}
