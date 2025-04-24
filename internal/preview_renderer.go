@@ -13,6 +13,7 @@ import (
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/protocol/vulture"
@@ -41,7 +42,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 		select {
 		case resource := <-pr.preview:
 			scene := Resource.Load[PackedScene.Instance](resource)
-			instance, ok := classdb.As[Node3D.Instance](Node.Instance(scene.Instantiate()))
+			instance, ok := Object.As[Node3D.Instance](scene.Instantiate())
 			if ok {
 				if pr.Super().AsNode().GetChildCount() > 0 {
 					Node.Instance(pr.Super().AsNode().GetChild(0)).QueueFree()

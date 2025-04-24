@@ -12,10 +12,8 @@ import (
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/StaticBody3D"
-	"graphics.gd/variant"
-	"graphics.gd/variant/Array"
-	"graphics.gd/variant/Dictionary"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Packed"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
@@ -113,15 +111,14 @@ func (tile *TerrainTile) Reload() {
 	shape.SetMapData(heights)
 
 	var mesh = ArrayMesh.New()
-	var arrays = Array.New[variant.Any]()
-	arrays.Resize(int(Mesh.ArrayMax))
-	arrays.SetIndex(int(Mesh.ArrayVertex), variant.New(vertices))
-	arrays.SetIndex(int(Mesh.ArrayTexUv), variant.New(uvs))
-	arrays.SetIndex(int(Mesh.ArrayNormal), variant.New(normals))
-	arrays.SetIndex(int(Mesh.ArrayCustom0), variant.New(textures))
-	arrays.SetIndex(int(Mesh.ArrayCustom1), variant.New(weights))
-
-	ArrayMesh.Advanced(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays, Array.New[Array.Any](), Dictionary.New[variant.Any, variant.Any](),
+	var arrays = [Mesh.ArrayMax]any{
+		Mesh.ArrayVertex:  vertices,
+		Mesh.ArrayTexUv:   uvs,
+		Mesh.ArrayNormal:  normals,
+		Mesh.ArrayCustom0: textures,
+		Mesh.ArrayCustom1: weights,
+	}
+	ArrayMesh.Expanded(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:], nil, nil,
 		Mesh.ArrayFormatVertex|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
@@ -149,7 +146,7 @@ func (tile *TerrainTile) Reload() {
 }
 
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {
-	if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && Input.IsKeyPressed(Input.KeyShift) {
+	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && Input.IsKeyPressed(Input.KeyShift) {
 		if event.ButtonIndex() == InputEventMouseButton.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				select {

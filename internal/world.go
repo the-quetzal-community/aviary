@@ -74,7 +74,7 @@ func (world *World) Ready() {
 	world.VultureRenderer.vulture = world.vulture
 	world.VultureRenderer.start()
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
-	first := Node.Instance(editor_scene.Instantiate())
+	first := editor_scene.Instantiate()
 	editor, ok := classdb.As[*UI](first)
 	if ok {
 		editor.preview = world.PreviewRenderer.preview
@@ -153,7 +153,7 @@ func (world *World) UnhandledInput(event InputEvent.Instance) {
 	}
 	if event, ok := classdb.As[InputEventKey.Instance](event); ok {
 		if event.AsInputEvent().IsPressed() && event.Keycode() == InputEventKey.KeyF1 {
-			vp := Viewport.Instance(world.Super().AsNode().GetViewport())
+			vp := Viewport.Get(world.Super().AsNode())
 			vp.SetDebugDraw(vp.DebugDraw() ^ Viewport.DebugDrawWireframe)
 		}
 	}

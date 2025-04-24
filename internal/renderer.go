@@ -7,6 +7,7 @@ import (
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
@@ -71,7 +72,7 @@ func (tr *Renderer) Ready() {
 	grass := Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png")
 	cliff := Resource.Load[Texture2D.Instance]("res://library/wildfire_games/texture/alpine_cliff.png")
 	textures := Texture2DArray.New()
-	textures.AsImageTextureLayered().CreateFromImages([]classdb.Image{
+	textures.AsImageTextureLayered().CreateFromImages([]Image.Instance{
 		grass.AsTexture2D().GetImage(),
 		cliff.AsTexture2D().GetImage(),
 	})

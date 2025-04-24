@@ -30,7 +30,7 @@ func (grid *GridFlowContainer) Ready() {
 }
 
 func (grid *GridFlowContainer) Update() {
-	new_columns := int(Object.To[Control.Instance](Node.Instance(grid.Super().AsNode().GetParent())).Size().X / 256)
+	new_columns := int(Object.To[Control.Instance](grid.Super().AsNode().GetParent()).Size().X / 256)
 	new_columns = max(1, new_columns)
 	grid.Scrollable.GridContainer.SetColumns(new_columns)
 	grid.Scrollable.SetHorizontalScrollMode(ScrollContainer.ScrollModeDisabled)

@@ -2,7 +2,6 @@ package internal
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -72,7 +71,7 @@ func (ui *UI) Ready() {
 	ui.themes = append(ui.themes, "")
 	ui.Theme.AddItem("select a theme")
 
-	Dir := DirAccess.Instance(DirAccess.Open("res://library"))
+	Dir := DirAccess.Open("res://library")
 	if Dir == (DirAccess.Instance{}) {
 		return
 	}
@@ -92,7 +91,6 @@ func (ui *UI) Ready() {
 		ui.onThemeSelected(count)
 	}
 
-	fmt.Println(Object.Instance(ui.ExpansionIndicator.AsObject()).ClassName())
 	ui.Editor.AsControl().OnMouseExited(func() {
 		ui.closeDrawer()
 	})
@@ -135,12 +133,12 @@ func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D
 
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
-	themes := DirAccess.Instance(DirAccess.Open("res://library/" + ui.themes[idx]))
-	if themes == (DirAccess.Instance{}) {
+	themes := DirAccess.Open("res://library/" + ui.themes[idx])
+	if themes == DirAccess.Nil {
 		return
 	}
 	for _, node := range ui.Editor.AsNode().GetChildren() {
-		container, ok := classdb.As[HBoxContainer.Instance](Node.Instance(node))
+		container, ok := Object.As[HBoxContainer.Instance](Node.Instance(node))
 		if ok {
 			HBoxContainer.Instance(container).AsObject()[0].Free()
 		}
@@ -154,8 +152,8 @@ func (ui *UI) onThemeSelected(idx int) {
 			gridflow.AsNode().SetName(name)
 			ui.Editor.AsNode().AddChild(gridflow.AsNode())
 			elements := gridflow.Scrollable.GridContainer
-			resources := DirAccess.Instance(DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name))
-			if resources == (DirAccess.Instance{}) {
+			resources := DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name)
+			if resources == DirAccess.Nil {
 				continue
 			}
 			var ext = glb
