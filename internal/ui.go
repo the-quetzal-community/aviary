@@ -88,14 +88,13 @@ func (ui *UI) Ready() {
 		ui.Theme.Select(count)
 		ui.onThemeSelected(count)
 	}
-
+	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.Editor.AsControl().OnMouseExited(func() {
 		height := DisplayServer.WindowGetSize(0).Y
 		if ui.Editor.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
 			ui.closeDrawer()
 		}
 	})
-
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(func() {
