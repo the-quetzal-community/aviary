@@ -1,7 +1,38 @@
-[gd_scene load_steps=3 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=16 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
+[ext_resource type="Texture2D" uid="uid://c2huo8pw8p1hh" path="res://emoji/twemoji/❤️‍🔥.png" id="2_cwcei"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
+[ext_resource type="Texture2D" uid="uid://dbms8uxx4kd1c" path="res://ui/shading.svg" id="3_c55ig"]
+[ext_resource type="Texture2D" uid="uid://ckhsdu3gqg0ym" path="res://emoji/twemoji/⏰.png" id="3_qfej6"]
+[ext_resource type="Texture2D" uid="uid://bx2n71ypt32wh" path="res://ui/mystuff.svg" id="4_4x3iy"]
+[ext_resource type="Texture2D" uid="uid://bsllucu0cnvat" path="res://ui/shareit.svg" id="4_28l1f"]
+[ext_resource type="Texture2D" uid="uid://bi3tuiqeiwxo8" path="res://ui/wiseowl.svg" id="6_4x3iy"]
+[ext_resource type="Texture2D" uid="uid://crb04yyhlqwwm" path="res://library/wildfire_games/icon.svg" id="9_5on0m"]
+[ext_resource type="Texture2D" uid="uid://btesx4fxc3ldh" path="res://ui/pointer.svg" id="10_tj0f7"]
+[ext_resource type="Texture2D" uid="uid://c812ylsxd8qwb" path="res://library/kenney/icon.png" id="13_4rs6f"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qfej6"]
+bg_color = Color(0, 0, 0, 0.360784)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5on0m"]
+bg_color = Color(1, 1, 1, 0.509804)
+corner_radius_top_left = 20
+corner_radius_bottom_left = 20
+
+[sub_resource type="Theme" id="Theme_5on0m"]
+Panel/styles/panel = SubResource("StyleBoxFlat_qfej6")
+TextEdit/colors/font_color = Color(0.87451, 0.87451, 0.87451, 0)
+TextEdit/constants/caret_width = 0
+TextEdit/font_sizes/font_size = 30
+TextEdit/styles/normal = SubResource("StyleBoxFlat_5on0m")
+
+[sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
+load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
 
 [node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
@@ -9,9 +40,90 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+rotation = -0.000623948
 mouse_filter = 1
-theme = Object(OptionButton,"_import_path":NodePath(""),"unique_name_in_owner":false,"process_mode":0,"process_priority":0,"process_physics_priority":0,"process_thread_group":0,"physics_interpolation_mode":2,"auto_translate_mode":0,"editor_description":"","visible":true,"modulate":Color(1, 1, 1, 1),"self_modulate":Color(1, 1, 1, 1),"show_behind_parent":false,"top_level":false,"clip_children":0,"light_mask":1,"visibility_layer":1,"z_index":0,"z_as_relative":true,"y_sort_enabled":false,"texture_filter":0,"texture_repeat":0,"material":null,"use_parent_material":false,"clip_contents":false,"custom_minimum_size":Vector2(0, 0),"layout_direction":0,"layout_mode":1,"anchors_preset":5,"anchor_left":0.5,"anchor_top":0.0,"anchor_right":0.5,"anchor_bottom":0.0,"offset_left":-74.0,"offset_top":0.0,"offset_right":74.0,"offset_bottom":31.0,"grow_horizontal":2,"grow_vertical":1,"rotation":0.0,"scale":Vector2(1, 1),"pivot_offset":Vector2(0, 0),"size_flags_horizontal":1,"size_flags_vertical":1,"size_flags_stretch_ratio":1.0,"localize_numeral_system":true,"tooltip_text":"","tooltip_auto_translate_mode":0,"focus_neighbor_left":NodePath(""),"focus_neighbor_top":NodePath(""),"focus_neighbor_right":NodePath(""),"focus_neighbor_bottom":NodePath(""),"focus_next":NodePath(""),"focus_previous":NodePath(""),"focus_mode":2,"mouse_filter":0,"mouse_force_pass_scroll_events":true,"mouse_default_cursor_shape":0,"shortcut_context":null,"theme":ExtResource("1_hi2iw"),"theme_type_variation":&"","disabled":false,"toggle_mode":true,"button_pressed":false,"action_mode":0,"button_mask":1,"keep_pressed_outside":false,"button_group":null,"shortcut":null,"shortcut_feedback":true,"shortcut_in_tooltip":true,"flat":false,"alignment":0,"text_overrun_behavior":0,"autowrap_mode":0,"clip_text":false,"icon_alignment":0,"vertical_icon_alignment":1,"expand_icon":false,"text_direction":0,"language":"","selected":2,"fit_to_longest_item":true,"allow_reselect":false,"item_count":3,"popup/item_0/text":"select a theme","popup/item_0/id":0,"popup/item_1/text":"Kenney","popup/item_1/id":1,"popup/item_2/text":"Wildfire_games","popup/item_2/id":2,"script":null)
+theme = Object(OptionButton,"_import_path":NodePath(""),"unique_name_in_owner":false,"process_mode":0,"process_priority":0,"process_physics_priority":0,"process_thread_group":0,"physics_interpolation_mode":2,"auto_translate_mode":0,"editor_description":"","visible":false,"modulate":Color(1, 1, 1, 1),"self_modulate":Color(1, 1, 1, 1),"show_behind_parent":false,"top_level":false,"clip_children":0,"light_mask":1,"visibility_layer":1,"z_index":0,"z_as_relative":true,"y_sort_enabled":false,"texture_filter":0,"texture_repeat":0,"material":null,"use_parent_material":false,"clip_contents":false,"custom_minimum_size":Vector2(0, 0),"layout_direction":0,"layout_mode":1,"anchors_preset":5,"anchor_left":0.5,"anchor_top":0.0,"anchor_right":0.5,"anchor_bottom":0.0,"offset_left":-74.0,"offset_top":0.0,"offset_right":74.0,"offset_bottom":31.0,"grow_horizontal":2,"grow_vertical":1,"rotation":0.0,"scale":Vector2(1, 1),"pivot_offset":Vector2(0, 0),"size_flags_horizontal":1,"size_flags_vertical":1,"size_flags_stretch_ratio":1.0,"localize_numeral_system":true,"tooltip_text":"","tooltip_auto_translate_mode":0,"focus_neighbor_left":NodePath(""),"focus_neighbor_top":NodePath(""),"focus_neighbor_right":NodePath(""),"focus_neighbor_bottom":NodePath(""),"focus_next":NodePath(""),"focus_previous":NodePath(""),"focus_mode":2,"mouse_filter":0,"mouse_force_pass_scroll_events":true,"mouse_default_cursor_shape":0,"shortcut_context":null,"theme":ExtResource("1_hi2iw"),"theme_type_variation":&"","disabled":false,"toggle_mode":true,"button_pressed":false,"action_mode":0,"button_mask":1,"keep_pressed_outside":false,"button_group":null,"shortcut":null,"shortcut_feedback":true,"shortcut_in_tooltip":true,"flat":false,"alignment":0,"text_overrun_behavior":0,"autowrap_mode":0,"clip_text":false,"icon_alignment":0,"vertical_icon_alignment":1,"expand_icon":false,"text_direction":0,"language":"","selected":2,"fit_to_longest_item":true,"allow_reselect":false,"item_count":3,"popup/item_0/text":"select a theme","popup/item_0/id":0,"popup/item_1/text":"Kenney","popup/item_1/id":1,"popup/item_2/text":"Wildfire_games","popup/item_2/id":2,"script":null)
 
+
+[node name="Panel" type="TextEdit" parent="."]
+clip_contents = false
+layout_mode = 1
+offset_left = 74.0162
+offset_top = 22.9894
+offset_right = 273.016
+offset_bottom = 73.9894
+theme = SubResource("Theme_5on0m")
+text = "  clip"
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -149.034
+offset_top = -15.4183
+offset_right = -11.0343
+offset_bottom = 15.5817
+grow_horizontal = 0
+grow_vertical = 2
+
+[node name="TextureRect" type="TextureRect" parent="Panel/HBoxContainer2"]
+layout_mode = 2
+texture = ExtResource("2_cwcei")
+expand_mode = 2
+
+[node name="TextureRect4" type="TextureRect" parent="Panel/HBoxContainer2"]
+layout_mode = 2
+texture = ExtResource("3_qfej6")
+expand_mode = 2
+
+[node name="TextureRect3" type="TextureRect" parent="Panel/HBoxContainer2"]
+layout_mode = 2
+texture = ExtResource("3_qfej6")
+expand_mode = 2
+
+[node name="TextureRect2" type="TextureRect" parent="Panel/HBoxContainer2"]
+layout_mode = 2
+texture = ExtResource("3_qfej6")
+expand_mode = 2
+
+[node name="TextureRect" type="TextureButton" parent="Panel"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -2.0
+offset_right = 49.0
+offset_bottom = 51.0
+grow_horizontal = 0
+texture_normal = ExtResource("4_28l1f")
+ignore_texture_size = true
+stretch_mode = 0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 1
+offset_left = -0.986272
+offset_top = -22.0006
+offset_right = 493.014
+offset_bottom = 105.999
+
+[node name="Command" type="TextureButton" parent="HBoxContainer"]
+layout_mode = 2
+texture_normal = ExtResource("4_4x3iy")
+
+[node name="WiseOwl" type="TextureButton" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -128.0
+offset_bottom = 128.0
+grow_horizontal = 0
+texture_normal = ExtResource("6_4x3iy")
+ignore_texture_size = true
+stretch_mode = 0
 
 [node name="Editor" type="TabContainer" parent="."]
 layout_mode = 1
@@ -26,6 +138,7 @@ theme = ExtResource("1_hi2iw")
 current_tab = 0
 
 [node name="Theme" type="OptionButton" parent="."]
+visible = false
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -61,3 +174,58 @@ theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_styles/normal = ExtResource("2_fx2qn")
 toggle_mode = true
 text = "^"
+
+[node name="Options" type="VBoxContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -128.0
+offset_right = 396.0
+offset_bottom = 524.0
+grow_horizontal = 0
+
+[node name="MyStuff" type="TextureButton" parent="Options"]
+visible = false
+layout_mode = 2
+texture_normal = SubResource("CompressedTexture2D_28l1f")
+
+[node name="Shading" type="TextureButton" parent="Options"]
+visible = false
+layout_mode = 2
+texture_normal = ExtResource("3_c55ig")
+
+[node name="TextureRect3" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -71.0004
+offset_top = 0.55469
+offset_right = -58.0004
+offset_bottom = 13.5547
+grow_horizontal = 2
+texture = ExtResource("10_tj0f7")
+expand_mode = 1
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -94.007
+offset_top = 11.5403
+offset_right = 92.9929
+offset_bottom = 69.5403
+grow_horizontal = 2
+
+[node name="TextureRect" type="TextureRect" parent="HBoxContainer2"]
+layout_mode = 2
+texture = ExtResource("9_5on0m")
+expand_mode = 2
+
+[node name="TextureRect3" type="TextureRect" parent="HBoxContainer2"]
+layout_mode = 2
+texture = ExtResource("13_4rs6f")
+expand_mode = 2

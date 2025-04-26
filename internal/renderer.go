@@ -201,7 +201,7 @@ func (vr *Renderer) assertMarker(regionID vulture.Region, region Node.Instance, 
 	world := vr.vulture.vultureToWorld(regionID, element.Cell, element.Bump)
 	world.Y = (vr.HeightAt(world))
 	parent.SetPosition(world)
-	parent.SetScale(Vector3.XYZ{0.3, 0.3, 0.3})
+	parent.SetScale(Vector3.XYZ{0.1, 0.1, 0.1})
 
 	resource, ok := vr.vulture.upload2name[element.Mesh]
 	if !ok {
