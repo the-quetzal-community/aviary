@@ -1,25 +1,9 @@
 package main
 
 import (
-	"graphics.gd/classdb"
-	"graphics.gd/classdb/SceneTree"
-	"graphics.gd/startup"
-
-	"the.quetzal.community/aviary/internal"
+	"the.quetzal.community/editor/launcher"
 )
 
 func main() {
-	classdb.Register[internal.Tree]()
-	classdb.Register[internal.Rock]()
-	classdb.Register[internal.TerrainTile]()
-	classdb.Register[internal.Vulture]()
-	classdb.Register[internal.World]()
-	classdb.Register[internal.UI]()
-	classdb.Register[internal.PreviewRenderer]()
-	classdb.Register[internal.Renderer]()
-	classdb.Register[internal.EditorPlugin]()
-	classdb.Register[internal.ModelLoader]()
-	startup.LoadingScene()
-	SceneTree.Add(new(internal.World))
-	startup.Scene()
+	launcher.Run()
 }
