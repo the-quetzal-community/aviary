@@ -34,6 +34,8 @@ bg_color = Color(1, 1, 1, 0.431373)
 
 [resource]
 HBoxContainer/constants/separation = 20
+Label/colors/font_color = Color(0.301961, 0.301961, 0.301961, 1)
+Label/font_sizes/font_size = 31
 OptionButton/font_sizes/font_size = 27
 OptionButton/icons/arrow = null
 OptionButton/styles/disabled = SubResource("StyleBoxEmpty_rulru")

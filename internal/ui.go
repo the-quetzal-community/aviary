@@ -15,10 +15,14 @@ import (
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OptionButton"
+	"graphics.gd/classdb/Panel"
+	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/Tween"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
@@ -42,6 +46,13 @@ type UI struct {
 
 	Editor TabContainer.Instance
 	Theme  OptionButton.Instance
+
+	JoinCode struct {
+		Panel.Instance
+
+		ShareButton TextureButton.Instance
+	}
+	sharing bool
 
 	ExpansionIndicator Button.Instance
 
@@ -108,6 +119,17 @@ func (ui *UI) Ready() {
 		ui.Editor.AsControl().SetSize(Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount))
 		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
 		DrawExpansion = amount
+	})
+
+	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
+		ui.sharing = !ui.sharing
+		size := ui.JoinCode.AsControl().Size()
+		if ui.sharing {
+			size.X = 184
+		} else {
+			size.X = 54
+		}
+		PropertyTweener.Make(SceneTree.Get(ui.AsNode()).CreateTween(), ui.JoinCode.AsControl().AsObject(), "size", size, 0.2).SetEase(Tween.EaseOut)
 	})
 
 	/*ui.Toolkit.Buttons.Foliage.AsObject().Connect(tmp.StringName("pressed"), tmp.Callable(func() {
