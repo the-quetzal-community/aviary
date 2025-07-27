@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Button"
@@ -13,12 +14,16 @@ import (
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/Label"
+	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OptionButton"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SceneTree"
+	"graphics.gd/classdb/Shader"
+	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
@@ -50,13 +55,17 @@ type UI struct {
 	JoinCode struct {
 		Panel.Instance
 
+		Label       Label.Instance
 		ShareButton TextureButton.Instance
 	}
-	sharing bool
+	sharing  bool
+	joinCode chan string
 
 	ExpansionIndicator Button.Instance
 
 	themes []string
+
+	client *Client
 }
 
 var categories = []string{
@@ -76,10 +85,11 @@ var categories = []string{
 }
 
 func (ui *UI) Ready() {
+	ui.joinCode = make(chan string)
+
 	ui.Theme.Clear()
 	ui.themes = append(ui.themes, "")
 	ui.Theme.AddItem("select a theme")
-
 	Dir := DirAccess.Open("res://library")
 	if Dir == (DirAccess.Instance{}) {
 		return
@@ -120,24 +130,37 @@ func (ui *UI) Ready() {
 		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
 		DrawExpansion = amount
 	})
-
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
-		ui.sharing = !ui.sharing
+		if !ui.sharing {
+			var spinner = Resource.Load[Shader.Instance]("res://shader/spinner.gdshader")
+			var material = ShaderMaterial.New()
+			material.SetShader(spinner)
+			ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(material.AsMaterial())
+			go func() {
+				time.Sleep(2 * time.Second) // Simulate a network request
+				ui.joinCode <- "123456"
+				time.Sleep(time.Minute)
+				ui.joinCode <- ""
+			}()
+		}
+	})
+}
+
+func (ui *UI) Process(dt Float.X) {
+	select {
+	case code := <-ui.joinCode:
+		ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(Material.Nil)
 		size := ui.JoinCode.AsControl().Size()
-		if ui.sharing {
+		if code != "" {
 			size.X = 184
 		} else {
 			size.X = 54
 		}
 		PropertyTweener.Make(SceneTree.Get(ui.AsNode()).CreateTween(), ui.JoinCode.AsControl().AsObject(), "size", size, 0.2).SetEase(Tween.EaseOut)
-	})
-
-	/*ui.Toolkit.Buttons.Foliage.AsObject().Connect(tmp.StringName("pressed"), tmp.Callable(func() {
-	select {
-	case ui.preview <- "res://library/wildfire_games/foliage/acacia.glb":
+		ui.JoinCode.Label.SetText(code)
+		ui.sharing = false
 	default:
 	}
-	}), 0)*/
 }
 
 func (ui *UI) closeDrawer() {

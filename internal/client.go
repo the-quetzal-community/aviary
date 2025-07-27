@@ -32,9 +32,14 @@ import (
 	"the.quetzal.community/protocol/echo"
 )
 
-// World represents a creative space accessible via Vulture.
-type World struct {
-	Node3D.Extension[World] `gd:"AviaryWorld"`
+const (
+	SignallingHost = "https://via.quetzal.community"
+	OneTimeUseCode = "4d128c18-23e9-4b98-bf70-2cb94295406f"
+)
+
+// Client represents a creative space accessible via Aviary.
+type Client struct {
+	Node3D.Extension[Client] `gd:"AviaryWorld"`
 
 	Light DirectionalLight3D.Instance
 
@@ -63,7 +68,7 @@ type World struct {
 	saving atomic.Bool
 }
 
-func (world *World) extend(ctx context.Context, buf []byte) error {
+func (world *Client) extend(ctx context.Context, buf []byte) error {
 	path := OS.GetUserDataDir()
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return err
@@ -78,7 +83,7 @@ func (world *World) extend(ctx context.Context, buf []byte) error {
 	return nil
 }
 
-func (world *World) listen(ctx context.Context) (<-chan []byte, int64) {
+func (world *Client) listen(ctx context.Context) (<-chan []byte, int64) {
 	ch := make(chan []byte, 1)
 	context.AfterFunc(ctx, func() {
 		close(ch)
@@ -86,7 +91,7 @@ func (world *World) listen(ctx context.Context) (<-chan []byte, int64) {
 	return ch, 1500
 }
 
-func (world *World) opener(ctx context.Context, path string) (io.ReaderAt, int64, error) {
+func (world *Client) opener(ctx context.Context, path string) (io.ReaderAt, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
@@ -98,17 +103,17 @@ func (world *World) opener(ctx context.Context, path string) (io.ReaderAt, int64
 	return file, stat.Size(), nil
 }
 
-func (world *World) notify(ctx context.Context, buf []byte) error {
+func (world *Client) notify(ctx context.Context, buf []byte) error {
 	return nil
 }
 
-func (world *World) crypto(context.Context) ([]crypto.PublicKey, crypto.Signer, error) {
+func (world *Client) crypto(context.Context) ([]crypto.PublicKey, crypto.Signer, error) {
 	_, private, _ := ed25519.GenerateKey(nil)
 	return nil, private, nil
 }
 
 // Ready does a bunch of dependency injection and setup.
-func (world *World) Ready() {
+func (world *Client) Ready() {
 	world.edits = echo.New(api.Import[echoable.API](stub.API, "", nil), echo.Clone{
 		Crypto: world.crypto,
 		Listen: world.listen,
@@ -131,6 +136,7 @@ func (world *World) Ready() {
 	if ok {
 		editor.preview = world.PreviewRenderer.preview
 		editor.texture = world.VultureRenderer.texture
+		editor.client = world
 		world.AsNode().AddChild(editor.AsNode())
 	}
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
@@ -143,7 +149,7 @@ func (world *World) Ready() {
 
 const speed = 8
 
-func (world *World) Process(dt Float.X) {
+func (world *Client) Process(dt Float.X) {
 	if Input.IsKeyPressed(Input.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), -Angle.Radians(dt))
 	}
@@ -177,7 +183,7 @@ func (world *World) Process(dt Float.X) {
 	world.VultureRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().Position())
 }
 
-func (world *World) UnhandledInput(event InputEvent.Instance) {
+func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
 	if !DrawExpanded.Load() {
 		if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {

@@ -11,7 +11,7 @@ func main() {
 	classdb.Register[internal.Tree]()
 	classdb.Register[internal.Rock]()
 	classdb.Register[internal.TerrainTile]()
-	classdb.Register[internal.World]()
+	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
 	classdb.Register[internal.Renderer]()
@@ -19,6 +19,6 @@ func main() {
 	classdb.Register[internal.ModelLoader]()
 	classdb.Register[internal.GridFlowContainer]()
 	startup.LoadingScene()
-	SceneTree.Add(new(internal.World))
+	SceneTree.Add(new(internal.Client))
 	startup.Scene()
 }
