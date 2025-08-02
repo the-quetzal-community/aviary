@@ -4,10 +4,14 @@ import (
 	"context"
 	"crypto"
 	"crypto/ed25519"
+	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"os"
 	"sync/atomic"
 
+	"github.com/pion/webrtc/v4"
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/DirectionalLight3D"
@@ -27,9 +31,13 @@ import (
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
+	"runtime.link/api/rest"
 	"runtime.link/api/stub"
+	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/editor/echoable"
 	"the.quetzal.community/protocol/echo"
+
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -65,7 +73,46 @@ type Client struct {
 
 	edits echoable.API
 
+	signalling signalling.API
+	peer       *webrtc.PeerConnection
+	sock       *websocket.Conn
+
 	saving atomic.Bool
+}
+
+func (world *Client) apiHost() (signalling.Code, error) {
+	dialer := websocket.Dialer{}
+	var err error
+	world.sock, _, err = dialer.Dial("wss://via.quetzal.community/session", http.Header{
+		"Authorization": []string{"Bearer " + OneTimeUseCode},
+	})
+	if err != nil {
+		return "", err
+	}
+	mtype, message, err := world.sock.ReadMessage()
+	if err != nil {
+		return "", err
+	}
+	if mtype != websocket.TextMessage {
+		return "", errors.New("unexpected websocket message type")
+	}
+	var servers struct {
+		Data []webrtc.ICEServer `json:"data"`
+	}
+	if err := json.Unmarshal(message, &servers); err != nil {
+		return "", err
+	}
+	world.peer, err = webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: servers.Data,
+	})
+	if err != nil {
+		return "", err
+	}
+	offer, err := world.peer.CreateOffer(nil)
+	if err != nil {
+		return "", err
+	}
+	return world.signalling.CreateRoom(context.Background(), offer)
 }
 
 func (world *Client) extend(ctx context.Context, buf []byte) error {
@@ -114,6 +161,7 @@ func (world *Client) crypto(context.Context) ([]crypto.PublicKey, crypto.Signer,
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
+	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+OneTimeUseCode))
 	world.edits = echo.New(api.Import[echoable.API](stub.API, "", nil), echo.Clone{
 		Crypto: world.crypto,
 		Listen: world.listen,

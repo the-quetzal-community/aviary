@@ -1,12 +1,12 @@
 package ice
 
-import "encoding/json"
+import (
+	"encoding/json"
 
-type Server struct {
-	Credential string `json:"credential"`
-	URLs       URLs   `json:"urls,omitempty"`
-	Username   string `json:"username"`
-}
+	"github.com/pion/webrtc/v4"
+)
+
+type Server = webrtc.ICEServer
 
 type URLs []string
 

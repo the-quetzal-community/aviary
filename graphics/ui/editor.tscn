@@ -90,7 +90,7 @@ offset_right = 493.014
 offset_bottom = 105.999
 mouse_filter = 2
 
-[node name="Command" type="TextureButton" parent="HBoxContainer"]
+[node name="Cloud" type="TextureButton" parent="HBoxContainer"]
 layout_mode = 2
 texture_normal = ExtResource("4_4x3iy")
 

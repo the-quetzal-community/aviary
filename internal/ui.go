@@ -17,6 +17,7 @@ import (
 	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/OptionButton"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
@@ -34,6 +35,7 @@ import (
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
+	"the.quetzal.community/aviary/internal/ice/signalling"
 )
 
 var DrawExpanded atomic.Bool
@@ -59,7 +61,13 @@ type UI struct {
 		ShareButton TextureButton.Instance
 	}
 	sharing  bool
-	joinCode chan string
+	joinCode chan signalling.Code
+
+	HBoxContainer struct {
+		HBoxContainer.Instance
+
+		Cloud TextureButton.Instance
+	}
 
 	ExpansionIndicator Button.Instance
 
@@ -85,7 +93,7 @@ var categories = []string{
 }
 
 func (ui *UI) Ready() {
-	ui.joinCode = make(chan string)
+	ui.joinCode = make(chan signalling.Code)
 
 	ui.Theme.Clear()
 	ui.themes = append(ui.themes, "")
@@ -137,12 +145,20 @@ func (ui *UI) Ready() {
 			material.SetShader(spinner)
 			ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(material.AsMaterial())
 			go func() {
-				time.Sleep(2 * time.Second) // Simulate a network request
-				ui.joinCode <- "123456"
+				code, err := ui.client.apiHost()
+				if err != nil {
+					fmt.Println("Error getting API host:", err)
+					ui.joinCode <- ""
+					return
+				}
+				ui.joinCode <- code
 				time.Sleep(time.Minute)
 				ui.joinCode <- ""
 			}()
 		}
+	})
+	ui.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
+		OS.ShellOpen("https://the.quetzal.community/aviary/account?connection=" + OneTimeUseCode)
 	})
 }
 
@@ -157,7 +173,7 @@ func (ui *UI) Process(dt Float.X) {
 			size.X = 54
 		}
 		PropertyTweener.Make(SceneTree.Get(ui.AsNode()).CreateTween(), ui.JoinCode.AsControl().AsObject(), "size", size, 0.2).SetEase(Tween.EaseOut)
-		ui.JoinCode.Label.SetText(code)
+		ui.JoinCode.Label.SetText(string(code))
 		ui.sharing = false
 	default:
 	}
