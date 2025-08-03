@@ -22,7 +22,6 @@ import (
 	"graphics.gd/variant/Packed"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
-	"the.quetzal.community/editor/echoable"
 )
 
 type TerrainTile struct {
@@ -32,7 +31,6 @@ type TerrainTile struct {
 
 	Mesh   MeshInstance3D.Instance
 	shader ShaderMaterial.Instance
-	edits  echoable.API
 
 	shape_owner int
 }

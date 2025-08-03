@@ -17,7 +17,6 @@ import (
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
-	"the.quetzal.community/editor/echoable"
 )
 
 // Renderer will open a Vulture Events stream and render all
@@ -30,8 +29,6 @@ type Renderer struct {
 
 	ActiveRegions Node.Instance
 	CachedRegions Node.Instance
-
-	edits echoable.API
 
 	listening atomic.Bool
 

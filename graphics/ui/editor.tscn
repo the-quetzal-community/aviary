@@ -1,10 +1,11 @@
-[gd_scene load_steps=14 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=17 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
 [ext_resource type="Texture2D" uid="uid://dbms8uxx4kd1c" path="res://ui/shading.svg" id="3_c55ig"]
 [ext_resource type="Texture2D" uid="uid://bx2n71ypt32wh" path="res://ui/mystuff.svg" id="4_4x3iy"]
 [ext_resource type="Texture2D" uid="uid://bsllucu0cnvat" path="res://ui/shareit.svg" id="4_28l1f"]
+[ext_resource type="Texture2D" uid="uid://bnftwn1yor425" path="res://ui/sharing.svg" id="4_75vv8"]
 [ext_resource type="Texture2D" uid="uid://bi3tuiqeiwxo8" path="res://ui/wiseowl.svg" id="6_4x3iy"]
 [ext_resource type="Texture2D" uid="uid://crb04yyhlqwwm" path="res://library/wildfire_games/icon.svg" id="9_5on0m"]
 [ext_resource type="Texture2D" uid="uid://btesx4fxc3ldh" path="res://ui/pointer.svg" id="10_tj0f7"]
@@ -28,6 +29,17 @@ TextEdit/colors/font_color = Color(0.301961, 0.301961, 0.301961, 1)
 TextEdit/constants/caret_width = 0
 TextEdit/font_sizes/font_size = 30
 TextEdit/styles/normal = SubResource("StyleBoxFlat_5on0m")
+
+[sub_resource type="Gradient" id="Gradient_28l1f"]
+offsets = PackedFloat32Array(0.362554, 0.444805, 0.504329)
+colors = PackedColorArray(0.75784, 0.794741, 0.803057, 1, 0.324203, 0.324203, 0.324203, 1, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_75vv8"]
+gradient = SubResource("Gradient_28l1f")
+width = 32
+height = 32
+fill = 1
+fill_from = Vector2(0.5, 0.5)
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
 load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
@@ -93,6 +105,123 @@ mouse_filter = 2
 [node name="Cloud" type="TextureButton" parent="HBoxContainer"]
 layout_mode = 2
 texture_normal = ExtResource("4_4x3iy")
+
+[node name="OnlineIndicator" type="TextureRect" parent="HBoxContainer/Cloud"]
+layout_mode = 0
+offset_left = 83.9813
+offset_top = 30.0524
+offset_right = 115.981
+offset_bottom = 62.0524
+texture = SubResource("GradientTexture2D_75vv8")
+
+[node name="Keypad" type="Panel" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 56.9101
+offset_top = 144.036
+offset_right = 338.91
+offset_bottom = 532.036
+theme = ExtResource("1_hi2iw")
+
+[node name="TextEdit" type="TextEdit" parent="Keypad"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 93.0
+offset_top = 26.0
+offset_right = -31.0
+offset_bottom = 97.0
+grow_horizontal = 2
+
+[node name="Keys" type="GridContainer" parent="Keypad"]
+layout_mode = 2
+offset_left = 47.0
+offset_top = 123.997
+offset_right = 235.0
+offset_bottom = 349.997
+columns = 3
+
+[node name="1" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "1"
+
+[node name="2" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "2"
+
+[node name="3" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "3"
+
+[node name="4" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "4"
+
+[node name="5" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "5"
+
+[node name="6" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "6"
+
+[node name="7" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "7"
+
+[node name="8" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "8"
+
+[node name="9" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "9"
+
+[node name="X" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "X"
+
+[node name="0" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "0"
+
+[node name=">" type="Button" parent="Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = ">
+"
+
+[node name="TextureRect" type="TextureRect" parent="Keypad"]
+layout_mode = 0
+offset_left = 11.897
+offset_top = 27.0493
+offset_right = 81.897
+offset_bottom = 97.0493
+texture = ExtResource("4_75vv8")
+expand_mode = 1
 
 [node name="WiseOwl" type="TextureButton" parent="."]
 layout_mode = 1
@@ -177,7 +306,7 @@ visible = false
 layout_mode = 2
 texture_normal = ExtResource("3_c55ig")
 
-[node name="TextureRect3" type="TextureRect" parent="."]
+[node name="Pointer" type="TextureRect" parent="."]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5

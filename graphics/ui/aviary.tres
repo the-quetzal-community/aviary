@@ -1,4 +1,4 @@
-[gd_resource type="Theme" load_steps=16 format=3 uid="uid://dtppp6q43eiuc"]
+[gd_resource type="Theme" load_steps=17 format=3 uid="uid://dtppp6q43eiuc"]
 
 [ext_resource type="StyleBox" uid="uid://h4nwukf2mpep" path="res://ui/aviary_stylebox.tres" id="1_qhiib"]
 
@@ -24,6 +24,13 @@
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_t0ppr"]
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_a2dju"]
+bg_color = Color(1, 1, 1, 0.870588)
+corner_radius_top_left = 30
+corner_radius_top_right = 30
+corner_radius_bottom_right = 30
+corner_radius_bottom_left = 30
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5atwb"]
 bg_color = Color(1, 1, 1, 0.431373)
 
@@ -33,6 +40,7 @@ bg_color = Color(1, 1, 1, 0.431373)
 bg_color = Color(1, 1, 1, 0.431373)
 
 [resource]
+Button/font_sizes/font_size = 32
 HBoxContainer/constants/separation = 20
 Label/colors/font_color = Color(0.301961, 0.301961, 0.301961, 1)
 Label/font_sizes/font_size = 31
@@ -49,6 +57,7 @@ OptionButton/styles/normal = SubResource("StyleBoxEmpty_ewvp0")
 OptionButton/styles/normal_mirrored = SubResource("StyleBoxEmpty_tqp4k")
 OptionButton/styles/pressed = SubResource("StyleBoxEmpty_prqmo")
 OptionButton/styles/pressed_mirrored = SubResource("StyleBoxEmpty_t0ppr")
+Panel/styles/panel = SubResource("StyleBoxFlat_a2dju")
 PanelContainer/styles/panel = SubResource("StyleBoxFlat_5atwb")
 TabContainer/colors/font_selected_color = Color(1, 1, 1, 1)
 TabContainer/colors/font_unselected_color = Color(1, 1, 1, 1)
@@ -60,3 +69,4 @@ TabContainer/styles/tab_focus = SubResource("StyleBoxEmpty_ydl51")
 TabContainer/styles/tab_hovered = ExtResource("1_qhiib")
 TabContainer/styles/tab_selected = ExtResource("1_qhiib")
 TabContainer/styles/tab_unselected = SubResource("StyleBoxFlat_w3xdq")
+TextEdit/font_sizes/font_size = 43

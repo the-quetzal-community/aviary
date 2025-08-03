@@ -1,0 +1,26 @@
+[gd_scene load_steps=2 format=3 uid="uid://dqndk14imylnj"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ec3ur"]
+bg_color = Color(1, 1, 1, 1)
+
+[node name="Cloudy" type="Panel"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ec3ur")
+
+[node name="Keypad" type="Panel" parent="."]
+layout_mode = 0
+offset_left = 77.0
+offset_top = 105.0
+offset_right = 534.0
+offset_bottom = 622.0
+
+[node name="TextEdit" type="TextEdit" parent="Keypad"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 53.0
+grow_horizontal = 2

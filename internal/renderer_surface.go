@@ -2,7 +2,6 @@ package internal
 
 import (
 	"graphics.gd/classdb"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
@@ -36,10 +35,10 @@ func (tr *Renderer) UnhandledInput(event InputEvent.Instance) {
 			}
 		}
 		if tr.BrushActive && event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsReleased() {
-			if err := tr.edits.LiftTerrain(tr.BrushTarget, tr.BrushRadius, tr.BrushAmount, 1); err != nil {
+			/*if err := tr.edits.LiftTerrain(tr.BrushTarget, tr.BrushRadius, tr.BrushAmount, 1); err != nil {
 				Engine.Raise(err)
 				return
-			}
+			}*/
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && tr.PaintActive {
 			if event.AsInputEvent().IsReleased() {

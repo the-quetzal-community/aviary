@@ -1,9 +1,6 @@
 package internal
 
 import (
-	"math/rand/v2"
-
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
@@ -14,7 +11,6 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
-	"the.quetzal.community/editor/echoable"
 )
 
 // PreviewRenderer is responsible for rendering items when the user
@@ -27,7 +23,6 @@ type PreviewRenderer struct {
 
 	preview chan Path.ToResource // resource name
 
-	edits   echoable.API
 	terrain *Renderer
 
 	current string
@@ -58,9 +53,9 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 	if Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 		if pr.AsNode().GetChildCount() > 0 {
 			Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
-			if err := pr.edits.InsertAsset(echoable.Asset(rand.Uint64()), echoable.Thing(rand.Uint64()), pr.AsNode3D().AsNode3D().GlobalTransform()); err != nil {
-				Engine.Raise(err)
-			}
+			/*if err := pr.edits.InsertAsset(echoable.Asset(rand.Uint64()), echoable.Thing(rand.Uint64()), pr.AsNode3D().AsNode3D().GlobalTransform()); err != nil {
+			Engine.Raise(err)
+			}*/
 		}
 	}
 	pos := pr.AsNode3D().Position()
