@@ -3,7 +3,6 @@ package signalling
 import (
 	"context"
 
-	"github.com/pion/webrtc/v4"
 	"runtime.link/api"
 	"runtime.link/xyz"
 
@@ -13,13 +12,7 @@ import (
 type API struct {
 	api.Specification
 
-	LookupUser func(context.Context) (string, error)                          `rest:"GET /account user_id"`
-	CreateRoom func(context.Context, webrtc.SessionDescription) (Code, error) `rest:"POST /room (offer) code"`
-	UpdateRoom func(context.Context, Code, webrtc.SessionDescription) error   `rest:"PUT /room/{code=%v}/offer"`
-	ListenRoom func(context.Context, Code) (chan Message, error)              `rest:"GET /room/{code=%v}"`
-
-	LookupRoom func(context.Context, Code) (webrtc.SessionDescription, error) `rest:"GET /room/{code=%v}/offer"`
-	AnswerRoom func(context.Context, Code, webrtc.SessionDescription) error   `rest:"POST /room/{code=%v}/answer"`
+	LookupUser func(context.Context) (string, error) `rest:"GET /account user_id"`
 }
 
 type Code string

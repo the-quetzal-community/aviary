@@ -4,16 +4,12 @@ import (
 	"context"
 	"crypto"
 	"crypto/ed25519"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pion/webrtc/v4"
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/DirectionalLight3D"
@@ -35,10 +31,9 @@ import (
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
 	"runtime.link/api/rest"
-	"runtime.link/api/xray"
+	"the.quetzal.community/aviary/internal/community"
 	"the.quetzal.community/aviary/internal/ice/signalling"
-
-	"github.com/gorilla/websocket"
+	"the.quetzal.community/aviary/internal/networking"
 )
 
 const (
@@ -73,12 +68,18 @@ type Client struct {
 	VultureRenderer *Renderer
 
 	signalling signalling.API
-	peer       *webrtc.PeerConnection
-	sock       *websocket.Conn
+
+	network networking.Connectivity
+	updates chan []byte // channel for updates from the server
+	println chan string
+
+	log *community.Log
 
 	saving atomic.Bool
 
 	user_id string
+
+	api *community.Log
 }
 
 func (world *Client) isOnline() bool {
@@ -101,124 +102,22 @@ func (world *Client) goOnline() error {
 	return nil
 }
 
-func (world *Client) ice() error {
-	dialer := websocket.Dialer{}
-	var err error
-	world.sock, _, err = dialer.Dial("wss://via.quetzal.community/session", http.Header{
-		"Authorization": []string{"Bearer " + OneTimeUseCode},
-	})
-	if err != nil {
-		return err
+func (world *Client) apiJoin(code networking.Code) {
+	if err := world.network.Join(code, world.updates); err != nil {
+		Engine.Raise(fmt.Errorf("failed to join room %s: %w", code, err))
+		return
 	}
-	mtype, message, err := world.sock.ReadMessage()
-	if err != nil {
-		return err
-	}
-	if mtype != websocket.TextMessage {
-		return errors.New("unexpected websocket message type")
-	}
-	var servers struct {
-		Data []webrtc.ICEServer `json:"data"`
-	}
-	if err := json.Unmarshal(message, &servers); err != nil {
-		return err
-	}
-	world.peer, err = webrtc.NewPeerConnection(webrtc.Configuration{
-		ICEServers: servers.Data,
-	})
-	if err != nil {
-		return err
-	}
-	world.peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		fmt.Println("Connection state changed:", state.String())
-	})
-	return nil
+	world.api.PrintMessage("Connected to the community server. YAY\n")
 }
 
-func (world *Client) apiJoin(code signalling.Code) {
-	if err := world.ice(); err != nil {
-		Engine.Raise(xray.New(err))
-		return
-	}
-	offer, err := world.signalling.LookupRoom(context.Background(), code)
-	if err != nil {
-		Engine.Raise(xray.New(err))
-		return
-	}
-	world.peer.SetRemoteDescription(offer)
-	answer, err := world.peer.CreateAnswer(nil)
-	if err != nil {
-		Engine.Raise(xray.New(err))
-		return
-	}
-	if err := world.peer.SetLocalDescription(answer); err != nil {
-		Engine.Raise(xray.New(err))
-		return
-	}
-	<-webrtc.GatheringCompletePromise(world.peer)
-	if err := world.signalling.AnswerRoom(context.Background(), code, *world.peer.LocalDescription()); err != nil {
-		Engine.Raise(xray.New(err))
-		return
-	}
-}
-
-func (world *Client) apiHost() (signalling.Code, error) {
-	if err := world.ice(); err != nil {
-		return "", err
-	}
-	_, err := world.peer.CreateDataChannel("data", nil)
-	if err != nil {
-		return "", err
-	}
-	offer, err := world.peer.CreateOffer(nil)
-	if err != nil {
-		return "", err
-	}
-	if err := world.peer.SetLocalDescription(offer); err != nil {
-		return "", err
-	}
-	code, err := world.signalling.CreateRoom(context.Background(), *world.peer.LocalDescription())
-	if err != nil {
-		return "", err
-	}
-	world.peer.OnICECandidate(func(*webrtc.ICECandidate) {
-		if err := world.signalling.UpdateRoom(context.Background(), code, *world.peer.LocalDescription()); err != nil {
-			Engine.Raise(err)
-		}
+func (world *Client) apiHost() (networking.Code, error) {
+	var habitat community.Habitat
+	return world.network.Host(world.updates, func(client networking.Client) {
+		out := community.SendVia(client.Send)
+		habitat.AddClient(out)
+		defer habitat.DelClient(out)
+		community.Process(client.Recv, habitat.Log())
 	})
-	dialer := websocket.Dialer{}
-	world.sock, _, err = dialer.Dial("wss://via.quetzal.community/room/"+string(code), http.Header{
-		"Authorization": []string{"Bearer " + OneTimeUseCode},
-	})
-	if err != nil {
-		return "", err
-	}
-	go func() {
-		for {
-			mtype, message, err := world.sock.ReadMessage()
-			if err != nil {
-				if errors.Is(err, websocket.ErrCloseSent) {
-					return
-				}
-				Engine.Raise(xray.New(err))
-				return
-			}
-			if mtype != websocket.TextMessage {
-				Engine.Raise(fmt.Errorf("unexpected websocket message type: %d", mtype))
-				return
-			}
-			var msg webrtc.SessionDescription
-			if err := json.Unmarshal(message, &msg); err != nil {
-				Engine.Raise(xray.New(err))
-				return
-			}
-			if err := world.peer.SetRemoteDescription(msg); err != nil {
-				Engine.Raise(xray.New(err))
-				return
-			}
-		}
-	}()
-	return code, err
 }
 
 func (world *Client) extend(ctx context.Context, buf []byte) error {
@@ -268,6 +167,18 @@ func (world *Client) crypto(context.Context) ([]crypto.PublicKey, crypto.Signer,
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
 	defer clientReady.Done()
+	world.println = make(chan string, 10)
+	world.log = world.Log()
+	world.api = community.SendTo(world.network.Send)
+	world.network.Raise = Engine.Raise
+	world.network.Print = func(format string, args ...any) {
+		select {
+		case world.println <- fmt.Sprintf(format, args...):
+		default:
+			os.Stdout.WriteString(fmt.Sprintf(format, args...))
+		}
+	}
+	world.updates = make(chan []byte, 20)
 	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+OneTimeUseCode))
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
@@ -295,7 +206,22 @@ func (world *Client) Ready() {
 
 const speed = 8
 
+func (world *Client) Log() *community.Log {
+	return &community.Log{
+		PrintMessage: func(s string) {
+			os.Stderr.WriteString(s)
+		},
+	}
+}
+
 func (world *Client) Process(dt Float.X) {
+	select {
+	case update := <-world.updates:
+		community.ProcessSingle(update, world.Log())
+	case msg := <-world.println:
+		os.Stderr.WriteString(msg)
+	default:
+	}
 	if Input.IsKeyPressed(Input.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), -Angle.Radians(dt))
 	}

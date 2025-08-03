@@ -13,6 +13,7 @@ import (
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
+	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/GradientTexture2D"
 	"graphics.gd/classdb/GridContainer"
@@ -41,7 +42,7 @@ import (
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
-	"the.quetzal.community/aviary/internal/ice/signalling"
+	"the.quetzal.community/aviary/internal/networking"
 )
 
 var DrawExpanded atomic.Bool
@@ -67,7 +68,7 @@ type UI struct {
 		ShareButton TextureButton.Instance
 	}
 	sharing  bool
-	joinCode chan signalling.Code
+	joinCode chan networking.Code
 
 	Keypad struct {
 		Panel.Instance
@@ -112,7 +113,7 @@ var categories = []string{
 }
 
 func (ui *UI) Ready() {
-	ui.joinCode = make(chan signalling.Code)
+	ui.joinCode = make(chan networking.Code)
 	ui.onlineStatus = make(chan bool, 1)
 
 	ui.Theme.Clear()
@@ -166,10 +167,9 @@ func (ui *UI) Ready() {
 			material.SetShader(spinner)
 			ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(material.AsMaterial())
 			go func() {
-				fmt.Println("Generating join code...")
 				code, err := ui.client.apiHost()
 				if err != nil {
-					fmt.Println("Error getting API host:", err)
+					Engine.Raise(err)
 					ui.joinCode <- ""
 					return
 				}
@@ -223,7 +223,7 @@ func (ui *UI) Ready() {
 			})
 		case ">":
 			Object.To[BaseButton.Instance](key).OnPressed(func() {
-				go ui.client.apiJoin(signalling.Code(ui.Keypad.TextEdit.Text()))
+				go ui.client.apiJoin(networking.Code(ui.Keypad.TextEdit.Text()))
 				ui.Keypad.AsCanvasItem().SetVisible(false)
 			})
 		default:
