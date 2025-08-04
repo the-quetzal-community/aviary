@@ -2,6 +2,7 @@ package main
 
 import (
 	"graphics.gd/classdb"
+	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/startup"
 	"the.quetzal.community/aviary/internal"
@@ -20,5 +21,6 @@ func main() {
 	classdb.Register[internal.GridFlowContainer]()
 	startup.LoadingScene()
 	SceneTree.Add(new(internal.Client))
+	ProjectSettings.LoadResourcePack("res://library.pck", 0)
 	startup.Scene()
 }
