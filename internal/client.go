@@ -2,10 +2,7 @@ package internal
 
 import (
 	"context"
-	"crypto"
-	"crypto/ed25519"
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -19,7 +16,6 @@ import (
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
@@ -31,6 +27,7 @@ import (
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
 	"runtime.link/api/rest"
+	"runtime.link/xyz"
 	"the.quetzal.community/aviary/internal/community"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/networking"
@@ -80,6 +77,8 @@ type Client struct {
 	user_id string
 
 	api *community.Log
+
+	objects map[xyz.Pair[string, community.Object]]Node3D.ID
 }
 
 func (world *Client) isOnline() bool {
@@ -107,61 +106,22 @@ func (world *Client) apiJoin(code networking.Code) {
 		Engine.Raise(fmt.Errorf("failed to join room %s: %w", code, err))
 		return
 	}
-	world.api.PrintMessage("Connected to the community server. YAY\n")
+	world.api = community.SendTo(world.network.Send) // FIXME race
 }
 
 func (world *Client) apiHost() (networking.Code, error) {
 	var habitat community.Habitat
-	return world.network.Host(world.updates, func(client networking.Client) {
+	code, err := world.network.Host(world.updates, func(client networking.Client) {
 		out := community.SendVia(client.Send)
 		habitat.AddClient(out)
 		defer habitat.DelClient(out)
 		community.Process(client.Recv, habitat.Log())
 	})
-}
-
-func (world *Client) extend(ctx context.Context, buf []byte) error {
-	path := OS.GetUserDataDir()
-	if err := os.MkdirAll(path, 0755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path+"/local.echo", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("failed to host room: %w", err)
 	}
-	if _, err := file.Write(buf); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (world *Client) listen(ctx context.Context) (<-chan []byte, int64) {
-	ch := make(chan []byte, 1)
-	context.AfterFunc(ctx, func() {
-		close(ch)
-	})
-	return ch, 1500
-}
-
-func (world *Client) opener(ctx context.Context, path string) (io.ReaderAt, int64, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, 0, err
-	}
-	return file, stat.Size(), nil
-}
-
-func (world *Client) notify(ctx context.Context, buf []byte) error {
-	return nil
-}
-
-func (world *Client) crypto(context.Context) ([]crypto.PublicKey, crypto.Signer, error) {
-	_, private, _ := ed25519.GenerateKey(nil)
-	return nil, private, nil
+	world.api = community.SendTo(world.network.Send) // FIXME race?
+	return code, nil
 }
 
 // Ready does a bunch of dependency injection and setup.
@@ -169,7 +129,7 @@ func (world *Client) Ready() {
 	defer clientReady.Done()
 	world.println = make(chan string, 10)
 	world.log = world.Log()
-	world.api = community.SendTo(world.network.Send)
+	world.api = world.log
 	world.network.Raise = Engine.Raise
 	world.network.Print = func(format string, args ...any) {
 		select {
@@ -182,6 +142,7 @@ func (world *Client) Ready() {
 	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+OneTimeUseCode))
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
+	world.PreviewRenderer.client = world
 	world.VultureRenderer.texture = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.terrain = world.VultureRenderer
@@ -207,9 +168,18 @@ func (world *Client) Ready() {
 const speed = 8
 
 func (world *Client) Log() *community.Log {
+	if world.objects == nil {
+		world.objects = make(map[xyz.Pair[string, community.Object]]Node3D.ID)
+	}
 	return &community.Log{
-		PrintMessage: func(s string) {
-			os.Stderr.WriteString(s)
+		InsertObject: func(design string, initial community.Object) {
+			container := world.VultureRenderer.AsNode()
+			node := Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
+			node.SetPosition(initial.Offset)
+			node.SetRotation(initial.Angles)
+			node.SetScale(Vector3.New(0.1, 0.1, 0.1))
+			world.objects[xyz.NewPair(design, initial)] = node.ID()
+			container.AddChild(node.AsNode())
 		},
 	}
 }

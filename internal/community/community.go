@@ -1,21 +1,19 @@
 package community
 
-import "runtime.link/api"
+import (
+	"graphics.gd/variant/Color"
+	"graphics.gd/variant/Euler"
+	"graphics.gd/variant/Vector3"
+	"runtime.link/api"
+)
 
 // Log represents the operations available within a creative community space.
 type Log struct {
 	api.Specification
 
-	InsertRegion func(extents [2]uint8)
-	InsertDesign func(Design)
-	InsertObject func(region int, object Object)
-	InsertWalker func(region int, walker Walker)
-
-	ResizeRegion func(region int, id int, extents [2]uint8)
-	UpdateObject func(region int, id int, object Object)
-	UpdateWalker func(region int, id int, walker Walker)
-
-	PrintMessage func(string)
+	InsertObject func(design string, initial Object)
+	UpdateObject func(design string, initial Object, deltas Object)
+	RemoveObject func(design string, initial Object)
 }
 
 type Design struct{}
@@ -35,10 +33,16 @@ type Terrain struct {
 
 // Object represents a static creation or object placed into a region, which can be a building, structure, or another creative design.
 type Object struct {
-	Design uint16
-	Offset [2]uint8
-	Jitter uint8
-	Angles [3]uint8
+	Offset Vector3.XYZ
+	Bounds Vector3.XYZ
+	Angles Euler.Radians
+	Colour Color.RGBA
+}
+
+func (o *Object) apply(deltas Object) {
+	o.Offset = Vector3.Add(o.Offset, deltas.Offset)
+	o.Bounds = Vector3.Add(o.Bounds, deltas.Bounds)
+	o.Angles = Vector3.EulerRadians(Vector3.Add(o.Angles.Vector3(), deltas.Angles.Vector3()))
 }
 
 // Walker represents a dynamic entity that represents movement between two objects.

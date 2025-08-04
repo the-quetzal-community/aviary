@@ -11,6 +11,7 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
+	"the.quetzal.community/aviary/internal/community"
 )
 
 // PreviewRenderer is responsible for rendering items when the user
@@ -26,6 +27,8 @@ type PreviewRenderer struct {
 	terrain *Renderer
 
 	current string
+
+	client *Client
 }
 
 func (pr *PreviewRenderer) Process(dt Float.X) {
@@ -53,9 +56,10 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 	if Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 		if pr.AsNode().GetChildCount() > 0 {
 			Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
-			/*if err := pr.edits.InsertAsset(echoable.Asset(rand.Uint64()), echoable.Thing(rand.Uint64()), pr.AsNode3D().AsNode3D().GlobalTransform()); err != nil {
-			Engine.Raise(err)
-			}*/
+			pr.client.api.InsertObject(pr.current, community.Object{
+				Offset: pr.AsNode3D().Position(),
+				Angles: pr.AsNode3D().Rotation(),
+			})
 		}
 	}
 	pos := pr.AsNode3D().Position()
