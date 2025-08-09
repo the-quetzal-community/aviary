@@ -19,6 +19,7 @@ type ThemeSelector struct {
 }
 
 func (selector *ThemeSelector) Ready() {
+	selector.AsControl().SetPosition(Vector2.Sub(selector.AsControl().Position(), Vector2.New(selector.Themes.AsControl().Size().X/2, 0)))
 	start := selector.Pointer.AsControl().Position()
 	for i, theme := range selector.Themes.AsNode().GetChildren() {
 		Object.To[BaseButton.Instance](theme).OnPressed(func() {

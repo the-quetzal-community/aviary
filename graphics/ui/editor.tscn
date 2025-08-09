@@ -11,6 +11,9 @@
 [ext_resource type="Texture2D" uid="uid://btesx4fxc3ldh" path="res://ui/pointer.svg" id="10_tj0f7"]
 [ext_resource type="Texture2D" uid="uid://c812ylsxd8qwb" path="res://library/kenney/icon.png" id="13_4rs6f"]
 
+[sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
+load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qfej6"]
 bg_color = Color(0.694121, 0.694121, 0.69412, 1)
 corner_radius_top_left = 10
@@ -41,9 +44,6 @@ height = 32
 fill = 1
 fill_from = Vector2(0.5, 0.5)
 
-[sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
-load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
-
 [node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
 anchor_right = 1.0
@@ -54,185 +54,6 @@ rotation = -0.000623948
 mouse_filter = 2
 theme = Object(OptionButton,"_import_path":NodePath(""),"unique_name_in_owner":false,"process_mode":0,"process_priority":0,"process_physics_priority":0,"process_thread_group":0,"physics_interpolation_mode":2,"auto_translate_mode":0,"editor_description":"","visible":false,"modulate":Color(1, 1, 1, 1),"self_modulate":Color(1, 1, 1, 1),"show_behind_parent":false,"top_level":false,"clip_children":0,"light_mask":1,"visibility_layer":1,"z_index":0,"z_as_relative":true,"y_sort_enabled":false,"texture_filter":0,"texture_repeat":0,"material":null,"use_parent_material":false,"clip_contents":false,"custom_minimum_size":Vector2(0, 0),"layout_direction":0,"layout_mode":1,"anchors_preset":5,"anchor_left":0.5,"anchor_top":0.0,"anchor_right":0.5,"anchor_bottom":0.0,"offset_left":-74.0,"offset_top":0.0,"offset_right":74.0,"offset_bottom":31.0,"grow_horizontal":2,"grow_vertical":1,"rotation":0.0,"scale":Vector2(1, 1),"pivot_offset":Vector2(0, 0),"size_flags_horizontal":1,"size_flags_vertical":1,"size_flags_stretch_ratio":1.0,"localize_numeral_system":true,"tooltip_text":"","tooltip_auto_translate_mode":0,"focus_neighbor_left":NodePath(""),"focus_neighbor_top":NodePath(""),"focus_neighbor_right":NodePath(""),"focus_neighbor_bottom":NodePath(""),"focus_next":NodePath(""),"focus_previous":NodePath(""),"focus_mode":2,"mouse_filter":0,"mouse_force_pass_scroll_events":true,"mouse_default_cursor_shape":0,"shortcut_context":null,"theme":ExtResource("1_hi2iw"),"theme_type_variation":&"","disabled":false,"toggle_mode":true,"button_pressed":false,"action_mode":0,"button_mask":1,"keep_pressed_outside":false,"button_group":null,"shortcut":null,"shortcut_feedback":true,"shortcut_in_tooltip":true,"flat":false,"alignment":0,"text_overrun_behavior":0,"autowrap_mode":0,"clip_text":false,"icon_alignment":0,"vertical_icon_alignment":1,"expand_icon":false,"text_direction":0,"language":"","selected":2,"fit_to_longest_item":true,"allow_reselect":false,"item_count":3,"popup/item_0/text":"select a theme","popup/item_0/id":0,"popup/item_1/text":"Kenney","popup/item_1/id":1,"popup/item_2/text":"WildfireGames","popup/item_2/id":2,"script":null)
 
-
-[node name="JoinCode" type="Panel" parent="."]
-layout_mode = 1
-offset_left = 74.9937
-offset_top = 33.0006
-offset_right = 128.994
-offset_bottom = 84.0006
-mouse_filter = 2
-theme = SubResource("Theme_5on0m")
-
-[node name="Version" type="Label" parent="JoinCode"]
-layout_mode = 0
-offset_left = 40.9982
-offset_top = -19.9282
-offset_right = 127.998
-offset_bottom = 24.0718
-theme = ExtResource("1_hi2iw")
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 14
-text = "v0.0.0"
-
-[node name="ShareButton" type="TextureButton" parent="JoinCode"]
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -2.0
-offset_right = 49.0
-offset_bottom = 51.0
-grow_horizontal = 0
-texture_normal = ExtResource("4_28l1f")
-ignore_texture_size = true
-stretch_mode = 0
-
-[node name="Label" type="Label" parent="JoinCode"]
-layout_mode = 1
-anchors_preset = 6
-anchor_left = 1.0
-anchor_top = 0.5
-anchor_right = 1.0
-anchor_bottom = 0.5
-offset_left = -135.0
-offset_top = -23.5
-offset_right = -2.0
-offset_bottom = 25.5
-grow_horizontal = 0
-grow_vertical = 2
-theme = ExtResource("1_hi2iw")
-text = "123456"
-horizontal_alignment = 1
-
-[node name="HBoxContainer" type="HBoxContainer" parent="."]
-layout_mode = 1
-offset_left = -0.986272
-offset_top = -22.0006
-offset_right = 493.014
-offset_bottom = 105.999
-mouse_filter = 2
-
-[node name="Cloud" type="TextureButton" parent="HBoxContainer"]
-layout_mode = 2
-texture_normal = ExtResource("4_4x3iy")
-
-[node name="OnlineIndicator" type="TextureRect" parent="HBoxContainer/Cloud"]
-layout_mode = 0
-offset_left = 86.9794
-offset_top = 33.0543
-offset_right = 118.979
-offset_bottom = 65.0543
-texture = SubResource("GradientTexture2D_75vv8")
-
-[node name="Keypad" type="Panel" parent="."]
-visible = false
-layout_mode = 0
-offset_left = 56.9101
-offset_top = 144.036
-offset_right = 338.91
-offset_bottom = 532.036
-theme = ExtResource("1_hi2iw")
-
-[node name="TextEdit" type="TextEdit" parent="Keypad"]
-layout_mode = 1
-anchors_preset = 10
-anchor_right = 1.0
-offset_left = 93.0
-offset_top = 26.0
-offset_right = -31.0
-offset_bottom = 97.0
-grow_horizontal = 2
-
-[node name="Keys" type="GridContainer" parent="Keypad"]
-layout_mode = 2
-offset_left = 47.0
-offset_top = 123.997
-offset_right = 235.0
-offset_bottom = 349.997
-columns = 3
-
-[node name="1" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "1"
-
-[node name="2" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "2"
-
-[node name="3" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "3"
-
-[node name="4" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "4"
-
-[node name="5" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "5"
-
-[node name="6" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "6"
-
-[node name="7" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "7"
-
-[node name="8" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "8"
-
-[node name="9" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "9"
-
-[node name="X" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "X"
-
-[node name="0" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = "0"
-
-[node name=">" type="Button" parent="Keypad/Keys"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-theme = ExtResource("1_hi2iw")
-text = ">
-"
-
-[node name="TextureRect" type="TextureRect" parent="Keypad"]
-layout_mode = 0
-offset_left = 11.897
-offset_top = 27.0493
-offset_right = 81.897
-offset_bottom = 97.0493
-texture = ExtResource("4_75vv8")
-expand_mode = 1
 
 [node name="WiseOwl" type="TextureButton" parent="."]
 visible = false
@@ -358,3 +179,188 @@ layout_mode = 2
 texture_normal = ExtResource("13_4rs6f")
 ignore_texture_size = true
 stretch_mode = 4
+
+[node name="CloudControl" type="CloudControl" parent="."]
+layout_mode = 0
+offset_right = 392.0
+offset_bottom = 131.0
+mouse_filter = 2
+
+[node name="JoinCode" type="Panel" parent="CloudControl"]
+layout_mode = 1
+offset_left = 74.9937
+offset_top = 33.0006
+offset_right = 128.994
+offset_bottom = 84.0006
+mouse_filter = 2
+theme = SubResource("Theme_5on0m")
+
+[node name="Version" type="Label" parent="CloudControl/JoinCode"]
+layout_mode = 0
+offset_left = 40.9982
+offset_top = -19.9282
+offset_right = 127.998
+offset_bottom = 24.0718
+theme = ExtResource("1_hi2iw")
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 14
+text = "v0.0.0"
+
+[node name="ShareButton" type="TextureButton" parent="CloudControl/JoinCode"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -2.0
+offset_right = 49.0
+offset_bottom = 51.0
+grow_horizontal = 0
+texture_normal = ExtResource("4_28l1f")
+ignore_texture_size = true
+stretch_mode = 0
+
+[node name="Label" type="Label" parent="CloudControl/JoinCode"]
+layout_mode = 1
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -135.0
+offset_top = -23.5
+offset_right = -2.0
+offset_bottom = 25.5
+grow_horizontal = 0
+grow_vertical = 2
+theme = ExtResource("1_hi2iw")
+text = "123456"
+horizontal_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="CloudControl"]
+layout_mode = 1
+offset_left = -0.986272
+offset_top = -22.0006
+offset_right = 493.014
+offset_bottom = 105.999
+mouse_filter = 2
+
+[node name="Cloud" type="TextureButton" parent="CloudControl/HBoxContainer"]
+layout_mode = 2
+texture_normal = ExtResource("4_4x3iy")
+
+[node name="OnlineIndicator" type="TextureRect" parent="CloudControl/HBoxContainer/Cloud"]
+layout_mode = 0
+offset_left = 86.9794
+offset_top = 33.0543
+offset_right = 118.979
+offset_bottom = 65.0543
+texture = SubResource("GradientTexture2D_75vv8")
+
+[node name="Keypad" type="Panel" parent="CloudControl"]
+visible = false
+layout_mode = 0
+offset_left = 56.9101
+offset_top = 144.036
+offset_right = 338.91
+offset_bottom = 532.036
+theme = ExtResource("1_hi2iw")
+
+[node name="TextEdit" type="TextEdit" parent="CloudControl/Keypad"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 93.0
+offset_top = 26.0
+offset_right = -31.0
+offset_bottom = 97.0
+grow_horizontal = 2
+
+[node name="Keys" type="GridContainer" parent="CloudControl/Keypad"]
+layout_mode = 2
+offset_left = 47.0
+offset_top = 123.997
+offset_right = 235.0
+offset_bottom = 349.997
+columns = 3
+
+[node name="1" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "1"
+
+[node name="2" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "2"
+
+[node name="3" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "3"
+
+[node name="4" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "4"
+
+[node name="5" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "5"
+
+[node name="6" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "6"
+
+[node name="7" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "7"
+
+[node name="8" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "8"
+
+[node name="9" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "9"
+
+[node name="X" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "X"
+
+[node name="0" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = "0"
+
+[node name=">" type="Button" parent="CloudControl/Keypad/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_hi2iw")
+text = ">
+"
+
+[node name="TextureRect" type="TextureRect" parent="CloudControl/Keypad"]
+layout_mode = 0
+offset_left = 11.897
+offset_top = 27.0493
+offset_right = 81.897
+offset_bottom = 97.0493
+texture = ExtResource("4_75vv8")
+expand_mode = 1

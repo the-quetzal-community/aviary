@@ -156,6 +156,7 @@ func (world *Client) Ready() {
 		editor.texture = world.VultureRenderer.texture
 		editor.client = world
 		world.AsNode().AddChild(editor.AsNode())
+		editor.Setup()
 	}
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
