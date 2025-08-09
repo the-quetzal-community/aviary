@@ -91,12 +91,6 @@ type UI struct {
 		}
 	}
 
-	// ThemeSelector
-	Pointer TextureRect.Instance
-	Themes  struct {
-		HBoxContainer.Instance
-	}
-
 	onlineStatus chan bool
 
 	ExpansionIndicator Button.Instance

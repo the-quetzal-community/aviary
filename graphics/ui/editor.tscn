@@ -318,17 +318,6 @@ visible = false
 layout_mode = 2
 texture_normal = ExtResource("3_c55ig")
 
-[node name="Themes" type="HBoxContainer" parent="."]
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -94.007
-offset_top = 11.5403
-offset_right = 92.9929
-offset_bottom = 69.5403
-grow_horizontal = 2
-
 [node name="ThemeSelector" type="ThemeSelector" parent="."]
 layout_mode = 1
 anchors_preset = 5
