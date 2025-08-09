@@ -224,6 +224,7 @@ texture = ExtResource("4_75vv8")
 expand_mode = 1
 
 [node name="WiseOwl" type="TextureButton" parent="."]
+visible = false
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
