@@ -195,15 +195,14 @@ offset_bottom = 84.0006
 mouse_filter = 2
 theme = SubResource("Theme_5on0m")
 
-[node name="Version" type="Label" parent="CloudControl/JoinCode"]
+[node name="Version" type="RichTextLabel" parent="CloudControl/JoinCode"]
 layout_mode = 0
 offset_left = 40.9982
 offset_top = -19.9282
 offset_right = 127.998
 offset_bottom = 24.0718
 theme = ExtResource("1_hi2iw")
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 14
+theme_override_font_sizes/normal_font_size = 14
 text = "v0.0.0"
 
 [node name="ShareButton" type="TextureButton" parent="CloudControl/JoinCode"]
@@ -364,3 +363,12 @@ offset_right = 81.897
 offset_bottom = 97.0493
 texture = ExtResource("4_75vv8")
 expand_mode = 1
+
+[node name="UpdateProgress" type="ProgressBar" parent="CloudControl"]
+visible = false
+layout_mode = 0
+offset_left = 3.0
+offset_top = 92.0
+offset_right = 179.0
+offset_bottom = 101.0
+show_percentage = false

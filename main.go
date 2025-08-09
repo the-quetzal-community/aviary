@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log/slog"
+
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/SceneTree"
@@ -10,8 +12,23 @@ import (
 	"github.com/quaadgras/velopack-go/velopack"
 )
 
+func init() {
+	velopack.Run(velopack.App{
+		AutoApplyOnStartup: true,
+		Logger: func(level, message string) {
+			switch level {
+			case "error":
+				slog.Error(message)
+			case "trace":
+				slog.Debug(message)
+			case "info":
+				slog.Info(message)
+			}
+		},
+	})
+}
+
 func main() {
-	go velopack.DownloadUpdatesInTheBackground("https://vpk.quetzal.community/aviary")
 	classdb.Register[internal.Tree]()
 	classdb.Register[internal.Rock]()
 	classdb.Register[internal.TerrainTile]()

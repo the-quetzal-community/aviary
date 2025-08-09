@@ -16,8 +16,10 @@ import (
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
+	"graphics.gd/classdb/ProgressBar"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/RichTextLabel"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
@@ -39,7 +41,7 @@ type CloudControl struct {
 
 		Label       Label.Instance
 		ShareButton TextureButton.Instance
-		Version     Label.Instance
+		Version     RichTextLabel.Instance
 	}
 	HBoxContainer struct {
 		HBoxContainer.Instance
@@ -50,7 +52,6 @@ type CloudControl struct {
 			OnlineIndicator TextureRect.Instance
 		}
 	}
-
 	Keypad struct {
 		Panel.Instance
 
@@ -59,26 +60,49 @@ type CloudControl struct {
 		Keys GridContainer.Instance
 	}
 
-	sharing      bool
-	joinCode     chan networking.Code
-	onlineStatus chan bool
-	client       *Client
+	UpdateProgress ProgressBar.Instance
+
+	sharing    bool
+	client     *Client
+	on_process chan func(*CloudControl)
 }
 
 func (ui *CloudControl) Setup() {
 	go func() {
 		if err := ui.client.goOnline(); err != nil {
 			fmt.Println("Error going online:", err)
-			ui.onlineStatus <- false
+			ui.on_process <- func(cc *CloudControl) { cc.set_online_status_indicator(false) }
 			return
 		}
-		ui.onlineStatus <- true
+		ui.on_process <- func(cc *CloudControl) { cc.set_online_status_indicator(true) }
+
+		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community/aviary")
+		if err != nil {
+			Engine.Raise(err)
+			return
+		}
+		latest, update, err := manager.CheckForUpdates()
+		if err != nil {
+			Engine.Raise(err)
+			return
+		}
+		if update == velopack.UpdateAvailable {
+			ui.on_process <- func(cc *CloudControl) { cc.set_update_available(true) }
+			if err := manager.DownloadUpdates(latest, func(progress uint) {
+				ui.on_process <- func(cc *CloudControl) {
+					cc.UpdateProgress.AsRange().SetValue(Float.X(progress))
+				}
+			}); err != nil {
+				Engine.Raise(err)
+				return
+			}
+			ui.on_process <- func(cc *CloudControl) { cc.set_update_available(false) }
+		}
 	}()
 }
 
 func (ui *CloudControl) Ready() {
-	ui.joinCode = make(chan networking.Code)
-	ui.onlineStatus = make(chan bool, 1)
+	ui.on_process = make(chan func(*CloudControl), 10)
 	up, err := velopack.NewUpdateManager("https://vpk.quetzal.community/aviary")
 	if err == nil {
 		ui.JoinCode.Version.SetText("v" + up.CurrentlyInstalledVersion())
@@ -94,12 +118,12 @@ func (ui *CloudControl) Ready() {
 				code, err := ui.client.apiHost()
 				if err != nil {
 					Engine.Raise(err)
-					ui.joinCode <- ""
+					ui.on_process <- func(cc *CloudControl) { cc.set_join_code("") }
 					return
 				}
-				ui.joinCode <- code
+				ui.on_process <- func(cc *CloudControl) { cc.set_join_code(code) }
 				time.Sleep(5 * time.Minute)
-				ui.joinCode <- ""
+				ui.on_process <- func(cc *CloudControl) { cc.set_join_code("") }
 			}()
 		}
 	})
@@ -152,29 +176,49 @@ func (ui *CloudControl) Ready() {
 	}
 }
 
+func (ui *CloudControl) set_update_available(available bool) {
+	if available {
+		ui.JoinCode.Version.SetText(ui.JoinCode.Version.Text() + "⬆️")
+		ui.UpdateProgress.AsCanvasItem().SetVisible(true)
+	} else {
+		ui.JoinCode.Version.SetText("[s]" + strings.TrimSuffix(ui.JoinCode.Version.Text(), "⬆️") + "[/s]🔃")
+	}
+}
+
+func (ui *CloudControl) set_online_status_indicator(online bool) {
+	var col = Color.X11.Green
+	if !online {
+		col = Color.X11.Red
+	}
+	tex := ui.HBoxContainer.Cloud.OnlineIndicator.Texture()
+	grad := Object.To[GradientTexture2D.Instance](tex).Gradient()
+	cols := grad.Colors()
+	cols[0] = col
+	grad.SetColors(cols)
+}
+
+func (ui *CloudControl) set_join_code(code networking.Code) {
+	ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(Material.Nil)
+	size := ui.JoinCode.AsControl().Size()
+	if code != "" {
+		size.X = 184
+	} else {
+		size.X = 54
+	}
+	PropertyTweener.Make(SceneTree.Get(ui.AsNode()).CreateTween(), ui.JoinCode.AsControl().AsObject(), "size", size, 0.2).SetEase(Tween.EaseOut)
+	ui.JoinCode.Label.SetText(string(code))
+	ui.sharing = false
+}
+
 func (ui *CloudControl) Process(dt Float.X) {
-	select {
-	case online := <-ui.onlineStatus:
-		var col = Color.X11.Green
-		if !online {
-			col = Color.X11.Red
+	for {
+		select {
+		case fn := <-ui.on_process:
+			if fn != nil {
+				fn(ui)
+			}
+		default:
+			return
 		}
-		tex := ui.HBoxContainer.Cloud.OnlineIndicator.Texture()
-		grad := Object.To[GradientTexture2D.Instance](tex).Gradient()
-		cols := grad.Colors()
-		cols[0] = col
-		grad.SetColors(cols)
-	case code := <-ui.joinCode:
-		ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(Material.Nil)
-		size := ui.JoinCode.AsControl().Size()
-		if code != "" {
-			size.X = 184
-		} else {
-			size.X = 54
-		}
-		PropertyTweener.Make(SceneTree.Get(ui.AsNode()).CreateTween(), ui.JoinCode.AsControl().AsObject(), "size", size, 0.2).SetEase(Tween.EaseOut)
-		ui.JoinCode.Label.SetText(string(code))
-		ui.sharing = false
-	default:
 	}
 }
