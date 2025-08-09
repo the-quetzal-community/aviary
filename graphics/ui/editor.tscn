@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=19 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -8,6 +8,8 @@
 [ext_resource type="Texture2D" uid="uid://bnftwn1yor425" path="res://ui/sharing.svg" id="4_75vv8"]
 [ext_resource type="Texture2D" uid="uid://bi3tuiqeiwxo8" path="res://ui/wiseowl.svg" id="6_4x3iy"]
 [ext_resource type="Texture2D" uid="uid://crb04yyhlqwwm" path="res://library/wildfire_games/icon.svg" id="9_5on0m"]
+[ext_resource type="Texture2D" uid="uid://cx55slyyp10ef" path="res://ui/restart.svg" id="9_75vv8"]
+[ext_resource type="Texture2D" uid="uid://qrqs88rqwn0n" path="res://ui/updates.svg" id="10_4rs6f"]
 [ext_resource type="Texture2D" uid="uid://btesx4fxc3ldh" path="res://ui/pointer.svg" id="10_tj0f7"]
 [ext_resource type="Texture2D" uid="uid://c812ylsxd8qwb" path="res://library/kenney/icon.png" id="13_4rs6f"]
 
@@ -195,16 +197,6 @@ offset_bottom = 84.0006
 mouse_filter = 2
 theme = SubResource("Theme_5on0m")
 
-[node name="Version" type="RichTextLabel" parent="CloudControl/JoinCode"]
-layout_mode = 0
-offset_left = 40.9982
-offset_top = -19.9282
-offset_right = 127.998
-offset_bottom = 24.0718
-theme = ExtResource("1_hi2iw")
-theme_override_font_sizes/normal_font_size = 14
-text = "v0.0.0"
-
 [node name="ShareButton" type="TextureButton" parent="CloudControl/JoinCode"]
 layout_mode = 1
 anchors_preset = 1
@@ -234,6 +226,40 @@ grow_vertical = 2
 theme = ExtResource("1_hi2iw")
 text = "123456"
 horizontal_alignment = 1
+
+[node name="Versioning" type="HBoxContainer" parent="CloudControl/JoinCode"]
+layout_mode = 0
+offset_left = 40.9988
+offset_top = -20.9282
+offset_right = 104.999
+offset_bottom = 2.07178
+
+[node name="Version" type="RichTextLabel" parent="CloudControl/JoinCode/Versioning"]
+clip_contents = false
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("1_hi2iw")
+theme_override_font_sizes/normal_font_size = 14
+bbcode_enabled = true
+text = "v0.0.0"
+scroll_active = false
+autowrap_mode = 0
+
+[node name="Restart" type="TextureButton" parent="CloudControl/JoinCode/Versioning"]
+visible = false
+custom_minimum_size = Vector2(20, 0)
+layout_mode = 2
+texture_normal = ExtResource("9_75vv8")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="Updates" type="TextureRect" parent="CloudControl/JoinCode/Versioning"]
+visible = false
+custom_minimum_size = Vector2(15, 0)
+layout_mode = 2
+texture = ExtResource("10_4rs6f")
+expand_mode = 4
+stretch_mode = 4
 
 [node name="HBoxContainer" type="HBoxContainer" parent="CloudControl"]
 layout_mode = 1

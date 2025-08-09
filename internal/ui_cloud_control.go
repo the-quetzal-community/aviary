@@ -41,7 +41,13 @@ type CloudControl struct {
 
 		Label       Label.Instance
 		ShareButton TextureButton.Instance
-		Version     RichTextLabel.Instance
+		Versioning  struct {
+			HBoxContainer.Instance
+
+			Version RichTextLabel.Instance
+			Restart TextureButton.Instance
+			Updates TextureRect.Instance
+		}
 	}
 	HBoxContainer struct {
 		HBoxContainer.Instance
@@ -87,7 +93,7 @@ func (ui *CloudControl) Setup() {
 			return
 		}
 		if update == velopack.UpdateAvailable {
-			ui.on_process <- func(cc *CloudControl) { cc.set_update_available(true) }
+			ui.on_process <- func(cc *CloudControl) { cc.set_update_available(nil, true) }
 			if err := manager.DownloadUpdates(latest, func(progress uint) {
 				ui.on_process <- func(cc *CloudControl) {
 					cc.UpdateProgress.AsRange().SetValue(Float.X(progress))
@@ -96,7 +102,13 @@ func (ui *CloudControl) Setup() {
 				Engine.Raise(err)
 				return
 			}
-			ui.on_process <- func(cc *CloudControl) { cc.set_update_available(false) }
+			restart := func() {
+				if err := manager.ApplyUpdatesAndRestart(latest); err != nil {
+					Engine.Raise(err)
+					return
+				}
+			}
+			ui.on_process <- func(cc *CloudControl) { cc.set_update_available(restart, false) }
 		}
 	}()
 }
@@ -105,7 +117,7 @@ func (ui *CloudControl) Ready() {
 	ui.on_process = make(chan func(*CloudControl), 10)
 	up, err := velopack.NewUpdateManager("https://vpk.quetzal.community/aviary")
 	if err == nil {
-		ui.JoinCode.Version.SetText("v" + up.CurrentlyInstalledVersion())
+		ui.JoinCode.Versioning.Version.SetText("v" + up.CurrentlyInstalledVersion())
 	}
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
 		if !ui.sharing {
@@ -176,12 +188,16 @@ func (ui *CloudControl) Ready() {
 	}
 }
 
-func (ui *CloudControl) set_update_available(available bool) {
+func (ui *CloudControl) set_update_available(restart func(), available bool) {
 	if available {
-		ui.JoinCode.Version.SetText(ui.JoinCode.Version.Text() + "⬆️")
 		ui.UpdateProgress.AsCanvasItem().SetVisible(true)
+		ui.JoinCode.Versioning.Updates.AsCanvasItem().SetVisible(true)
 	} else {
-		ui.JoinCode.Version.SetText("[s]" + strings.TrimSuffix(ui.JoinCode.Version.Text(), "⬆️") + "[/s]🔃")
+		ui.JoinCode.Versioning.Version.SetText("[s]" + ui.JoinCode.Versioning.Version.Text() + "[/s]")
+		ui.JoinCode.Versioning.Updates.AsCanvasItem().SetVisible(false)
+		ui.JoinCode.Versioning.Restart.AsCanvasItem().SetVisible(true)
+		ui.JoinCode.Versioning.Restart.AsBaseButton().OnPressed(restart)
+		ui.UpdateProgress.AsCanvasItem().SetVisible(false)
 	}
 }
 
