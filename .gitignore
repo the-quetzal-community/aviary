@@ -3,7 +3,6 @@
 /graphics/.godot
 /graphics/*.so
 /graphics/*.tscn
-/graphics/project.godot
 /graphics/library.gdextension
 graphics/export_presets.cfg
 graphics/library
