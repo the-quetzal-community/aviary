@@ -318,19 +318,6 @@ visible = false
 layout_mode = 2
 texture_normal = ExtResource("3_c55ig")
 
-[node name="Pointer" type="TextureRect" parent="."]
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -71.0004
-offset_top = 0.55469
-offset_right = -58.0004
-offset_bottom = 13.5547
-grow_horizontal = 2
-texture = ExtResource("10_tj0f7")
-expand_mode = 1
-
 [node name="Themes" type="HBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 5
@@ -342,12 +329,43 @@ offset_right = 92.9929
 offset_bottom = 69.5403
 grow_horizontal = 2
 
-[node name="0AD" type="TextureRect" parent="Themes"]
-layout_mode = 2
-texture = ExtResource("9_5on0m")
-expand_mode = 2
+[node name="ThemeSelector" type="ThemeSelector" parent="."]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -20.0
+offset_right = 20.0
+offset_bottom = 40.0
+grow_horizontal = 2
 
-[node name="Kenney" type="TextureRect" parent="Themes"]
+[node name="Pointer" type="TextureRect" parent="ThemeSelector"]
 layout_mode = 2
-texture = ExtResource("13_4rs6f")
-expand_mode = 2
+offset_left = 27.0004
+offset_top = -0.396642
+offset_right = 39.0004
+offset_bottom = 14.6034
+grow_horizontal = 2
+texture = ExtResource("10_tj0f7")
+expand_mode = 1
+
+[node name="Themes" type="HBoxContainer" parent="ThemeSelector"]
+layout_mode = 0
+offset_left = -0.00683594
+offset_top = 11.0
+offset_right = 131.993
+offset_bottom = 75.0
+
+[node name="0AD" type="TextureButton" parent="ThemeSelector/Themes"]
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+texture_normal = ExtResource("9_5on0m")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="Kenney" type="TextureButton" parent="ThemeSelector/Themes"]
+custom_minimum_size = Vector2(64, 64)
+layout_mode = 2
+texture_normal = ExtResource("13_4rs6f")
+ignore_texture_size = true
+stretch_mode = 4

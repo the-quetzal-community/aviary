@@ -22,6 +22,7 @@ func main() {
 	classdb.Register[internal.EditorPlugin]()
 	classdb.Register[internal.ModelLoader]()
 	classdb.Register[internal.GridFlowContainer]()
+	classdb.Register[internal.ThemeSelector]()
 	startup.LoadingScene()
 	SceneTree.Add(new(internal.Client))
 	ProjectSettings.LoadResourcePack("res://library.pck", 0)

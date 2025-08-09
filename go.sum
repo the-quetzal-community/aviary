@@ -50,6 +50,8 @@ github.com/quaadgras/velopack-go v0.0.1355 h1:F9f2tzO5NTb+GKdpfO9Kky6fuRFTx65Suy
 github.com/quaadgras/velopack-go v0.0.1355/go.mod h1:a1wHtXptDZtvdKvTjXXPgowL7mBrmf3kGzWLJtafkfs=
 github.com/quaadgras/velopack-go v0.0.1357 h1:0591udcgbfIwcLzdusAD0vPEc41utXOtur7cOiF/UlE=
 github.com/quaadgras/velopack-go v0.0.1357/go.mod h1:a1wHtXptDZtvdKvTjXXPgowL7mBrmf3kGzWLJtafkfs=
+github.com/quaadgras/velopack-go v0.0.1358 h1:Tynleix81mjyC+vzU0iJ0xOvJ29xhKwosNij0RoH2JM=
+github.com/quaadgras/velopack-go v0.0.1358/go.mod h1:a1wHtXptDZtvdKvTjXXPgowL7mBrmf3kGzWLJtafkfs=
 github.com/tetratelabs/wazero v1.8.2 h1:yIgLR/b2bN31bjxwXHD8a3d+BogigR952csSDdLYEv4=
 github.com/tetratelabs/wazero v1.8.2/go.mod h1:yAI0XTsMBhREkM/YDAK/zNou3GoiAce1P6+rp/wQhjs=
 github.com/wlynxg/anet v0.0.5 h1:J3VJGi1gvo0JwZ/P1/Yc/8p63SoW98B5dHkYDmpgvvU=
