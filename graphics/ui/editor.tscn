@@ -331,7 +331,7 @@ grow_horizontal = 2
 texture = ExtResource("10_tj0f7")
 expand_mode = 1
 
-[node name="HBoxContainer2" type="HBoxContainer" parent="."]
+[node name="Themes" type="HBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -342,12 +342,12 @@ offset_right = 92.9929
 offset_bottom = 69.5403
 grow_horizontal = 2
 
-[node name="TextureRect" type="TextureRect" parent="HBoxContainer2"]
+[node name="0AD" type="TextureRect" parent="Themes"]
 layout_mode = 2
 texture = ExtResource("9_5on0m")
 expand_mode = 2
 
-[node name="TextureRect3" type="TextureRect" parent="HBoxContainer2"]
+[node name="Kenney" type="TextureRect" parent="Themes"]
 layout_mode = 2
 texture = ExtResource("13_4rs6f")
 expand_mode = 2
