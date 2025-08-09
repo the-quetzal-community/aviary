@@ -87,6 +87,10 @@ func (ui *CloudControl) Setup() {
 			Engine.Raise(err)
 			return
 		}
+		version := manager.CurrentlyInstalledVersion()
+		ui.on_process <- func(cc *CloudControl) {
+			ui.JoinCode.Versioning.Version.SetText("v" + version)
+		}
 		latest, update, err := manager.CheckForUpdates()
 		if err != nil {
 			Engine.Raise(err)
@@ -115,10 +119,6 @@ func (ui *CloudControl) Setup() {
 
 func (ui *CloudControl) Ready() {
 	ui.on_process = make(chan func(*CloudControl), 10)
-	up, err := velopack.NewUpdateManager("https://vpk.quetzal.community/aviary")
-	if err == nil {
-		ui.JoinCode.Versioning.Version.SetText("v" + up.CurrentlyInstalledVersion())
-	}
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
 		if !ui.sharing {
 			ui.sharing = true
