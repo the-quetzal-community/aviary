@@ -57,12 +57,23 @@ theme = Object(OptionButton,"_import_path":NodePath(""),"unique_name_in_owner":f
 
 [node name="JoinCode" type="Panel" parent="."]
 layout_mode = 1
-offset_left = 74.0
-offset_top = 23.0
-offset_right = 128.0
-offset_bottom = 74.0
+offset_left = 74.9937
+offset_top = 33.0006
+offset_right = 128.994
+offset_bottom = 84.0006
 mouse_filter = 2
 theme = SubResource("Theme_5on0m")
+
+[node name="Version" type="Label" parent="JoinCode"]
+layout_mode = 0
+offset_left = 40.9982
+offset_top = -19.9282
+offset_right = 127.998
+offset_bottom = 24.0718
+theme = ExtResource("1_hi2iw")
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 14
+text = "v0.0.0"
 
 [node name="ShareButton" type="TextureButton" parent="JoinCode"]
 layout_mode = 1
@@ -108,10 +119,10 @@ texture_normal = ExtResource("4_4x3iy")
 
 [node name="OnlineIndicator" type="TextureRect" parent="HBoxContainer/Cloud"]
 layout_mode = 0
-offset_left = 83.9813
-offset_top = 30.0524
-offset_right = 115.981
-offset_bottom = 62.0524
+offset_left = 86.9794
+offset_top = 33.0543
+offset_right = 118.979
+offset_bottom = 65.0543
 texture = SubResource("GradientTexture2D_75vv8")
 
 [node name="Keypad" type="Panel" parent="."]

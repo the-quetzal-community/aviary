@@ -43,6 +43,8 @@ import (
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
 	"the.quetzal.community/aviary/internal/networking"
+
+	"github.com/quaadgras/velopack-go/velopack"
 )
 
 var DrawExpanded atomic.Bool
@@ -66,6 +68,7 @@ type UI struct {
 
 		Label       Label.Instance
 		ShareButton TextureButton.Instance
+		Version     Label.Instance
 	}
 	sharing  bool
 	joinCode chan networking.Code
@@ -115,6 +118,11 @@ var categories = []string{
 func (ui *UI) Ready() {
 	ui.joinCode = make(chan networking.Code)
 	ui.onlineStatus = make(chan bool, 1)
+
+	up, err := velopack.NewUpdateManager("https://vpk.quetzal.community/aviary")
+	if err == nil {
+		ui.JoinCode.Version.SetText("v" + up.CurrentlyInstalledVersion())
+	}
 
 	ui.Theme.Clear()
 	ui.themes = append(ui.themes, "")
