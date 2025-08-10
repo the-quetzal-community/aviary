@@ -12,7 +12,6 @@ import (
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
-	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OptionButton"
 	"graphics.gd/classdb/Resource"
@@ -45,7 +44,8 @@ type UI struct {
 
 	ExpansionIndicator Button.Instance
 
-	CloudControl *CloudControl
+	CloudControl  *CloudControl
+	ThemeSelector *ThemeSelector
 
 	themes []string
 
@@ -96,6 +96,7 @@ func (ui *UI) Ready() {
 		ui.Theme.Select(count)
 		ui.onThemeSelected(count)
 	}
+	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
 	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.Editor.AsControl().OnMouseExited(func() {
 		height := DisplayServer.WindowGetSize(0).Y
@@ -139,9 +140,9 @@ func (ui *UI) onThemeSelected(idx int) {
 		return
 	}
 	for _, node := range ui.Editor.AsNode().GetChildren() {
-		container, ok := Object.As[HBoxContainer.Instance](Node.Instance(node))
+		container, ok := Object.As[*GridFlowContainer](Node.Instance(node))
 		if ok {
-			HBoxContainer.Instance(container).AsObject()[0].Free()
+			container.AsObject()[0].Free()
 		}
 	}
 	var glb = ".glb"
