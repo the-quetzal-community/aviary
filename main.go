@@ -36,8 +36,6 @@ func main() {
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
 	classdb.Register[internal.Renderer]()
-	classdb.Register[internal.EditorPlugin]()
-	classdb.Register[internal.ModelLoader]()
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()
