@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"graphics.gd/classdb"
@@ -71,6 +72,19 @@ func (ui *UI) Setup() {
 }
 
 func (ui *UI) Ready() {
+	ui.themes = append(ui.themes, "")
+	Dir := DirAccess.Open("res://library")
+	if Dir == (DirAccess.Instance{}) {
+		return
+	}
+	var count int
+	for name := range Dir.Iter() {
+		if strings.Contains(name, ".") {
+			continue
+		}
+		ui.themes = append(ui.themes, name)
+		count++
+	}
 	ui.onThemeSelected(0)
 	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
 	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
