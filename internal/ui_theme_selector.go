@@ -48,4 +48,5 @@ func (selector *ThemeSelector) Ready() {
 			selector.ThemeSelected.Emit(i + 1)
 		})
 	}
+	selector.ThemeSelected.Emit(1)
 }

@@ -3,7 +3,6 @@ package internal
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"sync/atomic"
 
 	"graphics.gd/classdb"
@@ -13,7 +12,6 @@ import (
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Node"
-	"graphics.gd/classdb/OptionButton"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
@@ -40,7 +38,6 @@ type UI struct {
 	texture chan Path.ToResource
 
 	Editor TabContainer.Instance
-	Theme  OptionButton.Instance
 
 	ExpansionIndicator Button.Instance
 
@@ -74,28 +71,7 @@ func (ui *UI) Setup() {
 }
 
 func (ui *UI) Ready() {
-	ui.Theme.Clear()
-	ui.themes = append(ui.themes, "")
-	ui.Theme.AddItem("select a theme")
-	Dir := DirAccess.Open("res://library")
-	if Dir == (DirAccess.Instance{}) {
-		return
-	}
-	var count int
-	for name := range Dir.Iter() {
-		if strings.Contains(name, ".") {
-			continue
-		}
-		ui.themes = append(ui.themes, name)
-		ui.Theme.AddItem(String.ToPascalCase(name))
-		count++
-	}
 	ui.onThemeSelected(0)
-	ui.Theme.OnItemSelected(ui.onThemeSelected)
-	if count > 0 {
-		ui.Theme.Select(count)
-		ui.onThemeSelected(count)
-	}
 	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
 	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.Editor.AsControl().OnMouseExited(func() {
