@@ -4,7 +4,10 @@ import (
 	"log/slog"
 
 	"graphics.gd/classdb"
+	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/ProjectSettings"
+	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/startup"
 	"the.quetzal.community/aviary/internal"
@@ -39,8 +42,16 @@ func main() {
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()
+	classdb.Register[internal.LibraryDownloader]()
+	if !ProjectSettings.LoadResourcePack("res://library.pck", 0) {
+		if !ProjectSettings.LoadResourcePack("user://library.pck", 0) {
+			startup.LoadingScene()
+			SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
+			startup.Scene()
+			return
+		}
+	}
 	startup.LoadingScene()
 	SceneTree.Add(new(internal.Client))
-	ProjectSettings.LoadResourcePack("res://library.pck", 0)
 	startup.Scene()
 }
