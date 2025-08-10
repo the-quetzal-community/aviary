@@ -42,6 +42,8 @@ const (
 type Client struct {
 	Node3D.Extension[Client] `gd:"AviaryWorld"`
 
+	scroll_lock bool
+
 	Light DirectionalLight3D.Instance
 
 	// FocalPoint is the point in the scene that the camera is
@@ -79,20 +81,24 @@ type Client struct {
 	api *community.Log
 
 	objects map[xyz.Pair[string, community.Object]]Node3D.ID
+
+	clientReady sync.WaitGroup
+}
+
+func NewClient() *Client {
+	var client = &Client{
+		clientReady: sync.WaitGroup{},
+	}
+	client.clientReady.Add(1)
+	return client
 }
 
 func (world *Client) isOnline() bool {
 	return world.user_id != ""
 }
 
-var clientReady sync.WaitGroup
-
-func init() {
-	clientReady.Add(1)
-}
-
 func (world *Client) goOnline() error {
-	clientReady.Wait()
+	world.clientReady.Wait()
 	user_id, err := world.signalling.LookupUser(context.Background())
 	if err != nil {
 		return err
@@ -102,6 +108,7 @@ func (world *Client) goOnline() error {
 }
 
 func (world *Client) apiJoin(code networking.Code) {
+	world.clientReady.Wait()
 	if err := world.network.Join(code, world.updates); err != nil {
 		Engine.Raise(fmt.Errorf("failed to join room %s: %w", code, err))
 		return
@@ -126,7 +133,7 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
-	defer clientReady.Done()
+	defer world.clientReady.Done()
 	world.println = make(chan string, 10)
 	world.log = world.Log()
 	world.api = world.log
@@ -228,7 +235,7 @@ func (world *Client) Process(dt Float.X) {
 
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
-	if !DrawExpanded.Load() {
+	if !world.scroll_lock {
 		if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {
 			if event.ButtonIndex() == Input.MouseButtonWheelUp {
 				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))

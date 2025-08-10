@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 24 24"
+   x="0px"
+   y="0px"
+   version="1.1"
+   id="svg6260"
+   sodipodi:docname="reverse.svg"
+   width="48"
+   height="48"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs6264" />
+  <sodipodi:namedview
+     id="namedview6262"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="true"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="4.9615326"
+     inkscape:cx="-68.627988"
+     inkscape:cy="14.813971"
+     inkscape:window-width="1920"
+     inkscape:window-height="1041"
+     inkscape:window-x="1920"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg6260" />
+  <title
+     id="title6250">ui 48</title>
+  <g
+     data-name="Layer 2"
+     id="g6254">
+    <path
+       d="M 20.22,4.63 C 18.79,3 15.72,2 12,2 V 2 C 8.28,2 5.21,3 3.78,4.63 1.4,7.39 1.4,16.63 3.78,19.37 5.21,21 8.28,22 12,22 c 3.72,0 6.79,-1 8.22,-2.63 2.38,-2.76 2.38,-11.98 0,-14.74 z M 13.66,14.75 A 1,1 0 0 1 13.75,16.16 1,1 0 0 1 13,16.5 1,1 0 0 1 12.34,16.25 l -4,-3.5 a 1,1 0 0 1 0,-1.5 l 4,-3.5 a 1,1 0 1 1 1.32,1.5 L 10.52,12 Z"
+       id="path6252"
+       style="fill:#444444;fill-opacity:1" />
+  </g>
+  <metadata
+     id="metadata7961">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>ui 48</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>

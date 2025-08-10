@@ -128,7 +128,7 @@ func (dl *LibraryDownloader) Process(delta Float.X) {
 		dl.DownloadButton.Size.SetText((dl.total - bytes).HumanReadable())
 	case <-dl.done:
 		ProjectSettings.LoadResourcePack("user://library.pck", 0)
-		SceneTree.Add(new(Client))
+		SceneTree.Add(NewClient())
 		dl.AsNode().QueueFree()
 		return
 	default:

@@ -6,4 +6,4 @@ GOOS=windows GOARCH=amd64 gd build
 GOOS=linux GOARCH=amd64 gd build
 gd release $1
 cd releases
-rclone copy -v --max-depth 1 . r2:aviary/aviary/
+rclone copy -v --max-depth 1 . r2:aviary/

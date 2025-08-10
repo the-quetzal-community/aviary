@@ -13,10 +13,14 @@ import (
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/OS"
+	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/Tween"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
@@ -24,9 +28,6 @@ import (
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
 )
-
-var DrawExpanded atomic.Bool
-var DrawExpansion Float.X
 
 /*
 UI for editing a space in Aviary.
@@ -45,7 +46,13 @@ type UI struct {
 	CloudControl  *CloudControl
 	ThemeSelector *ThemeSelector
 
-	themes []string
+	Cloudy *FlightPlanner
+
+	themes         []string
+	gridContainers []*GridFlowContainer
+
+	drawExpanded  atomic.Bool
+	drawExpansion Float.X
 
 	client *Client
 }
@@ -67,6 +74,7 @@ var categories = []string{
 }
 
 func (ui *UI) Setup() {
+	ui.Cloudy.client = ui.client
 	ui.CloudControl.client = ui.client
 	ui.CloudControl.Setup()
 }
@@ -97,25 +105,44 @@ func (ui *UI) Ready() {
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(func() {
-		if !DrawExpanded.CompareAndSwap(false, true) {
+		if !ui.drawExpanded.CompareAndSwap(false, true) {
 			return
 		}
+		for _, container := range ui.gridContainers {
+			container.scroll_lock = false
+		}
+		ui.client.scroll_lock = true
 		window_size := DisplayServer.WindowGetSize(0)
 		// Expand close to the top of the screen.
 		var amount Float.X = -(Float.X(window_size.Y) - 370) * 0.8
-		ui.Editor.AsControl().SetPosition(Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount))
-		ui.Editor.AsControl().SetSize(Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount))
+		move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount)
+		grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount)
+		PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
+		PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
 		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
-		DrawExpansion = amount
+		ui.drawExpansion = amount
+	})
+	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
+		if !ui.client.isOnline() {
+			OS.ShellOpen("https://the.quetzal.community/aviary/account?connection=" + OneTimeUseCode)
+		} else {
+			ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
+		}
 	})
 }
 
 func (ui *UI) closeDrawer() {
-	if !DrawExpanded.CompareAndSwap(true, false) {
+	if !ui.drawExpanded.CompareAndSwap(true, false) {
 		return
 	}
-	ui.Editor.AsControl().SetPosition(Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y-DrawExpansion))
-	ui.Editor.AsControl().SetSize(Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y+DrawExpansion))
+	for _, container := range ui.gridContainers {
+		container.scroll_lock = true
+	}
+	ui.client.scroll_lock = false
+	move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y-ui.drawExpansion)
+	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y+ui.drawExpansion)
+	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
+	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
 	ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
 }
 
@@ -135,16 +162,19 @@ func (ui *UI) onThemeSelected(idx int) {
 			container.AsObject()[0].Free()
 		}
 	}
+	ui.gridContainers = ui.gridContainers[:0]
 	var glb = ".glb"
 	var png = ".png"
 	var i int
 	for name := range themes.Iter() {
 		if slices.Contains(categories, name) {
 			gridflow := new(GridFlowContainer)
+			gridflow.scroll_lock = true
 			gridflow.AsNode().SetName(name)
 			ui.Editor.AsNode().AddChild(gridflow.AsNode())
 			gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
+			ui.gridContainers = append(ui.gridContainers, gridflow)
 			elements := gridflow.Scrollable.GridContainer
 			resources := DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name)
 			if resources == DirAccess.Nil {

@@ -2,11 +2,9 @@ package internal
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/quaadgras/velopack-go/velopack"
-	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GradientTexture2D"
@@ -14,7 +12,6 @@ import (
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/Material"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/ProgressBar"
 	"graphics.gd/classdb/PropertyTweener"
@@ -139,53 +136,7 @@ func (ui *CloudControl) Ready() {
 			}()
 		}
 	})
-	ui.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
-		if !ui.client.isOnline() {
-			OS.ShellOpen("https://the.quetzal.community/aviary/account?connection=" + OneTimeUseCode)
-		} else {
-			ui.Keypad.AsCanvasItem().SetVisible(!ui.Keypad.AsCanvasItem().Visible())
-		}
-	})
-	ui.Keypad.TextEdit.OnTextChanged(func() {
-		text := ui.Keypad.TextEdit.Text()
-		safe := ""
-		for _, char := range text {
-			if strings.ContainsRune("0123456789", char) {
-				safe += string(char)
-			}
-		}
-		if len(safe) > 6 {
-			safe = safe[:6]
-		}
-		if text != safe {
-			ui.Keypad.TextEdit.SetText(safe)
-		}
-	})
-	keys := ui.Keypad.Keys.AsNode().GetChildren()
-	for _, key := range keys {
-		name := key.Name()
-		switch name {
-		case "X":
-			Object.To[BaseButton.Instance](key).OnPressed(func() {
-				text := ui.Keypad.TextEdit.Text()
-				if len(text) > 0 {
-					text = text[:len(text)-1]
-				}
-				ui.Keypad.TextEdit.SetText(text)
-			})
-		case ">":
-			Object.To[BaseButton.Instance](key).OnPressed(func() {
-				go ui.client.apiJoin(networking.Code(ui.Keypad.TextEdit.Text()))
-				ui.Keypad.AsCanvasItem().SetVisible(false)
-			})
-		default:
-			Object.To[BaseButton.Instance](key).OnPressed(func() {
-				text := ui.Keypad.TextEdit.Text()
-				text += name
-				ui.Keypad.TextEdit.SetText(text)
-			})
-		}
-	}
+
 }
 
 func (ui *CloudControl) set_update_available(restart func(), available bool) {

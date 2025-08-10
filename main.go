@@ -43,6 +43,7 @@ func main() {
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()
 	classdb.Register[internal.LibraryDownloader]()
+	classdb.Register[internal.FlightPlanner]()
 	if !ProjectSettings.LoadResourcePack("res://library.pck", 0) {
 		if !ProjectSettings.LoadResourcePack("user://library.pck", 0) {
 			startup.LoadingScene()
@@ -52,6 +53,6 @@ func main() {
 		}
 	}
 	startup.LoadingScene()
-	SceneTree.Add(new(internal.Client))
+	SceneTree.Add(internal.NewClient())
 	startup.Scene()
 }

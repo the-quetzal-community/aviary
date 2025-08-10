@@ -1,26 +1,251 @@
-[gd_scene load_steps=2 format=3 uid="uid://dqndk14imylnj"]
+[gd_scene load_steps=6 format=3 uid="uid://dqndk14imylnj"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ec3ur"]
-bg_color = Color(1, 1, 1, 1)
+[ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_ox2so"]
+[ext_resource type="Texture2D" uid="uid://bnftwn1yor425" path="res://ui/sharing.svg" id="2_pf028"]
+[ext_resource type="Texture2D" uid="uid://dxatt7oppmiuy" path="res://SaveGame.png" id="3_kv74u"]
+[ext_resource type="Texture2D" uid="uid://d1ancny4aq15j" path="res://ui/reverse.svg" id="3_pf028"]
 
-[node name="Cloudy" type="Panel"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_pf028"]
+bg_color = Color(0.298039, 0.298039, 0.298039, 1)
+
+[node name="Cloudy" type="FlightPlanner"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_ec3ur")
+mouse_filter = 1
+theme_override_styles/panel = SubResource("StyleBoxFlat_pf028")
 
-[node name="Keypad" type="Panel" parent="."]
+[node name="Layout" type="HBoxContainer" parent="."]
+clip_contents = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Keypad" type="Panel" parent="Layout"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+
+[node name="TextureRect" type="TextureRect" parent="Layout/Keypad"]
 layout_mode = 0
-offset_left = 77.0
-offset_top = 105.0
-offset_right = 534.0
-offset_bottom = 622.0
+offset_left = 36.0
+offset_top = 19.0
+offset_right = 233.0
+offset_bottom = 215.0
+texture = ExtResource("2_pf028")
+expand_mode = 1
 
-[node name="TextEdit" type="TextEdit" parent="Keypad"]
+[node name="Code" type="TextEdit" parent="Layout/Keypad"]
+unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_bottom = 53.0
+offset_left = 55.0
+offset_top = 206.0
+offset_right = -56.0
+offset_bottom = 285.0
 grow_horizontal = 2
+theme_override_font_sizes/font_size = 48
+text = "123456"
+scroll_fit_content_height = true
+scroll_fit_content_width = true
+
+[node name="Column" type="VBoxContainer" parent="Layout/Keypad"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 299.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Keys" type="GridContainer" parent="Layout/Keypad/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+columns = 3
+
+[node name="1" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "1"
+
+[node name="2" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "2"
+
+[node name="3" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "3"
+
+[node name="4" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "4"
+
+[node name="5" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "5"
+
+[node name="6" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "6"
+
+[node name="7" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "7"
+
+[node name="8" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "8"
+
+[node name="9" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "9"
+
+[node name="X" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "X"
+
+[node name="0" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = "0"
+
+[node name=">" type="Button" parent="Layout/Keypad/Column/Keys"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+theme = ExtResource("1_ox2so")
+text = ">
+"
+
+[node name="Back" type="TextureButton" parent="Layout/Keypad"]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 8.0
+offset_top = 10.0
+offset_right = 61.0
+offset_bottom = 63.0
+texture_normal = ExtResource("3_pf028")
+
+[node name="Control" type="Control" parent="Layout"]
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+
+[node name="GridFlowContainer" type="GridFlowContainer" parent="Layout"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Scrollable" type="ScrollContainer" parent="Layout/GridFlowContainer"]
+clip_contents = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="GridContainer" type="GridContainer" parent="Layout/GridFlowContainer/Scrollable"]
+clip_contents = true
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 3
+
+[node name="TextureButton" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton2" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton3" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton4" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton5" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton6" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton7" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton8" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton9" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton10" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="TextureButton11" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
+layout_mode = 2
+texture_normal = ExtResource("3_kv74u")
+ignore_texture_size = true
+stretch_mode = 4
