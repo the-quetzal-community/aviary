@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"graphics.gd/classdb/BaseButton"
+	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/SceneTree"
@@ -19,6 +20,7 @@ type FlightPlanner struct {
 	Back TextureButton.Instance `gd:"%Back"`
 	Keys GridContainer.Instance `gd:"%Keys"`
 	Code TextEdit.Instance      `gd:"%Code"`
+	Plus Button.Instance        `gd:"%Plus"`
 
 	client *Client
 }
@@ -27,6 +29,13 @@ func (fl *FlightPlanner) Ready() {
 	fl.Code.SetText("")
 	fl.Back.AsBaseButton().OnPressed(func() {
 		fl.AsCanvasItem().SetVisible(false)
+	})
+	fl.Plus.AsBaseButton().OnPressed(func() {
+		fresh := NewClient()
+		for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
+			child.QueueFree()
+		}
+		SceneTree.Add(fresh)
 	})
 	fl.Code.OnTextChanged(func() {
 		text := fl.Code.Text()
