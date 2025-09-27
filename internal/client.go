@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"graphics.gd/classdb"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
@@ -23,6 +22,7 @@ import (
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
@@ -157,7 +157,7 @@ func (world *Client) Ready() {
 	world.VultureRenderer.start()
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
-	editor, ok := classdb.As[*UI](first)
+	editor, ok := Object.As[*UI](first)
 	if ok {
 		editor.preview = world.PreviewRenderer.preview
 		editor.texture = world.VultureRenderer.texture
@@ -236,7 +236,7 @@ func (world *Client) Process(dt Float.X) {
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
 	if !world.scroll_lock {
-		if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {
+		if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {
 			if event.ButtonIndex() == Input.MouseButtonWheelUp {
 				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
 			}
@@ -245,7 +245,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 		}
 	}
-	if event, ok := classdb.As[InputEventKey.Instance](event); ok {
+	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyF1 {
 			vp := Viewport.Get(world.AsNode())
 			vp.SetDebugDraw(vp.DebugDraw() ^ Viewport.DebugDrawWireframe)

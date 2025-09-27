@@ -181,6 +181,7 @@ size_flags_horizontal = 3
 columns = 3
 
 [node name="First" type="Control" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+custom_minimum_size = Vector2(256, 256)
 layout_mode = 2
 
 [node name="Plus" type="Button" parent="Layout/GridFlowContainer/Scrollable/GridContainer/First"]

@@ -1,12 +1,12 @@
 package internal
 
 import (
-	"graphics.gd/classdb"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector3"
 )
 
@@ -20,7 +20,7 @@ func (tr *Renderer) OnCreate() {
 }
 
 func (tr *Renderer) UnhandledInput(event InputEvent.Instance) {
-	if event, ok := classdb.As[InputEventMouseButton.Instance](event); ok {
+	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 		if Input.IsKeyPressed(Input.KeyShift) {
 			if event.ButtonIndex() == Input.MouseButtonWheelDown {
 				tr.BrushRadius -= 0.5
@@ -47,7 +47,7 @@ func (tr *Renderer) UnhandledInput(event InputEvent.Instance) {
 			}
 		}
 	}
-	if event, ok := classdb.As[InputEventKey.Instance](event); ok {
+	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.Keycode() == Input.KeyShift && event.AsInputEvent().IsPressed() {
 			tr.shader.SetShaderParameter("brush_active", true)
 		}
