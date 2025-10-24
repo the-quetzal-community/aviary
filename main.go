@@ -44,6 +44,7 @@ func main() {
 	classdb.Register[internal.CloudControl]()
 	classdb.Register[internal.LibraryDownloader]()
 	classdb.Register[internal.FlightPlanner]()
+	classdb.Register[internal.AnimationSaving]()
 	if !ProjectSettings.LoadResourcePack("res://library.pck", 0) {
 		if !ProjectSettings.LoadResourcePack("user://library.pck", 0) {
 			startup.LoadingScene()

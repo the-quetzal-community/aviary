@@ -193,12 +193,19 @@ func (world *Client) Log() *community.Log {
 }
 
 func (world *Client) Process(dt Float.X) {
+	Object.Use(world)
 	select {
 	case update := <-world.updates:
 		community.ProcessSingle(update, world.Log())
 	case msg := <-world.println:
 		os.Stderr.WriteString(msg)
 	default:
+	}
+	if Input.IsKeyPressed(Input.KeyCtrl) {
+		if Input.IsKeyPressed(Input.KeyS) {
+			AnimateTheSceneBeingSaved(world)
+		}
+		return
 	}
 	if Input.IsKeyPressed(Input.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), -Angle.Radians(dt))
