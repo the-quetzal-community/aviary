@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"fmt"
+
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
@@ -11,7 +13,7 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector3"
-	"the.quetzal.community/aviary/internal/community"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 // PreviewRenderer is responsible for rendering items when the user
@@ -56,9 +58,32 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 	if Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 		if pr.AsNode().GetChildCount() > 0 {
 			Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
-			pr.client.api.InsertObject(pr.current, community.Object{
+
+			fmt.Println("Placing design:", pr.client.id)
+
+			design, ok := pr.client.loaded[pr.current]
+			if !ok {
+				pr.client.design_ids++
+				design = musical.Design{
+					Author: pr.client.id,
+					Number: pr.client.design_ids,
+				}
+				pr.client.space.Import(musical.DesignImport{
+					Design: design,
+					Import: pr.current,
+				})
+			}
+			pr.client.entities++
+			pr.client.space.Create(musical.Contribution{
+				Author: pr.client.id,
+				Entity: musical.Entity{
+					Author: pr.client.id,
+					Number: pr.client.entities,
+				},
+				Design: design,
 				Offset: pr.AsNode3D().Position(),
 				Angles: pr.AsNode3D().Rotation(),
+				Commit: true,
 			})
 		}
 	}

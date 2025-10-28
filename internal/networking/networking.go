@@ -33,8 +33,9 @@ type Connectivity struct {
 	ice       []webrtc.ICEServer
 	community *websocket.Conn
 
-	peer         *webrtc.PeerConnection
-	data_channel *webrtc.DataChannel
+	peer               *webrtc.PeerConnection
+	data_channel       *webrtc.DataChannel
+	data_channel_ready sync.WaitGroup
 
 	local_recv chan<- []byte
 	server     Server
@@ -90,6 +91,7 @@ func wsSend(sock *websocket.Conn, data any) error {
 
 // setup basic ICE connectivity common to both clients and servers - this uses the quetzal community ICE servers.
 func (c *Connectivity) setup() (err error) {
+	c.data_channel_ready.Add(1)
 	if debug {
 		c.Print("Setting up connectivity...\n")
 		defer c.Print("Connectivity setup complete.\n")
@@ -111,14 +113,17 @@ func (c *Connectivity) setup() (err error) {
 }
 
 func (c *Connectivity) Send(data []byte) {
-	if c.local_recv != nil {
-		c.local_recv <- data
-		return
+	if debug {
+		c.Print("Waiting for data channel to be ready...\n")
 	}
-	if c.data_channel == nil {
-		return
+	c.data_channel_ready.Wait()
+	if debug {
+		c.Print("Sending data on data channel: %s\n", string(data))
 	}
 	c.data_channel.Send(data)
+	if debug {
+		c.Print("Data sent.\n")
+	}
 }
 
 func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
@@ -138,11 +143,6 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	c.peer, err = webrtc.NewPeerConnection(webrtc.Configuration{
 		ICEServers: c.ice,
 	})
-	if err != nil {
-		return xray.New(err)
-	}
-	c.peer.SetRemoteDescription(message.SDP)
-	answer, err := c.peer.CreateAnswer(nil)
 	if err != nil {
 		return xray.New(err)
 	}
@@ -198,6 +198,11 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 		default:
 		}
 	})
+	c.peer.SetRemoteDescription(message.SDP)
+	answer, err := c.peer.CreateAnswer(nil)
+	if err != nil {
+		return xray.New(err)
+	}
 	if err := c.peer.SetLocalDescription(answer); err != nil {
 		return xray.New(err)
 	}
@@ -234,10 +239,12 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	}); err != nil {
 		return xray.New(err)
 	}
+	c.peer.SetRemoteDescription(message.SDP)
 	for {
 		select {
 		case ch := <-data_channels:
 			c.data_channel = ch
+			c.data_channel_ready.Done()
 			return nil
 		case err := <-issues:
 			if err != nil {
@@ -318,11 +325,14 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 		client_send := make(chan []byte, 1)
 		ch.OnMessage(func(msg webrtc.DataChannelMessage) {
 			if debug {
-				c.Print("Received message on data channel: %s\n", string(msg.Data))
+				c.Print("Received message on data channel")
 			}
 			client_recv <- msg.Data
 		})
 		ch.OnClose(func() {
+			if debug {
+				c.Print("Data channel closed.\n")
+			}
 			close(client_recv)
 		})
 		offer, err := peer.CreateOffer(nil)
@@ -362,23 +372,25 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 				c.Raise(xray.New(err))
 			}
 		})
+		ch.OnOpen(func() {
+			go func() {
+				for msg := range client_send {
+					if err := ch.Send(msg); err != nil {
+						c.Raise(xray.New(err))
+						return
+					}
+				}
+			}()
+			go c.server(Client{
+				Recv: client_recv,
+				Send: client_send,
+			})
+		})
 		peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 			if debug {
 				c.Print("Peer connection state changed: %s\n", state.String())
 			}
 			if state == webrtc.PeerConnectionStateConnected {
-				go func() {
-					for msg := range client_send {
-						if err := ch.Send(msg); err != nil {
-							c.Raise(xray.New(err))
-							return
-						}
-					}
-				}()
-				go c.server(Client{
-					Recv: client_recv,
-					Send: client_send,
-				})
 				return
 			}
 		})
@@ -392,8 +404,6 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 
 func (c *Connectivity) Host(updates chan<- []byte, server Server) (Code, error) {
 	c.server = server
-	local_recv := make(chan []byte, 1)
-	c.local_recv = local_recv
 	if err := c.setup(); err != nil {
 		return "", err
 	}
@@ -411,9 +421,5 @@ func (c *Connectivity) Host(updates chan<- []byte, server Server) (Code, error) 
 		return "", fmt.Errorf("unexpected message type: %s", msg.Type)
 	}
 	go c.addPeers(signalling)
-	go server(Client{ // local loopback
-		Recv: local_recv,
-		Send: updates,
-	})
 	return msg.Code, nil
 }

@@ -2,24 +2,32 @@ package internal
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/variant/Angle"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -27,9 +35,8 @@ import (
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
 	"runtime.link/api/rest"
-	"runtime.link/xyz"
-	"the.quetzal.community/aviary/internal/community"
 	"the.quetzal.community/aviary/internal/ice/signalling"
+	"the.quetzal.community/aviary/internal/musical"
 	"the.quetzal.community/aviary/internal/networking"
 )
 
@@ -72,15 +79,20 @@ type Client struct {
 	updates chan []byte // channel for updates from the server
 	println chan string
 
-	log *community.Log
-
 	saving atomic.Bool
 
 	user_id string
 
-	api *community.Log
+	id         musical.Author
+	space      musical.UsersSpace3D
+	entities   uint16
+	design_ids uint16
 
-	objects map[xyz.Pair[string, community.Object]]Node3D.ID
+	objects map[musical.Entity]Node3D.ID
+	designs map[musical.Design]PackedScene.ID
+	loaded  map[string]musical.Design
+
+	clients chan musical.Networking
 
 	clientReady sync.WaitGroup
 }
@@ -88,6 +100,10 @@ type Client struct {
 func NewClient() *Client {
 	var client = &Client{
 		clientReady: sync.WaitGroup{},
+		objects:     make(map[musical.Entity]Node3D.ID),
+		designs:     make(map[musical.Design]PackedScene.ID),
+		loaded:      make(map[string]musical.Design),
+		clients:     make(chan musical.Networking),
 	}
 	client.clientReady.Add(1)
 	return client
@@ -109,34 +125,55 @@ func (world *Client) goOnline() error {
 
 func (world *Client) apiJoin(code networking.Code) {
 	world.clientReady.Wait()
-	if err := world.network.Join(code, world.updates); err != nil {
+	err := world.network.Join(code, world.updates)
+	if err != nil {
 		Engine.Raise(fmt.Errorf("failed to join room %s: %w", code, err))
 		return
 	}
-	world.api = community.SendTo(world.network.Send) // FIXME race
+	world.space, err = musical.Join(musical.Networking{
+		Instructions: networkingVia{&world.network, world.updates},
+		MediaUploads: stubbedNetwork{},
+		ErrorReports: musicalImpl{world},
+	}, musical.Record{}, musicalImpl{world})
+	if err != nil {
+		Engine.Raise(fmt.Errorf("failed to join musical room %s: %w", code, err))
+		return
+	}
 }
 
 func (world *Client) apiHost() (networking.Code, error) {
-	var habitat community.Habitat
+	var clients = make(chan musical.Networking)
 	code, err := world.network.Host(world.updates, func(client networking.Client) {
-		out := community.SendVia(client.Send)
-		habitat.AddClient(out)
-		defer habitat.DelClient(out)
-		community.Process(client.Recv, habitat.Log())
+		clients <- musical.Networking{
+			Instructions: networkingFor{client},
+			MediaUploads: stubbedNetwork{},
+			ErrorReports: musicalImpl{world},
+		}
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to host room: %w", err)
 	}
-	world.api = community.SendTo(world.network.Send) // FIXME race?
 	return code, nil
 }
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
 	defer world.clientReady.Done()
+
+	clients_iter := func(yield func(musical.Networking) bool) {
+		for client := range world.clients {
+			if !yield(client) {
+				return
+			}
+		}
+	}
+	var err error
+	world.space, _, err = musical.Host(clients_iter, musical.Record{}, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
+	if err != nil {
+		Engine.Raise(err)
+	}
+
 	world.println = make(chan string, 10)
-	world.log = world.Log()
-	world.api = world.log
 	world.network.Raise = Engine.Raise
 	world.network.Print = func(format string, args ...any) {
 		select {
@@ -175,28 +212,63 @@ func (world *Client) Ready() {
 
 const speed = 8
 
-func (world *Client) Log() *community.Log {
-	if world.objects == nil {
-		world.objects = make(map[xyz.Pair[string, community.Object]]Node3D.ID)
-	}
-	return &community.Log{
-		InsertObject: func(design string, initial community.Object) {
-			container := world.VultureRenderer.AsNode()
-			node := Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
-			node.SetPosition(initial.Offset)
-			node.SetRotation(initial.Angles)
-			node.SetScale(Vector3.New(0.1, 0.1, 0.1))
-			world.objects[xyz.NewPair(design, initial)] = node.ID()
-			container.AddChild(node.AsNode())
-		},
-	}
+type musicalImpl struct {
+	*Client
 }
+
+func (world musicalImpl) ReportError(err error) {
+	Engine.Raise(err)
+}
+
+func (world musicalImpl) Open(space musical.Record) (fs.File, error) {
+	name := base64.RawURLEncoding.EncodeToString(space[:])
+	return os.OpenFile(OS.GetUserDataDir()+"/"+name+".mus3", os.O_RDWR|os.O_CREATE, 0666)
+}
+
+func (world musicalImpl) Member(req musical.Orchestrator) error {
+	if req.Assign {
+		Callable.Defer(Callable.New(func() {
+			world.id = req.Author
+		}))
+	}
+	return nil
+}
+
+func (world musicalImpl) Upload(file musical.DesignUpload) error  { return nil }
+func (world musicalImpl) Sculpt(brush musical.AreaToSculpt) error { return nil }
+func (world musicalImpl) Import(uri musical.DesignImport) error {
+	Callable.Defer(Callable.New(func() {
+		if uri.Design.Author == world.id {
+			world.design_ids = max(world.design_ids, uri.Design.Number)
+		}
+		res := Object.Leak(Resource.Load[PackedScene.Is[Node3D.Instance]](uri.Import))
+		world.designs[uri.Design] = res.AsPackedScene().ID()
+		world.loaded[uri.Import] = uri.Design
+	}))
+	return nil
+}
+func (world musicalImpl) Create(con musical.Contribution) error {
+	Callable.Defer(Callable.New(func() {
+		container := world.VultureRenderer.AsNode()
+		scene, ok := world.designs[con.Design].Instance()
+		if !ok {
+			return
+		}
+		node := Object.To[Node3D.Instance](scene.Instantiate())
+		node.SetPosition(con.Offset)
+		node.SetRotation(con.Angles)
+		node.SetScale(Vector3.New(0.1, 0.1, 0.1))
+		world.objects[con.Entity] = node.ID()
+		container.AddChild(node.AsNode())
+	}))
+	return nil
+}
+func (world musicalImpl) Attach(rel musical.Relationship) error  { return nil }
+func (world musicalImpl) LookAt(view musical.BirdsEyeView) error { return nil }
 
 func (world *Client) Process(dt Float.X) {
 	Object.Use(world)
 	select {
-	case update := <-world.updates:
-		community.ProcessSingle(update, world.Log())
 	case msg := <-world.println:
 		os.Stderr.WriteString(msg)
 	default:
@@ -258,4 +330,112 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			vp.SetDebugDraw(vp.DebugDraw() ^ Viewport.DebugDrawWireframe)
 		}
 	}
+}
+
+type networkingFor struct {
+	networking.Client
+}
+
+func (nf networkingFor) Send(data []byte) error {
+	nf.Client.Send <- data
+	return nil
+}
+
+func (nf networkingFor) Recv() ([]byte, error) {
+	data, ok := <-nf.Client.Recv
+	if !ok {
+		return nil, fmt.Errorf("connection closed")
+	}
+	return data, nil
+}
+
+func (nf networkingFor) Close() error {
+	close(nf.Client.Send)
+	return nil
+}
+
+type stubbedNetwork struct{}
+
+func (sn stubbedNetwork) Send(data []byte) error { return nil }
+func (sn stubbedNetwork) Recv() ([]byte, error)  { select {} }
+func (sn stubbedNetwork) Close() error           { return nil }
+
+type fileWrapped struct {
+	path string
+	file FileAccess.Instance
+}
+
+func (fw fileWrapped) Stat() (fs.FileInfo, error) {
+	return fw, nil
+}
+
+func (fw fileWrapped) Name() string {
+	return filepath.Base(fw.path)
+}
+
+func (fw fileWrapped) Size() int64 {
+	return int64(FileAccess.GetSize(fw.path))
+}
+
+func (fw fileWrapped) Mode() fs.FileMode {
+	return 0666
+}
+
+func (fw fileWrapped) IsDir() bool {
+	return false
+}
+
+func (fw fileWrapped) Sys() any {
+	return fw.file
+}
+
+func (fw fileWrapped) ModTime() (t time.Time) {
+	return time.Unix(int64(FileAccess.GetModifiedTime(fw.path)), 0)
+}
+
+func (fw fileWrapped) Read(p []byte) (n int, err error) {
+	if fw.file.EofReached() {
+		return 0, io.EOF
+	}
+	n = copy(p, fw.file.GetBuffer(len(p)))
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, fw.file.GetError()
+}
+
+func (fw fileWrapped) Write(p []byte) (n int, err error) {
+	fw.file.SeekEnd()
+	if ok := fw.file.StoreBuffer(p); !ok {
+		return 0, fw.file.GetError()
+	}
+	return len(p), nil
+}
+
+func (fw fileWrapped) Close() error {
+	fw.file.Close()
+	Object.Free(fw.file)
+	return nil
+}
+
+type networkingVia struct {
+	network *networking.Connectivity
+	updates chan []byte
+}
+
+func (nv networkingVia) Send(data []byte) error {
+	nv.network.Send(data)
+	return nil
+}
+
+func (nv networkingVia) Recv() ([]byte, error) {
+	data, ok := <-nv.updates
+	if !ok {
+		return nil, fmt.Errorf("connection closed")
+	}
+	return data, nil
+}
+
+func (nv networkingVia) Close() error {
+	return nil
 }
