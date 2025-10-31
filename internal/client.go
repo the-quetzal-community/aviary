@@ -66,8 +66,6 @@ type Client struct {
 		}
 	}
 
-	TerrainTile *TerrainTile
-
 	mouseOver chan Vector3.XYZ
 
 	PreviewRenderer *PreviewRenderer
@@ -188,6 +186,7 @@ func (world *Client) Ready() {
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.client = world
 	world.VultureRenderer.texture = make(chan Path.ToResource, 1)
+	world.VultureRenderer.client = world
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.terrain = world.VultureRenderer
 	world.VultureRenderer.mouseOver = world.mouseOver
@@ -206,7 +205,6 @@ func (world *Client) Ready() {
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
 	world.Light.AsNode3D().SetRotation(Euler.Radians{X: -Angle.Pi / 2})
 	world.VultureRenderer.SetFocalPoint3D(Vector3.Zero)
-	world.TerrainTile.brushEvents = world.VultureRenderer.brushEvents
 	RenderingServer.SetDebugGenerateWireframes(true)
 }
 

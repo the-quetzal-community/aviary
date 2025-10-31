@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"graphics.gd/classdb/Image"
+	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
@@ -11,12 +13,13 @@ import (
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
-	"graphics.gd/variant"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 // Renderer will open a Vulture Events stream and render all
@@ -29,6 +32,8 @@ type Renderer struct {
 
 	ActiveRegions Node.Instance
 	CachedRegions Node.Instance
+
+	tile *TerrainTile
 
 	listening atomic.Bool
 
@@ -50,6 +55,8 @@ type Renderer struct {
 	brushEvents chan terrainBrushEvent
 
 	PaintActive bool
+
+	client *Client
 }
 
 func (tr *Renderer) Ready() {
@@ -67,6 +74,11 @@ func (tr *Renderer) Ready() {
 	tr.shader.SetShaderParameter("radius", 2.0)
 	tr.shader.SetShaderParameter("height", 0.0)
 	tr.BrushRadius = 2.0
+
+	tr.tile = new(TerrainTile)
+	tr.tile.shader = tr.shader
+	tr.tile.brushEvents = tr.brushEvents
+	tr.AsNode().AddChild(tr.tile.AsNode())
 }
 
 func (vr *Renderer) start() {
@@ -88,8 +100,7 @@ func (vr *Renderer) listenForEvents() {
 }
 
 func (vr *Renderer) Process(dt Float.X) {
-	variant.Use(vr.shader[0])
-
+	Object.Use(vr.shader)
 	for {
 		select {
 		//case deltas := <-vr.events:
@@ -103,11 +114,15 @@ func (vr *Renderer) Process(dt Float.X) {
 			vr.mouseOver <- event.BrushTarget
 			vr.BrushTarget = Vector3.Round(event.BrushTarget)
 			vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
-			/*if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
+			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
-				vr.uploadEdits(vulture.Uplift{
-					Draw: 1, // TODO upload ID
+				vr.client.space.Sculpt(musical.AreaToSculpt{
+					Author: vr.client.id,
+					Target: event.BrushTarget,
+					Radius: vr.BrushRadius,
+					Amount: event.BrushDeltaV,
+					Commit: true,
 				})
 			} else if !Input.IsKeyPressed(Input.KeyShift) {
 
@@ -119,7 +134,8 @@ func (vr *Renderer) Process(dt Float.X) {
 					vr.BrushActive = true
 				}
 				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
-			}*/
+				fmt.Println("Brush at:", vr.BrushTarget, " delta:", vr.BrushDeltaV, Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
+			}
 			continue
 		default:
 			break

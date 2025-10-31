@@ -11,12 +11,10 @@ import (
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Resource"
-	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/StaticBody3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
-	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Packed"
@@ -41,22 +39,11 @@ func (tile *TerrainTile) Ready() {
 }
 
 func (tile *TerrainTile) Reload() {
-	shader := Resource.Load[Shader.Instance]("res://shader/terrain.gdshader")
 	grass := Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png")
 	terrains := Texture2DArray.New()
 	terrains.AsImageTextureLayered().CreateFromImages([]Image.Instance{
 		grass.AsTexture2D().GetImage(),
 	})
-	tile.shader = ShaderMaterial.New()
-	tile.shader.SetShader(shader)
-	tile.shader.SetShaderParameter("albedo", Color.RGBA{1, 1, 1, 1})
-	tile.shader.SetShaderParameter("uv1_scale", Vector2.New(8, 8))
-	tile.shader.SetShaderParameter("texture_albedo", terrains)
-	tile.shader.SetShaderParameter("radius", 2.0)
-	tile.shader.SetShaderParameter("height", 0.0)
-
-	tile.shader.SetShaderParameter("height", 0.0)
-	tile.shader.SetShaderParameter("paint_active", false)
 
 	var vertices = Packed.New[Vector3.XYZ]()
 	vertices.Resize(16 * 16 * 6)
