@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -82,6 +83,7 @@ type Client struct {
 	user_id string
 
 	id         musical.Author
+	record     musical.Record
 	space      musical.UsersSpace3D
 	entities   uint16
 	design_ids uint16
@@ -93,17 +95,40 @@ type Client struct {
 	clients chan musical.Networking
 
 	clientReady sync.WaitGroup
+
+	load_last_save bool
 }
 
 func NewClient() *Client {
 	var client = &Client{
-		clientReady: sync.WaitGroup{},
-		objects:     make(map[musical.Entity]Node3D.ID),
-		designs:     make(map[musical.Design]PackedScene.ID),
-		loaded:      make(map[string]musical.Design),
-		clients:     make(chan musical.Networking),
+		clientReady:    sync.WaitGroup{},
+		objects:        make(map[musical.Entity]Node3D.ID),
+		designs:        make(map[musical.Design]PackedScene.ID),
+		loaded:         make(map[string]musical.Design),
+		clients:        make(chan musical.Networking),
+		load_last_save: true,
 	}
 	client.clientReady.Add(1)
+	return client
+}
+
+var UserState struct {
+	Record musical.Record
+}
+
+func NewClientLoading(record musical.Record) *Client {
+	var client = NewClient()
+	client.record = record
+	UserState.Record = record
+	client.load_last_save = false
+	userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Write)
+	buf, err := json.Marshal(UserState)
+	if err != nil {
+		Engine.Raise(fmt.Errorf("failed to marshal user state: %w", err))
+		return client
+	}
+	userfile.StoreBuffer(buf)
+	userfile.Close()
 	return client
 }
 
@@ -158,6 +183,19 @@ func (world *Client) apiHost() (networking.Code, error) {
 func (world *Client) Ready() {
 	defer world.clientReady.Done()
 
+	if world.load_last_save {
+		userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Read)
+		if userfile != FileAccess.Nil {
+			buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetUserDataDir() + "/user.json"))
+			fmt.Println(string(buf))
+			if err := json.Unmarshal(buf, &UserState); err != nil {
+				Engine.Raise(fmt.Errorf("failed to unmarshal user state: %w", err))
+				return
+			}
+			world.record = UserState.Record
+		}
+	}
+
 	clients_iter := func(yield func(musical.Networking) bool) {
 		for client := range world.clients {
 			if !yield(client) {
@@ -166,7 +204,7 @@ func (world *Client) Ready() {
 		}
 	}
 	var err error
-	world.space, _, err = musical.Host(clients_iter, musical.Record{}, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
+	world.space, _, err = musical.Host(clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
 	if err != nil {
 		Engine.Raise(err)
 	}
@@ -227,6 +265,7 @@ func (world musicalImpl) Member(req musical.Orchestrator) error {
 	if req.Assign {
 		Callable.Defer(Callable.New(func() {
 			world.id = req.Author
+			world.record = req.Record
 		}))
 	}
 	return nil
@@ -273,7 +312,7 @@ func (world *Client) Process(dt Float.X) {
 	}
 	if Input.IsKeyPressed(Input.KeyCtrl) {
 		if Input.IsKeyPressed(Input.KeyS) {
-			AnimateTheSceneBeingSaved(world)
+			AnimateTheSceneBeingSaved(world, world.record)
 		}
 		return
 	}

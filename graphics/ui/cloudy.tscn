@@ -1,8 +1,7 @@
-[gd_scene load_steps=7 format=3 uid="uid://dqndk14imylnj"]
+[gd_scene load_steps=6 format=3 uid="uid://dqndk14imylnj"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_ox2so"]
 [ext_resource type="Texture2D" uid="uid://bnftwn1yor425" path="res://ui/sharing.svg" id="2_pf028"]
-[ext_resource type="Texture2D" uid="uid://dxatt7oppmiuy" path="res://SaveGame.png" id="3_kv74u"]
 [ext_resource type="Texture2D" uid="uid://d1ancny4aq15j" path="res://ui/reverse.svg" id="3_pf028"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_pf028"]
@@ -174,17 +173,18 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="GridContainer" type="GridContainer" parent="Layout/GridFlowContainer/Scrollable"]
+[node name="Maps" type="GridContainer" parent="Layout/GridFlowContainer/Scrollable"]
+unique_name_in_owner = true
 clip_contents = true
 layout_mode = 2
 size_flags_horizontal = 3
 columns = 3
 
-[node name="First" type="Control" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
+[node name="First" type="Control" parent="Layout/GridFlowContainer/Scrollable/Maps"]
 custom_minimum_size = Vector2(256, 256)
 layout_mode = 2
 
-[node name="Plus" type="Button" parent="Layout/GridFlowContainer/Scrollable/GridContainer/First"]
+[node name="Plus" type="Button" parent="Layout/GridFlowContainer/Scrollable/Maps/First"]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 15
@@ -200,80 +200,3 @@ theme_override_colors/font_color = Color(0.252722, 0.252722, 0.252722, 1)
 theme_override_font_sizes/font_size = 100
 theme_override_styles/normal = SubResource("StyleBoxFlat_kv74u")
 text = "+"
-
-[node name="TextureButton" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton2" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton3" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton4" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton5" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton6" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton7" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton8" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton9" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton10" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="TextureButton11" type="TextureButton" parent="Layout/GridFlowContainer/Scrollable/GridContainer"]
-custom_minimum_size = Vector2(256, 256)
-layout_mode = 2
-texture_normal = ExtResource("3_kv74u")
-ignore_texture_size = true
-stretch_mode = 4

@@ -1,16 +1,24 @@
 package internal
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"strings"
 
 	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Button"
+	"graphics.gd/classdb/DirAccess"
+	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GridContainer"
+	"graphics.gd/classdb/Image"
+	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextEdit"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/variant/Object"
+	"graphics.gd/variant/Vector2"
+	"the.quetzal.community/aviary/internal/musical"
 	"the.quetzal.community/aviary/internal/networking"
 )
 
@@ -22,16 +30,45 @@ type FlightPlanner struct {
 	Code TextEdit.Instance      `gd:"%Code"`
 	Plus Button.Instance        `gd:"%Plus"`
 
+	Maps GridContainer.Instance `gd:"%Maps"`
+
 	client *Client
 }
 
 func (fl *FlightPlanner) Ready() {
+	for save := range DirAccess.Open("user://").Iter() {
+		if strings.HasSuffix(save, ".png") {
+			mapButton := TextureButton.New()
+			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(Image.LoadFromFile("user://" + save)).AsTexture2D())
+			mapButton.AsBaseButton().OnPressed(func() {
+				record, err := base64.RawURLEncoding.DecodeString(strings.TrimSuffix(save, ".png"))
+				if err != nil {
+					Engine.Raise(err)
+					return
+				}
+				fresh := NewClientLoading(musical.Record(record))
+				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
+					child.QueueFree()
+				}
+				SceneTree.Add(fresh)
+			})
+			mapButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+			mapButton.SetIgnoreTextureSize(true)
+			mapButton.SetStretchMode(TextureButton.StretchKeepAspect)
+			fl.Maps.AsNode().AddChild(mapButton.AsNode())
+		}
+	}
 	fl.Code.SetText("")
 	fl.Back.AsBaseButton().OnPressed(func() {
 		fl.AsCanvasItem().SetVisible(false)
 	})
 	fl.Plus.AsBaseButton().OnPressed(func() {
-		fresh := NewClient()
+		var record musical.Record
+		if _, err := rand.Read(record[:]); err != nil {
+			Engine.Raise(err)
+			return
+		}
+		fresh := NewClientLoading(record)
 		for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
 			child.QueueFree()
 		}
