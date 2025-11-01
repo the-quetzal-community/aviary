@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"graphics.gd/classdb/Animation"
+	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
@@ -187,7 +189,6 @@ func (world *Client) Ready() {
 		userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Read)
 		if userfile != FileAccess.Nil {
 			buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetUserDataDir() + "/user.json"))
-			fmt.Println(string(buf))
 			if err := json.Unmarshal(buf, &UserState); err != nil {
 				Engine.Raise(fmt.Errorf("failed to unmarshal user state: %w", err))
 				return
@@ -292,6 +293,13 @@ func (world musicalImpl) Create(con musical.Contribution) error {
 			return
 		}
 		node := Object.To[Node3D.Instance](scene.Instantiate())
+		if node.AsNode().HasNode("AnimationPlayer") {
+			anim := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
+			anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
+			if anim.AsAnimationMixer().HasAnimation("Idle") {
+				anim.PlayNamed("Idle")
+			}
+		}
 		node.SetPosition(con.Offset)
 		node.SetRotation(con.Angles)
 		node.SetScale(Vector3.New(0.1, 0.1, 0.1))
