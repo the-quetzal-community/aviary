@@ -205,6 +205,7 @@ func (ui *UI) onThemeSelected(idx int) {
 	for name := range themes.Iter() {
 		if slices.Contains(categories, name) {
 			gridflow := new(GridFlowContainer)
+			gridflow.AsControl().SetMouseFilter(Control.MouseFilterStop)
 			gridflow.scroll_lock = true
 			gridflow.AsNode().SetName(name)
 			ui.Editor.AsNode().AddChild(gridflow.AsNode())
@@ -242,7 +243,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.SetIgnoreTextureSize(true)
 					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
 					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterPass)
+					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
 						case ui.preview <- path:
@@ -259,7 +260,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.SetIgnoreTextureSize(true)
 					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
 					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterPass)
+					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
 						case ui.texture <- path:

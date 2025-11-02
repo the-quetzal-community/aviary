@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -106,7 +105,7 @@ type Client struct {
 	load_last_save bool
 	joining        bool
 
-	selection Node.ID
+	selection Node3D.ID
 
 	time TimingCoordinator
 
@@ -160,16 +159,6 @@ func NewClientLoading(record musical.Unique) *Client {
 
 func (world *Client) isOnline() bool {
 	return world.user_id != ""
-}
-
-func (world *Client) goOnline() error {
-	world.clientReady.Wait()
-	user_id, err := world.signalling.LookupUser(context.Background())
-	if err != nil {
-		return err
-	}
-	world.user_id = user_id
-	return nil
 }
 
 func (world *Client) apiJoin(code networking.Code) {
@@ -322,6 +311,11 @@ func (world musicalImpl) Change(con musical.Change) error {
 
 		exists, ok := world.entity_to_object[con.Entity].Instance()
 		if ok {
+			if con.Remove {
+				exists.AsNode().QueueFree()
+				return
+			}
+
 			exists.SetPosition(con.Offset)
 			exists.SetRotation(con.Angles)
 			exists.SetScale(Vector3.New(0.1, 0.1, 0.1))
@@ -342,7 +336,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 		}
 		node.SetPosition(con.Offset)
 		node.SetRotation(con.Angles)
-		node.SetScale(Vector3.New(0.1, 0.1, 0.1))
+		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
 		world.entity_to_object[con.Entity] = node.ID()
 		world.object_to_entity[node.ID()] = con.Entity
 		container.AddChild(node.AsNode())
@@ -426,9 +420,6 @@ func (world *Client) Process(dt Float.X) {
 	default:
 	}
 	if Input.IsKeyPressed(Input.KeyCtrl) {
-		if Input.IsKeyPressed(Input.KeyS) {
-			AnimateTheSceneBeingSaved(world, world.record)
-		}
 		return
 	}
 	if Input.IsKeyPressed(Input.KeyQ) {
@@ -478,6 +469,10 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
+				if world.PreviewRenderer.Enabled() {
+					world.PreviewRenderer.Place()
+					break
+				}
 				cam := Viewport.Get(world.AsNode()).GetCamera3d()
 				space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
 				mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
@@ -488,7 +483,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				if world.selection != 0 {
 					node, ok := world.selection.Instance()
 					if ok {
-						Select(node, false)
+						Select(node.AsNode(), false)
 					}
 				}
 
@@ -498,11 +493,15 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					node, ok := Object.As[Node.Instance](intersect.Collider)
 					if ok {
 						node = node.Owner()
-						world.selection = node.ID()
+						world.selection = Node3D.ID(node.ID())
 						Select(node, true)
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
+				if world.PreviewRenderer.Enabled() {
+					world.PreviewRenderer.Discard()
+					break
+				}
 				if world.selection != 0 {
 					cam := Viewport.Get(world.AsNode()).GetCamera3d()
 					space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
@@ -515,7 +514,6 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						if ok {
 							if node3d, ok := Object.As[Node3D.Instance](node); ok {
 								if entity, ok := world.object_to_entity[node3d.ID()]; ok {
-									fmt.Println(entity, world.object_to_entity)
 									world.space.Action(musical.Action{
 										Author: world.id,
 										Entity: entity,
@@ -537,6 +535,22 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyF1 {
 			vp := Viewport.Get(world.AsNode())
 			vp.SetDebugDraw(vp.DebugDraw() ^ Viewport.DebugDrawWireframe)
+		}
+		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyS && Input.IsKeyPressed(Input.KeyCtrl) && !event.AsInputEvent().IsEcho() {
+			AnimateTheSceneBeingSaved(world, world.record)
+		}
+		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() {
+			node, ok := world.selection.Instance()
+			if ok {
+				if entity, ok := world.object_to_entity[Node3D.ID(node.ID())]; ok {
+					world.space.Change(musical.Change{
+						Author: world.id,
+						Entity: entity,
+						Remove: true,
+						Commit: true,
+					})
+				}
+			}
 		}
 	}
 }

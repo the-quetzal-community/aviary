@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/quaadgras/velopack-go/velopack"
@@ -72,12 +74,22 @@ type CloudControl struct {
 
 func (ui *CloudControl) Setup() {
 	go func() {
-		if err := ui.client.goOnline(); err != nil {
-			fmt.Println("Error going online:", err)
+		defer func() {
+			if r := recover(); r != nil {
+				Engine.Raise(fmt.Errorf("panic during automatic update: %v", r))
+				debug.PrintStack()
+			}
+		}()
+		user_id, err := ui.client.signalling.LookupUser(context.Background())
+		if err != nil {
+			Engine.Raise(err)
 			ui.on_process <- func(cc *CloudControl) { cc.set_online_status_indicator(false) }
 			return
 		}
-		ui.on_process <- func(cc *CloudControl) { cc.set_online_status_indicator(true) }
+		ui.on_process <- func(cc *CloudControl) {
+			ui.client.user_id = user_id
+			cc.set_online_status_indicator(true)
+		}
 
 		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community")
 		if err != nil {

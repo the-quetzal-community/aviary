@@ -1,9 +1,6 @@
 package internal
 
 import (
-	"fmt"
-
-	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
@@ -33,6 +30,47 @@ type PreviewRenderer struct {
 	client *Client
 }
 
+func (pr *PreviewRenderer) Enabled() bool {
+	return pr.AsNode().GetChildCount() > 0
+}
+
+func (pr *PreviewRenderer) Discard() {
+	if pr.AsNode().GetChildCount() > 0 {
+		Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
+	}
+}
+
+func (pr *PreviewRenderer) Place() {
+	if pr.AsNode().GetChildCount() > 0 {
+		Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
+
+		design, ok := pr.client.loaded[pr.current]
+		if !ok {
+			pr.client.design_ids++
+			design = musical.Design{
+				Author: pr.client.id,
+				Number: pr.client.design_ids,
+			}
+			pr.client.space.Import(musical.Import{
+				Design: design,
+				Import: pr.current,
+			})
+		}
+		pr.client.entities++
+		pr.client.space.Change(musical.Change{
+			Author: pr.client.id,
+			Entity: musical.Entity{
+				Author: pr.client.id,
+				Number: pr.client.entities,
+			},
+			Design: design,
+			Offset: pr.AsNode3D().Position(),
+			Angles: pr.AsNode3D().Rotation(),
+			Commit: true,
+		})
+	}
+}
+
 func (pr *PreviewRenderer) Process(dt Float.X) {
 	for {
 		select {
@@ -54,38 +92,6 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 
 		}
 		break
-	}
-	if Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
-		if pr.AsNode().GetChildCount() > 0 {
-			Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
-
-			fmt.Println("Placing design:", pr.client.id)
-
-			design, ok := pr.client.loaded[pr.current]
-			if !ok {
-				pr.client.design_ids++
-				design = musical.Design{
-					Author: pr.client.id,
-					Number: pr.client.design_ids,
-				}
-				pr.client.space.Import(musical.Import{
-					Design: design,
-					Import: pr.current,
-				})
-			}
-			pr.client.entities++
-			pr.client.space.Change(musical.Change{
-				Author: pr.client.id,
-				Entity: musical.Entity{
-					Author: pr.client.id,
-					Number: pr.client.entities,
-				},
-				Design: design,
-				Offset: pr.AsNode3D().Position(),
-				Angles: pr.AsNode3D().Rotation(),
-				Commit: true,
-			})
-		}
 	}
 	pos := pr.AsNode3D().Position()
 	pos.Y = (pr.terrain.HeightAt(pos))
