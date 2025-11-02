@@ -3,12 +3,15 @@ package internal
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"runtime/debug"
 	"time"
 
 	"github.com/quaadgras/velopack-go/velopack"
 	"graphics.gd/classdb/Control"
+	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/GradientTexture2D"
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/HBoxContainer"
@@ -115,6 +118,43 @@ func (ui *CloudControl) Setup() {
 				Engine.Raise(err)
 				return
 			}
+
+			func() {
+				req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/library.pck", nil)
+				if err != nil {
+					Engine.Raise(err)
+					return
+				}
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					Engine.Raise(err)
+					return
+				}
+				if resp.StatusCode != http.StatusOK {
+					Engine.Raise(fmt.Errorf("failed to fetch library.pck: %s", resp.Status))
+					return
+				}
+				remote_time, err := time.Parse(time.RFC1123, resp.Header.Get("Last-Modified"))
+				if err != nil {
+					Engine.Raise(err)
+					return
+				}
+				if remote_time.UnixMilli() > int64(FileAccess.GetModifiedTime("res://library.pck")) && remote_time.UnixMilli() > int64(FileAccess.GetModifiedTime("user://library.pck")) {
+					if FileAccess.FileExists("res://library.pck") {
+						if err := DirAccess.RenameAbsolute("res://library.pck", "res://library.pck.backup"); err != nil {
+							Engine.Raise(err)
+							return
+						}
+					}
+					if FileAccess.FileExists("user://library.pck") {
+						if err := DirAccess.RenameAbsolute("user://library.pck", "user://library.pck.backup"); err != nil {
+							Engine.Raise(err)
+							return
+						}
+					}
+				}
+			}()
+
 			restart := func() {
 				if err := manager.ApplyUpdatesAndRestart(latest); err != nil {
 					Engine.Raise(err)

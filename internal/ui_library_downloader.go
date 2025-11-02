@@ -9,7 +9,9 @@ import (
 	"strconv"
 
 	"graphics.gd/classdb/Control"
+	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/ProgressBar"
@@ -127,6 +129,12 @@ func (dl *LibraryDownloader) Process(delta Float.X) {
 		dl.Progress.AsRange().SetValue(Float.X(bytes))
 		dl.DownloadButton.Size.SetText((dl.total - bytes).HumanReadable())
 	case <-dl.done:
+		if FileAccess.FileExists("res://library.pck.backup") {
+			DirAccess.RemoveAbsolute("res://library.pck.backup")
+		}
+		if FileAccess.FileExists("user://library.pck.backup") {
+			DirAccess.RemoveAbsolute("user://library.pck.backup")
+		}
 		ProjectSettings.LoadResourcePack("user://library.pck", 0)
 		SceneTree.Add(NewClient())
 		dl.AsNode().QueueFree()
