@@ -87,12 +87,14 @@ type Client struct {
 	user_id string
 
 	id         musical.Author
-	record     musical.Record
+	record     musical.Unique
 	space      musical.UsersSpace3D
 	entities   uint16
 	design_ids uint16
 
-	objects map[musical.Entity]Node3D.ID
+	entity_to_object map[musical.Entity]Node3D.ID
+	object_to_entity map[Node3D.ID]musical.Entity
+
 	designs map[musical.Design]PackedScene.ID
 	loaded  map[string]musical.Design
 
@@ -101,28 +103,37 @@ type Client struct {
 	clientReady sync.WaitGroup
 
 	load_last_save bool
+	joining        bool
 
 	selection Node.ID
 }
 
 func NewClient() *Client {
 	var client = &Client{
-		clientReady:    sync.WaitGroup{},
-		objects:        make(map[musical.Entity]Node3D.ID),
-		designs:        make(map[musical.Design]PackedScene.ID),
-		loaded:         make(map[string]musical.Design),
-		clients:        make(chan musical.Networking),
-		load_last_save: true,
+		clientReady:      sync.WaitGroup{},
+		entity_to_object: make(map[musical.Entity]Node3D.ID),
+		object_to_entity: make(map[Node3D.ID]musical.Entity),
+		designs:          make(map[musical.Design]PackedScene.ID),
+		loaded:           make(map[string]musical.Design),
+		clients:          make(chan musical.Networking),
+		load_last_save:   true,
 	}
 	client.clientReady.Add(1)
 	return client
 }
 
 var UserState struct {
-	Record musical.Record
+	Record musical.Unique
 }
 
-func NewClientLoading(record musical.Record) *Client {
+func NewClientJoining() *Client {
+	var client = NewClient()
+	client.load_last_save = false
+	client.joining = true
+	return client
+}
+
+func NewClientLoading(record musical.Unique) *Client {
 	var client = NewClient()
 	client.record = record
 	UserState.Record = record
@@ -159,21 +170,23 @@ func (world *Client) apiJoin(code networking.Code) {
 		Engine.Raise(fmt.Errorf("failed to join room %s: %w", code, err))
 		return
 	}
-	world.space, err = musical.Join(musical.Networking{
+	space, err := musical.Join(musical.Networking{
 		Instructions: networkingVia{&world.network, world.updates},
 		MediaUploads: stubbedNetwork{},
 		ErrorReports: musicalImpl{world},
-	}, musical.Record{}, musicalImpl{world})
+	}, musical.Unique{}, musicalImpl{world})
 	if err != nil {
 		Engine.Raise(fmt.Errorf("failed to join musical room %s: %w", code, err))
 		return
 	}
+	Callable.Defer(Callable.New(func() {
+		world.space = space
+	}))
 }
 
 func (world *Client) apiHost() (networking.Code, error) {
-	var clients = make(chan musical.Networking)
 	code, err := world.network.Host(world.updates, func(client networking.Client) {
-		clients <- musical.Networking{
+		world.clients <- musical.Networking{
 			Instructions: networkingFor{client},
 			MediaUploads: stubbedNetwork{},
 			ErrorReports: musicalImpl{world},
@@ -189,7 +202,7 @@ func (world *Client) apiHost() (networking.Code, error) {
 func (world *Client) Ready() {
 	defer world.clientReady.Done()
 
-	if world.load_last_save {
+	if !world.joining && world.load_last_save {
 		userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Read)
 		if userfile != FileAccess.Nil {
 			buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetUserDataDir() + "/user.json"))
@@ -201,17 +214,19 @@ func (world *Client) Ready() {
 		}
 	}
 
-	clients_iter := func(yield func(musical.Networking) bool) {
-		for client := range world.clients {
-			if !yield(client) {
-				return
+	if !world.joining {
+		clients_iter := func(yield func(musical.Networking) bool) {
+			for client := range world.clients {
+				if !yield(client) {
+					return
+				}
 			}
 		}
-	}
-	var err error
-	world.space, _, err = musical.Host(clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
-	if err != nil {
-		Engine.Raise(err)
+		var err error
+		world.space, _, err = musical.Host(clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
+		if err != nil {
+			Engine.Raise(err)
+		}
 	}
 
 	world.println = make(chan string, 10)
@@ -261,12 +276,12 @@ func (world musicalImpl) ReportError(err error) {
 	Engine.Raise(err)
 }
 
-func (world musicalImpl) Open(space musical.Record) (fs.File, error) {
+func (world musicalImpl) Open(space musical.Unique) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(space[:])
 	return os.OpenFile(OS.GetUserDataDir()+"/"+name+".mus3", os.O_RDWR|os.O_CREATE, 0666)
 }
 
-func (world musicalImpl) Member(req musical.Orchestrator) error {
+func (world musicalImpl) Member(req musical.Member) error {
 	if req.Assign {
 		Callable.Defer(Callable.New(func() {
 			world.id = req.Author
@@ -276,9 +291,9 @@ func (world musicalImpl) Member(req musical.Orchestrator) error {
 	return nil
 }
 
-func (world musicalImpl) Upload(file musical.DesignUpload) error  { return nil }
-func (world musicalImpl) Sculpt(brush musical.AreaToSculpt) error { return nil }
-func (world musicalImpl) Import(uri musical.DesignImport) error {
+func (world musicalImpl) Upload(file musical.Upload) error  { return nil }
+func (world musicalImpl) Sculpt(brush musical.Sculpt) error { return nil }
+func (world musicalImpl) Import(uri musical.Import) error {
 	Callable.Defer(Callable.New(func() {
 		if uri.Design.Author == world.id {
 			world.design_ids = max(world.design_ids, uri.Design.Number)
@@ -289,7 +304,7 @@ func (world musicalImpl) Import(uri musical.DesignImport) error {
 	}))
 	return nil
 }
-func (world musicalImpl) Create(con musical.Contribution) error {
+func (world musicalImpl) Change(con musical.Change) error {
 	Callable.Defer(Callable.New(func() {
 		container := world.VultureRenderer.AsNode()
 		scene, ok := world.designs[con.Design].Instance()
@@ -300,7 +315,6 @@ func (world musicalImpl) Create(con musical.Contribution) error {
 		if node.AsNode().HasNode("AnimationPlayer") {
 			anim := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
 			anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
-			fmt.Println("Playing idle animation for", anim.AsAnimationMixer().GetAnimationList())
 			if anim.AsAnimationMixer().HasAnimation("Idle") {
 				anim.PlayNamed("Idle")
 			}
@@ -308,13 +322,31 @@ func (world musicalImpl) Create(con musical.Contribution) error {
 		node.SetPosition(con.Offset)
 		node.SetRotation(con.Angles)
 		node.SetScale(Vector3.New(0.1, 0.1, 0.1))
-		world.objects[con.Entity] = node.ID()
+		world.entity_to_object[con.Entity] = node.ID()
+		world.object_to_entity[node.ID()] = con.Entity
 		container.AddChild(node.AsNode())
 	}))
 	return nil
 }
-func (world musicalImpl) Attach(rel musical.Relationship) error  { return nil }
-func (world musicalImpl) LookAt(view musical.BirdsEyeView) error { return nil }
+
+func (world musicalImpl) Action(action musical.Action) error {
+	Callable.Defer(Callable.New(func() {
+		object, ok := world.entity_to_object[action.Entity].Instance()
+		if ok {
+			if !object.AsNode().HasNode("ActionRenderer") {
+				actions := new(ActionRenderer)
+				actions.Initial = object.AsNode3D().Position()
+				actions.AsNode().SetName("ActionRenderer")
+				object.AsNode().AddChild(actions.AsNode())
+			}
+			actions := Object.To[*ActionRenderer](object.AsNode().GetNode("ActionRenderer"))
+			actions.Add(action)
+		}
+	}))
+	return nil
+}
+
+func (world musicalImpl) LookAt(view musical.LookAt) error { return nil }
 
 func (world *Client) Process(dt Float.X) {
 	Object.Use(world)
@@ -365,38 +397,66 @@ func (world *Client) Process(dt Float.X) {
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
 	if !world.scroll_lock {
-		mouse, ok := Object.As[InputEventMouseButton.Instance](event)
-		if ok && !Input.IsKeyPressed(Input.KeyShift) {
-			if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
-				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
-			}
-			if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
-				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
-			}
-		}
-		if ok && mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed() {
-			cam := Viewport.Get(world.AsNode()).GetCamera3d()
-			space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
-			mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
-			ray_from, ray_to := cam.ProjectRayOrigin(mpos_2d), cam.ProjectPosition(mpos_2d, 1000)
-			var query = PhysicsRayQueryParameters3D.Create(ray_from, ray_to, nil)
-			var intersect = space_state.IntersectRay(query)
-
-			if world.selection != 0 {
-				node, ok := world.selection.Instance()
-				if ok {
-					Select(node, false)
+		if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
+			if !Input.IsKeyPressed(Input.KeyShift) {
+				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
+				}
+				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
 				}
 			}
+			switch {
+			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
+				cam := Viewport.Get(world.AsNode()).GetCamera3d()
+				space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
+				mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
+				ray_from, ray_to := cam.ProjectRayOrigin(mpos_2d), cam.ProjectPosition(mpos_2d, 1000)
+				var query = PhysicsRayQueryParameters3D.Create(ray_from, ray_to, nil)
+				var intersect = space_state.IntersectRay(query)
 
-			if Object.Is[*TerrainTile](intersect.Collider) {
-				world.selection = 0
-			} else {
-				node, ok := Object.As[Node.Instance](intersect.Collider)
-				if ok {
-					node = node.GetParent()
-					world.selection = node.ID()
-					Select(node, true)
+				if world.selection != 0 {
+					node, ok := world.selection.Instance()
+					if ok {
+						Select(node, false)
+					}
+				}
+
+				if Object.Is[*TerrainTile](intersect.Collider) {
+					world.selection = 0
+				} else {
+					node, ok := Object.As[Node.Instance](intersect.Collider)
+					if ok {
+						node = node.Owner()
+						world.selection = node.ID()
+						Select(node, true)
+					}
+				}
+			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
+				if world.selection != 0 {
+					cam := Viewport.Get(world.AsNode()).GetCamera3d()
+					space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
+					mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
+					ray_from, ray_to := cam.ProjectRayOrigin(mpos_2d), cam.ProjectPosition(mpos_2d, 1000)
+					var query = PhysicsRayQueryParameters3D.Create(ray_from, ray_to, nil)
+					var intersect = space_state.IntersectRay(query)
+					if Object.Is[*TerrainTile](intersect.Collider) {
+						node, ok := world.selection.Instance()
+						if ok {
+							if node3d, ok := Object.As[Node3D.Instance](node); ok {
+								if entity, ok := world.object_to_entity[node3d.ID()]; ok {
+									world.space.Action(musical.Action{
+										Author: world.id,
+										Entity: entity,
+										Target: intersect.Position,
+										Period: int64(Vector3.Distance(node3d.Position(), intersect.Position) * Float.X(time.Second)),
+										Timing: time.Now().UnixNano(), // FIXME
+										Cancel: true,
+									})
+								}
+							}
+						}
+					}
 				}
 			}
 		}

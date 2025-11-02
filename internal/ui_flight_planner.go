@@ -52,7 +52,7 @@ func (fl *FlightPlanner) Reload() {
 					Engine.Raise(err)
 					return
 				}
-				fresh := NewClientLoading(musical.Record(record))
+				fresh := NewClientLoading(musical.Unique(record))
 				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
 					child.QueueFree()
 				}
@@ -73,7 +73,7 @@ func (fl *FlightPlanner) Ready() {
 		fl.AsCanvasItem().SetVisible(false)
 	})
 	fl.Plus.AsBaseButton().OnPressed(func() {
-		var record musical.Record
+		var record musical.Unique
 		if _, err := rand.Read(record[:]); err != nil {
 			Engine.Raise(err)
 			return
@@ -113,7 +113,7 @@ func (fl *FlightPlanner) Ready() {
 			})
 		case ">":
 			Object.To[BaseButton.Instance](key).OnPressed(func() {
-				fresh := NewClient()
+				fresh := NewClientJoining()
 				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
 					child.QueueFree()
 				}

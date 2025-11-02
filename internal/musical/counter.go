@@ -4,44 +4,44 @@ type counter struct {
 	value uint64
 }
 
-func (c *counter) Member(req Orchestrator) error {
+func (c *counter) Member(req Member) error {
 	if !req.Assign {
 		c.value++
 	}
 	return nil
 }
 
-func (c *counter) Upload(req DesignUpload) error {
+func (c *counter) Upload(req Upload) error {
 	c.value++
 	return nil
 }
 
-func (c *counter) Sculpt(req AreaToSculpt) error {
+func (c *counter) Sculpt(req Sculpt) error {
 	if req.Commit {
 		c.value++
 	}
 	return nil
 }
 
-func (c *counter) Import(req DesignImport) error {
+func (c *counter) Import(req Import) error {
 	c.value++
 	return nil
 }
 
-func (c *counter) Create(req Contribution) error {
+func (c *counter) Change(req Change) error {
 	if req.Commit {
 		c.value++
 	}
 	return nil
 }
 
-func (c *counter) Attach(req Relationship) error {
+func (c *counter) Action(req Action) error {
 	if req.Commit {
 		c.value++
 	}
 	return nil
 }
 
-func (c *counter) LookAt(req BirdsEyeView) error {
+func (c *counter) LookAt(req LookAt) error {
 	return nil
 }

@@ -68,13 +68,13 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 					Author: pr.client.id,
 					Number: pr.client.design_ids,
 				}
-				pr.client.space.Import(musical.DesignImport{
+				pr.client.space.Import(musical.Import{
 					Design: design,
 					Import: pr.current,
 				})
 			}
 			pr.client.entities++
-			pr.client.space.Create(musical.Contribution{
+			pr.client.space.Change(musical.Change{
 				Author: pr.client.id,
 				Entity: musical.Entity{
 					Author: pr.client.id,

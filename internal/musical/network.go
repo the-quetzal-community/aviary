@@ -3,6 +3,7 @@ package musical
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 
@@ -43,7 +44,7 @@ func (network Networking) send(val encodable, media bool) error {
 	return nil
 }
 
-func Join(network Networking, userID Record, replica UsersSpace3D) (UsersSpace3D, error) {
+func Join(network Networking, userID Unique, replica UsersSpace3D) (UsersSpace3D, error) {
 	scene := client{network}
 	go scene.handle(replica)
 	return scene, nil
@@ -53,13 +54,13 @@ type client struct {
 	Networking
 }
 
-func (c client) Member(req Orchestrator) error { return c.send(req, false) }
-func (c client) Upload(req DesignUpload) error { return c.send(req, true) }
-func (c client) Sculpt(req AreaToSculpt) error { return c.send(req, false) }
-func (c client) Import(req DesignImport) error { return c.send(req, false) }
-func (c client) Create(req Contribution) error { return c.send(req, false) }
-func (c client) Attach(req Relationship) error { return c.send(req, false) }
-func (c client) LookAt(req BirdsEyeView) error { return c.send(req, false) }
+func (c client) Member(req Member) error { return c.send(req, false) }
+func (c client) Upload(req Upload) error { return c.send(req, true) }
+func (c client) Sculpt(req Sculpt) error { return c.send(req, false) }
+func (c client) Import(req Import) error { return c.send(req, false) }
+func (c client) Change(req Change) error { return c.send(req, false) }
+func (c client) Action(req Action) error { return c.send(req, false) }
+func (c client) LookAt(req LookAt) error { return c.send(req, false) }
 
 func (c client) handle(replica UsersSpace3D) {
 	go func() {
@@ -75,7 +76,7 @@ func (c client) handle(replica UsersSpace3D) {
 				return
 			}
 			switch v := req.(type) {
-			case DesignUpload:
+			case Upload:
 				replica.Upload(v)
 			default:
 				return
@@ -84,6 +85,7 @@ func (c client) handle(replica UsersSpace3D) {
 	}()
 	for {
 		packet, err := c.Instructions.Recv()
+		fmt.Println("PACKET")
 		if err != nil {
 			c.ErrorReports.ReportError(xray.New(err))
 			return
@@ -93,18 +95,19 @@ func (c client) handle(replica UsersSpace3D) {
 			c.ErrorReports.ReportError(xray.New(err))
 			return
 		}
+		fmt.Println(req)
 		switch v := req.(type) {
-		case Orchestrator:
+		case Member:
 			replica.Member(v)
-		case AreaToSculpt:
+		case Sculpt:
 			replica.Sculpt(v)
-		case DesignImport:
+		case Import:
 			replica.Import(v)
-		case Contribution:
-			replica.Create(v)
-		case Relationship:
-			replica.Attach(v)
-		case BirdsEyeView:
+		case Change:
+			replica.Change(v)
+		case Action:
+			replica.Action(v)
+		case LookAt:
 			replica.LookAt(v)
 		default:
 			return
@@ -112,13 +115,13 @@ func (c client) handle(replica UsersSpace3D) {
 	}
 }
 
-func Host(network iter.Seq[Networking], initial Record, storage Storage, replica UsersSpace3D, reports ErrorReporter) (UsersSpace3D, chan<- Record, error) {
+func Host(network iter.Seq[Networking], initial Unique, storage Storage, replica UsersSpace3D, reports ErrorReporter) (UsersSpace3D, chan<- Unique, error) {
 	var srv = server{
 		initial: initial,
 		storage: storage,
 		replica: replica,
 		clients: make(chan Networking),
-		changes: make(chan Record),
+		changes: make(chan Unique),
 		request: make(chan encodable),
 		reports: reports,
 	}
@@ -133,18 +136,18 @@ func Host(network iter.Seq[Networking], initial Record, storage Storage, replica
 }
 
 type server struct {
-	initial Record
+	initial Unique
 	storage Storage
 	replica UsersSpace3D
 	reports ErrorReporter
 	clients chan Networking
-	changes chan Record
+	changes chan Unique
 	request chan encodable
 }
 
 func (srv server) run() {
 	var assign Author
-	var authors = make(map[Author]Orchestrator)
+	var authors = make(map[Author]Member)
 	var clients = make(map[Networking]Author)
 	var current = srv.initial
 	var tracker counter
@@ -163,16 +166,18 @@ func (srv server) run() {
 		return
 	}
 
+	fmt.Println("WAITING FOR CLIENTS")
 	for {
 		select {
 		case client, ok := <-srv.clients:
+			fmt.Println("NEW CLIENT")
 			if !ok {
 				return
 			}
 			assign++
 			orc, ok := authors[assign]
 			if !ok {
-				orc = Orchestrator{
+				orc = Member{
 					Record: current,
 					Number: tracker.value,
 					Author: assign,
@@ -205,19 +210,19 @@ func (srv server) run() {
 			}
 		case req := <-srv.request:
 			switch v := req.(type) {
-			case Orchestrator:
+			case Member:
 				mus3.Member(v)
-			case DesignUpload:
+			case Upload:
 				mus3.Upload(v)
-			case AreaToSculpt:
+			case Sculpt:
 				mus3.Sculpt(v)
-			case DesignImport:
+			case Import:
 				mus3.Import(v)
-			case Contribution:
-				mus3.Create(v)
-			case Relationship:
-				mus3.Attach(v)
-			case BirdsEyeView:
+			case Change:
+				mus3.Change(v)
+			case Action:
+				mus3.Action(v)
+			case LookAt:
 				mus3.LookAt(v)
 			}
 			for client := range clients {
@@ -229,7 +234,7 @@ func (srv server) run() {
 	}
 }
 
-func (srv server) handle(author Author, network Networking, current Record, catchup uint64) {
+func (srv server) handle(author Author, network Networking, current Unique, catchup uint64) {
 	go func() {
 		file, err := srv.storage.Open(current)
 		if err != nil {

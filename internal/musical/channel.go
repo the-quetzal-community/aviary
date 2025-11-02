@@ -2,37 +2,37 @@ package musical
 
 type channel chan<- encodable
 
-func (ch channel) Member(req Orchestrator) error {
+func (ch channel) Member(req Member) error {
 	ch <- req
 	return nil
 }
 
-func (ch channel) Upload(req DesignUpload) error {
+func (ch channel) Upload(req Upload) error {
 	ch <- req
 	return nil
 }
 
-func (ch channel) Sculpt(req AreaToSculpt) error {
+func (ch channel) Sculpt(req Sculpt) error {
 	ch <- req
 	return nil
 }
 
-func (ch channel) Import(req DesignImport) error {
+func (ch channel) Import(req Import) error {
 	ch <- req
 	return nil
 }
 
-func (ch channel) Create(req Contribution) error {
+func (ch channel) Change(req Change) error {
 	ch <- req
 	return nil
 }
 
-func (ch channel) Attach(req Relationship) error {
+func (ch channel) Action(req Action) error {
 	ch <- req
 	return nil
 }
 
-func (ch channel) LookAt(req BirdsEyeView) error {
+func (ch channel) LookAt(req LookAt) error {
 	ch <- req
 	return nil
 }

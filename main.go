@@ -45,6 +45,7 @@ func main() {
 	classdb.Register[internal.LibraryDownloader]()
 	classdb.Register[internal.FlightPlanner]()
 	classdb.Register[internal.AnimationSaving]()
+	classdb.Register[internal.ActionRenderer]()
 	if !ProjectSettings.LoadResourcePack("res://library.pck", 0) {
 		if !ProjectSettings.LoadResourcePack("user://library.pck", 0) {
 			startup.LoadingScene()

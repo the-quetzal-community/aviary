@@ -20,7 +20,7 @@ type AnimationSaving struct {
 
 // AnimateTheSceneBeingSaved animates the scene being saved by adding [AnimationSaving]
 // to the [SceneTree].
-func AnimateTheSceneBeingSaved(parent Node.Any, name musical.Record) {
+func AnimateTheSceneBeingSaved(parent Node.Any, name musical.Unique) {
 	tex := ImageTexture.CreateFromImage(Viewport.Get(parent.AsNode()).GetTexture().AsTexture2D().GetImage())
 	saving := new(AnimationSaving)
 	saving.AsTextureRect().SetTexture(tex.AsTexture2D())

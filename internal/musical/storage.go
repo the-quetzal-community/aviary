@@ -10,7 +10,7 @@ import (
 )
 
 type Storage interface {
-	Open(Record) (fs.File, error)
+	Open(Unique) (fs.File, error)
 }
 
 const magicHeader = "the.quetzal.community/musical.Users3DScene@v0.1"
@@ -69,7 +69,7 @@ type storage struct {
 	}
 }
 
-func (mus3 storage) Member(req Orchestrator) error {
+func (mus3 storage) Member(req Member) error {
 	if req.Assign {
 		return nil
 	}
@@ -84,7 +84,7 @@ func (mus3 storage) Member(req Orchestrator) error {
 	return nil
 }
 
-func (mus3 storage) Upload(file DesignUpload) error {
+func (mus3 storage) Upload(file Upload) error {
 	if mus3.limits.design[file.Design.Author] < uint16(file.Design.Number) {
 		return nil
 	}
@@ -107,7 +107,7 @@ func (mus3 storage) Upload(file DesignUpload) error {
 	return nil
 }
 
-func (mus3 storage) Sculpt(brush AreaToSculpt) error {
+func (mus3 storage) Sculpt(brush Sculpt) error {
 	mus3.client.Sculpt(brush)
 	if !brush.Commit {
 		return nil
@@ -122,7 +122,7 @@ func (mus3 storage) Sculpt(brush AreaToSculpt) error {
 	return nil
 }
 
-func (mus3 storage) Import(uri DesignImport) error {
+func (mus3 storage) Import(uri Import) error {
 	if len(uri.Import) > math.MaxUint16 {
 		return xray.New(errors.New("import URI too long"))
 	}
@@ -137,8 +137,8 @@ func (mus3 storage) Import(uri DesignImport) error {
 	return nil
 }
 
-func (mus3 storage) Create(con Contribution) error {
-	mus3.client.Create(con)
+func (mus3 storage) Change(con Change) error {
+	mus3.client.Change(con)
 	if !con.Commit {
 		return nil
 	}
@@ -152,8 +152,8 @@ func (mus3 storage) Create(con Contribution) error {
 	return nil
 }
 
-func (mus3 storage) Attach(rel Relationship) error {
-	mus3.client.Attach(rel)
+func (mus3 storage) Action(rel Action) error {
+	mus3.client.Action(rel)
 	if !rel.Commit {
 		return nil
 	}
@@ -167,7 +167,7 @@ func (mus3 storage) Attach(rel Relationship) error {
 	return nil
 }
 
-func (mus3 storage) LookAt(view BirdsEyeView) error {
+func (mus3 storage) LookAt(view LookAt) error {
 	mus3.client.LookAt(view)
 	return nil
 }
@@ -183,19 +183,19 @@ func (mus3 storage) decode(limit int) (int, error) {
 			return n, xray.New(err)
 		}
 		switch packet := packet.(type) {
-		case Orchestrator:
+		case Member:
 			mus3.client.Member(packet)
-		case DesignUpload:
+		case Upload:
 			mus3.client.Upload(packet)
-		case AreaToSculpt:
+		case Sculpt:
 			mus3.client.Sculpt(packet)
-		case DesignImport:
+		case Import:
 			mus3.client.Import(packet)
-		case Contribution:
-			mus3.client.Create(packet)
-		case Relationship:
-			mus3.client.Attach(packet)
-		case BirdsEyeView:
+		case Change:
+			mus3.client.Change(packet)
+		case Action:
+			mus3.client.Action(packet)
+		case LookAt:
 			return n, xray.New(errors.New("unexpected LookAt entry in storage"))
 		default:
 			return n, xray.New(errors.New("unknown entry type"))

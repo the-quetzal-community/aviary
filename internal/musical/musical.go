@@ -29,8 +29,14 @@ type Design struct {
 // Author of contributions within a musical user's 3D scene.
 type Author uint16
 
-// Record identifies a particular instance of a [UsersSpace3D].
-type Record [16]byte
+// Unique identifies a particular instance of a [UsersSpace3D].
+type Unique [16]byte
+
+// Record indentifier.
+type Record struct {
+	Author Author
+	Number uint16
+}
 
 // UsersSpace3D (.mus3) represents creative contributions to a shared 3D space.
 type UsersSpace3D interface {
@@ -38,30 +44,30 @@ type UsersSpace3D interface {
 	// Member is used to record authorship and as a caching key for uploads.
 	// If [Requirements.Assign] is observed to be true, the corresponding
 	// [Requirements.Author] should be used as the author in operations.
-	Member(Orchestrator) error
+	Member(Member) error
 
 	// Upload replaces a [Design] with the contents of a file. The design must be
 	// within the associated author's memory requirements, else this is a noop.
-	Upload(DesignUpload) error
+	Upload(Upload) error
 
 	// Sculpt an area of the scene, using the given [Design] as a 'brush', the design
 	// must be within the associated author's memory requirements, else this is a noop.
-	Sculpt(AreaToSculpt) error
+	Sculpt(Sculpt) error
 
 	// Import a design using its URI reference, the design must be within the associated
 	// author's memory requirements, else this is a noop.
-	Import(DesignImport) error
+	Import(Import) error
 
-	// Create contributions to the scene, the entity and design must be within the
+	// Change the scene, the entity and design must be within the
 	// associated author's memory requirements, else this is a noop.
-	Create(Contribution) error
+	Change(Change) error
 
-	// Attach two entities together with the specified relationship, both entities must be
+	// Action requests an entity within the scene to take an action, the entity must be
 	// within the associated author's memory requirements, else this is a noop.
-	Attach(Relationship) error
+	Action(Action) error
 
 	// LookAt record's the author's perspective and viewpoint.
-	LookAt(BirdsEyeView) error
+	LookAt(LookAt) error
 }
 
 type structOrchestrator uint16
@@ -73,24 +79,25 @@ const (
 	structOrchestratorAssign
 )
 
-type Orchestrator struct {
-	Record Record // expected identifier for the user/scene.
+type Member struct {
+	Record Unique // expected identifier for the user/scene.
 	Number uint64 // a number of instructions observed for the scene.
 	Author Author // author for the receiver to exclusively adopt.
-	Assign bool   // if true, the receiver should adopt the specified [Author].
+
+	Assign bool // if true, the receiver should adopt the specified [Author].
 }
 
-type DesignImport struct {
+type Import struct {
 	Design Design // design to overwrite.
 	Import string // URI of the design.
 }
 
-type DesignUpload struct {
+type Upload struct {
 	Design Design  // design to overwrite.
 	Upload fs.File // file containing the design data.
 }
 
-type Contribution struct {
+type Change struct {
 	Author Author        // author making the contribution.
 	Entity Entity        // contribute to the entity
 	Design Design        // design to add to the entity.
@@ -98,37 +105,47 @@ type Contribution struct {
 	Bounds Vector3.XYZ   // size of the entity within the scene.
 	Angles Euler.Radians // orientation of the entity within the scene.
 	Colour Color.RGBA    // colour tint of the entity within the scene.
-	Timing int64         // time offset for the contribution, in milliseconds.
-	Remove bool          // if true, remove the design fom the entity, instead of adding it.
-	Tweens bool          // if true, the contribution represents tweening velocities.
-	Commit bool          // if false, then this is a preview (not persisted).
+
+	Record Record // to record.
+	Timing int64  // timing within the record.
+
+	Remove bool // if true, removes the design from the entity.
+	Commit bool // if false, then this is a preview (not persisted).
 }
 
-type Relationship struct {
-	Author Author // author making the contribution.
-	Entity Entity // child Entity
-	Parent Entity // parent Entity
-	Attach bool   // if true, attach; if false, detach.
-	Follow bool   // if true, the child follows the parent, else the child is relative to the parent.
-	Commit bool   // if false, then this is a preview (not persisted).
+type Action struct {
+	Author Author      // author making the contribution.
+	Entity Entity      // entity taking the action.
+	Target Vector3.XYZ // target position, in global space.
+	Timing int64       // time of the action.
+	Period int64       // duration of the action.
+
+	Design Design // design to apply to the entity for the period of the action.
+	Record Record // to playback.
+
+	Cancel bool // if true, clears any previous actions.
+	Repeat bool // if true, any subsequently queued, repeating actions will cycle in alternate directions.
+	Commit bool // if false, then this is a preview (not persisted).
 }
 
-type AreaToSculpt struct {
+type Sculpt struct {
 	Author Author      // author making the contribution.
 	Design Design      // design used as a 'brush' for sculpting.
 	Target Vector3.XYZ // center point of the area to sculpt.
 	Radius Float.X     // radius of the area to sculpt.
 	Amount Float.X     // amount to sculpt, ie. its strength.
-	Commit bool        // if false, then this is a preview.
+
+	Commit bool // if false, then this is a preview.
 }
 
-type BirdsEyeView struct {
+type LookAt struct {
 	Author Author        // author whose viewpoint is being recorded.
 	Design Design        // design representing the author.
 	Offset Vector3.XYZ   // position of the author.
 	Angles Euler.Radians // orientation of the author.
 	Bounds Vector3.XYZ   // size of the author.
 	Colour Color.RGBA    // colour of the author.
+	Timing int64         // timing of the viewer.
 }
 
 type entryType uint8
@@ -148,36 +165,46 @@ type encodable interface {
 	validateAuthor(Author) bool
 }
 
-func (Orchestrator) entryType() entryType { return entryTypeMember }
-func (DesignImport) entryType() entryType { return entryTypeImport }
-func (DesignUpload) entryType() entryType { return entryTypeUpload }
-func (Contribution) entryType() entryType { return entryTypeCreate }
-func (Relationship) entryType() entryType { return entryTypeAttach }
-func (AreaToSculpt) entryType() entryType { return entryTypeSculpt }
-func (BirdsEyeView) entryType() entryType { return entryTypeLookAt }
-func (orc Orchestrator) validateAuthor(author Author) bool {
+func (Member) entryType() entryType { return entryTypeMember }
+func (Import) entryType() entryType { return entryTypeImport }
+func (Upload) entryType() entryType { return entryTypeUpload }
+func (Change) entryType() entryType { return entryTypeCreate }
+func (Action) entryType() entryType { return entryTypeAttach }
+func (Sculpt) entryType() entryType { return entryTypeSculpt }
+func (LookAt) entryType() entryType { return entryTypeLookAt }
+func (orc Member) validateAuthor(author Author) bool {
 	return !orc.Assign && orc.Author == author
 }
-func (di DesignImport) validateAuthor(author Author) bool  { return true }
-func (du DesignUpload) validateAuthor(author Author) bool  { return true }
-func (con Contribution) validateAuthor(author Author) bool { return con.Author == author }
-func (rel Relationship) validateAuthor(author Author) bool { return rel.Author == author }
-func (ats AreaToSculpt) validateAuthor(author Author) bool { return ats.Author == author }
-func (bev BirdsEyeView) validateAuthor(author Author) bool { return bev.Author == author }
+func (di Import) validateAuthor(author Author) bool  { return true }
+func (du Upload) validateAuthor(author Author) bool  { return true }
+func (con Change) validateAuthor(author Author) bool { return con.Author == author }
+func (rel Action) validateAuthor(author Author) bool { return rel.Author == author }
+func (ats Sculpt) validateAuthor(author Author) bool { return ats.Author == author }
+func (bev LookAt) validateAuthor(author Author) bool { return bev.Author == author }
 
 func encode(v encodable) (buf []byte, err error) {
 	rvalue := reflect.ValueOf(v)
 	var layout uint16
 	for i := 0; i < rvalue.NumField(); i++ {
 		if !rvalue.Field(i).IsZero() {
-			layout |= 1 << uint16(i)
+			if rvalue.Field(i).Kind() == reflect.Bool {
+				layout |= (1 << 15) >> uint16(i)
+			} else {
+				layout |= 1 << uint16(i)
+			}
 		}
 	}
 	buf = append(buf, uint8(v.entryType()))
 	buf = binary.LittleEndian.AppendUint16(buf, layout)
 	for i := 0; i < rvalue.NumField(); i++ {
-		if layout&(1<<uint16(i)) == 0 {
-			continue
+		if rvalue.Field(i).Kind() == reflect.Bool {
+			if layout&((1<<15)>>uint16(i)) == 0 {
+				continue
+			}
+		} else {
+			if layout&(1<<uint16(i)) == 0 {
+				continue
+			}
 		}
 		switch rvalue.Field(i).Kind() {
 		case reflect.Bool:
@@ -221,27 +248,35 @@ func decode(r io.Reader) (encodable, error) {
 	var v reflect.Value
 	switch et {
 	case entryTypeMember:
-		v = reflect.New(reflect.TypeOf(Orchestrator{})).Elem()
+		v = reflect.New(reflect.TypeOf(Member{})).Elem()
 	case entryTypeImport:
-		v = reflect.New(reflect.TypeOf(DesignImport{})).Elem()
+		v = reflect.New(reflect.TypeOf(Import{})).Elem()
 	case entryTypeUpload:
-		v = reflect.New(reflect.TypeOf(DesignUpload{})).Elem()
+		v = reflect.New(reflect.TypeOf(Upload{})).Elem()
 	case entryTypeCreate:
-		v = reflect.New(reflect.TypeOf(Contribution{})).Elem()
+		v = reflect.New(reflect.TypeOf(Change{})).Elem()
 	case entryTypeAttach:
-		v = reflect.New(reflect.TypeOf(Relationship{})).Elem()
+		v = reflect.New(reflect.TypeOf(Action{})).Elem()
 	case entryTypeSculpt:
-		v = reflect.New(reflect.TypeOf(AreaToSculpt{})).Elem()
+		v = reflect.New(reflect.TypeOf(Sculpt{})).Elem()
 	case entryTypeLookAt:
-		v = reflect.New(reflect.TypeOf(BirdsEyeView{})).Elem()
+		v = reflect.New(reflect.TypeOf(LookAt{})).Elem()
 	default:
 		return nil, nil
 	}
 	for i := 0; i < v.NumField(); i++ {
-		if layout&(1<<uint16(i)) == 0 {
-			continue
-		}
 		field := v.Field(i)
+
+		if field.Kind() == reflect.Bool {
+			if layout&((1<<15)>>uint16(i)) == 0 {
+				continue
+			}
+		} else {
+			if layout&(1<<uint16(i)) == 0 {
+				continue
+			}
+		}
+
 		switch field.Kind() {
 		case reflect.Bool:
 			field.SetBool(true)

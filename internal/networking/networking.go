@@ -118,7 +118,7 @@ func (c *Connectivity) Send(data []byte) {
 	}
 	c.data_channel_ready.Wait()
 	if debug {
-		c.Print("Sending data on data channel: %s\n", string(data))
+		c.Print("Sending data on data channel\n")
 	}
 	c.data_channel.Send(data)
 	if debug {

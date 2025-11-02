@@ -117,7 +117,7 @@ func (vr *Renderer) Process(dt Float.X) {
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
-				vr.client.space.Sculpt(musical.AreaToSculpt{
+				vr.client.space.Sculpt(musical.Sculpt{
 					Author: vr.client.id,
 					Target: event.BrushTarget,
 					Radius: vr.BrushRadius,
