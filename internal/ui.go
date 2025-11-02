@@ -54,6 +54,9 @@ type UI struct {
 	drawExpanded  atomic.Bool
 	drawExpansion Float.X
 
+	locked bool
+	queued func()
+
 	client *Client
 }
 
@@ -104,24 +107,7 @@ func (ui *UI) Ready() {
 	})
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
-	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(func() {
-		if !ui.drawExpanded.CompareAndSwap(false, true) {
-			return
-		}
-		for _, container := range ui.gridContainers {
-			container.scroll_lock = false
-		}
-		ui.client.scroll_lock = true
-		window_size := DisplayServer.WindowGetSize(0)
-		// Expand close to the top of the screen.
-		var amount Float.X = -(Float.X(window_size.Y) - 370) * 0.8
-		move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount)
-		grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount)
-		PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
-		PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
-		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
-		ui.drawExpansion = amount
-	})
+	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.openDrawer)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		if !ui.client.isOnline() {
 			OS.ShellOpen("https://the.quetzal.community/aviary/account?connection=" + OneTimeUseCode)
@@ -134,18 +120,65 @@ func (ui *UI) Ready() {
 	})
 }
 
+func (ui *UI) openDrawer() {
+	if ui.locked {
+		ui.queued = ui.openDrawer
+		return
+	}
+	if !ui.drawExpanded.CompareAndSwap(false, true) {
+		return
+	}
+	ui.locked = true
+	for _, container := range ui.gridContainers {
+		container.scroll_lock = false
+	}
+	ui.client.scroll_lock = true
+	window_size := DisplayServer.WindowGetSize(0)
+	// Expand close to the top of the screen.
+	var amount Float.X = -(Float.X(window_size.Y) - 370) * 0.8
+	move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount)
+	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount)
+	tween := SceneTree.Get(ui.Editor.AsNode()).CreateTween()
+	PropertyTweener.Make(tween, ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
+	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
+	tween.OnFinished(func() {
+		ui.locked = false
+		if ui.queued != nil {
+			queued := ui.queued
+			ui.queued = nil
+			queued()
+		}
+	})
+	ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
+	ui.drawExpansion = amount
+}
+
 func (ui *UI) closeDrawer() {
+	if ui.locked {
+		ui.queued = ui.closeDrawer
+		return
+	}
 	if !ui.drawExpanded.CompareAndSwap(true, false) {
 		return
 	}
+	ui.locked = true
 	for _, container := range ui.gridContainers {
 		container.scroll_lock = true
 	}
 	ui.client.scroll_lock = false
 	move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y-ui.drawExpansion)
 	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y+ui.drawExpansion)
-	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
+	tween := SceneTree.Get(ui.Editor.AsNode()).CreateTween()
+	PropertyTweener.Make(tween, ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
 	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
+	tween.OnFinished(func() {
+		ui.locked = false
+		if ui.queued != nil {
+			queued := ui.queued
+			ui.queued = nil
+			queued()
+		}
+	})
 	ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
 }
 
