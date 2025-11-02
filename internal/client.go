@@ -28,6 +28,7 @@ import (
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
+	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Viewport"
@@ -110,6 +111,8 @@ type Client struct {
 	time TimingCoordinator
 
 	last_lookAt time.Time
+
+	authors map[musical.Author]Node3D.ID
 }
 
 func NewClient() *Client {
@@ -120,6 +123,7 @@ func NewClient() *Client {
 		designs:          make(map[musical.Design]PackedScene.ID),
 		loaded:           make(map[string]musical.Design),
 		clients:          make(chan musical.Networking),
+		authors:          make(map[musical.Author]Node3D.ID),
 		load_last_save:   true,
 	}
 	client.clientReady.Add(1)
@@ -364,17 +368,46 @@ func (world musicalImpl) Action(action musical.Action) error {
 }
 
 func (world musicalImpl) LookAt(view musical.LookAt) error {
-	if world.joining && view.Author == 0 {
-		world.time.Follow(view.Timing)
-	}
+	Callable.Defer(Callable.New(func() {
+		if world.joining && view.Author == 0 {
+			world.time.Follow(view.Timing)
+		}
+		if view.Author == world.id {
+			return
+		}
+		if avatar, ok := world.authors[view.Author].Instance(); ok {
+			tween := avatar.AsNode().CreateTween()
+			PropertyTweener.Make(tween, avatar.AsObject(), "position", view.Offset, 0.1)
+			PropertyTweener.Make(tween, avatar.AsObject(), "rotation", view.Angles, 0.1)
+			return
+		}
+		avatar := Resource.Load[PackedScene.Is[Node3D.Instance]]("res://library/everything/avatar/bald_eagle.glb").Instantiate()
+		avatar.SetPosition(view.Offset)
+		avatar.SetRotation(view.Angles)
+		avatar.SetScale(Vector3.New(0.1, 0.1, 0.1))
+		if avatar.AsNode().HasNode("AnimationPlayer") {
+			anim := Object.To[AnimationPlayer.Instance](avatar.AsNode().GetNode("AnimationPlayer"))
+			if anim.AsAnimationMixer().HasAnimation("Flap") {
+				anim.AsAnimationMixer().GetAnimation("Flap").SetLoopMode(Animation.LoopLinear)
+				anim.PlayNamed("Flap")
+			}
+		}
+		world.AsNode().AddChild(avatar.AsNode())
+		world.authors[view.Author] = avatar.ID()
+	}))
 	return nil
 }
 
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
 
-	if time.Since(world.last_lookAt) > time.Second/10 {
+	if time.Since(world.last_lookAt) > time.Second/10 && world.space != nil {
+		angles := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalRotation()
+		angles.X = -angles.X
+		angles.Y += Angle.Pi
 		world.space.LookAt(musical.LookAt{
+			Offset: Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalPosition(),
+			Angles: angles,
 			Author: world.id,
 			Timing: world.time.Now(),
 		})
