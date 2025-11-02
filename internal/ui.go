@@ -98,7 +98,7 @@ func (ui *UI) Ready() {
 	}
 	ui.onThemeSelected(0)
 	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
-	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
+	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterStop)
 	ui.Editor.AsControl().OnMouseExited(func() {
 		height := DisplayServer.WindowGetSize(0).Y
 		if ui.Editor.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
