@@ -45,9 +45,11 @@ func (ar *ActionRenderer) play(name string) {
 		return
 	}
 	parent := Object.To[Node3D.Instance](ar.AsNode().GetParent())
-	player := Object.To[AnimationPlayer.Instance](parent.AsNode().GetNode("AnimationPlayer"))
-	player.AsAnimationMixer().GetAnimation(name).SetLoopMode(Animation.LoopLinear)
-	player.PlayNamed(name)
+	if parent.AsNode().HasNode("AnimationPlayer") {
+		player := Object.To[AnimationPlayer.Instance](parent.AsNode().GetNode("AnimationPlayer"))
+		player.AsAnimationMixer().GetAnimation(name).SetLoopMode(Animation.LoopLinear)
+		player.PlayNamed(name)
+	}
 	ar.playing = name
 }
 

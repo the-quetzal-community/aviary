@@ -310,7 +310,19 @@ func (world musicalImpl) Import(uri musical.Import) error {
 }
 func (world musicalImpl) Change(con musical.Change) error {
 	Callable.Defer(Callable.New(func() {
+		if con.Entity.Author == world.id {
+			world.entities = max(world.entities, con.Entity.Number)
+		}
 		container := world.VultureRenderer.AsNode()
+
+		exists, ok := world.entity_to_object[con.Entity].Instance()
+		if ok {
+			exists.SetPosition(con.Offset)
+			exists.SetRotation(con.Angles)
+			exists.SetScale(Vector3.New(0.1, 0.1, 0.1))
+			return
+		}
+
 		scene, ok := world.designs[con.Design].Instance()
 		if !ok {
 			return
@@ -465,6 +477,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						if ok {
 							if node3d, ok := Object.As[Node3D.Instance](node); ok {
 								if entity, ok := world.object_to_entity[node3d.ID()]; ok {
+									fmt.Println(entity, world.object_to_entity)
 									world.space.Action(musical.Action{
 										Author: world.id,
 										Entity: entity,
