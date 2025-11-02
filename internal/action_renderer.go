@@ -2,7 +2,6 @@ package internal
 
 import (
 	"sort"
-	"time"
 
 	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
@@ -24,6 +23,8 @@ type ActionRenderer struct {
 	playing string
 	current int
 	actions []musical.Action
+
+	client *Client
 }
 
 func (ar *ActionRenderer) Ready() {
@@ -53,13 +54,18 @@ func (ar *ActionRenderer) play(name string) {
 func (ar *ActionRenderer) Process(delta Float.X) {
 	action := ar.actions[ar.current]
 	parent := Object.To[Node3D.Instance](ar.AsNode().GetParent())
-	if time.Since(time.Unix(0, action.Timing)) >= time.Duration(action.Period) {
+	for ar.client.time.Now()-action.Timing >= musical.Timing(action.Period) {
 		parent.SetPosition(action.Target)
-		ar.AsNode().SetProcess(false)
-		ar.play("Idle")
 		ar.Initial = action.Target
-		ar.actions = ar.actions[0:0:cap(ar.actions)]
-		return
+		ar.current++
+		if ar.current >= len(ar.actions) {
+			ar.AsNode().SetProcess(false)
+			ar.play("Idle")
+			ar.actions = ar.actions[0:0:cap(ar.actions)]
+			ar.current = 0
+			return
+		}
+		action = ar.actions[ar.current]
 	}
 	ar.play("Walk")
 	// angle between initial and target
@@ -69,5 +75,5 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 			action.Target.Z-ar.Initial.Z,
 		),
 	})
-	parent.SetPosition(Vector3.Lerp(ar.Initial, action.Target, Float.X(time.Since(time.Unix(0, action.Timing)))/Float.X(action.Period)))
+	parent.SetPosition(Vector3.Lerp(ar.Initial, action.Target, Float.X(ar.client.time.Now()-action.Timing)/Float.X(action.Period)))
 }

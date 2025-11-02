@@ -106,6 +106,10 @@ type Client struct {
 	joining        bool
 
 	selection Node.ID
+
+	time TimingCoordinator
+
+	last_lookAt time.Time
 }
 
 func NewClient() *Client {
@@ -335,6 +339,7 @@ func (world musicalImpl) Action(action musical.Action) error {
 		if ok {
 			if !object.AsNode().HasNode("ActionRenderer") {
 				actions := new(ActionRenderer)
+				actions.client = world.Client
 				actions.Initial = object.AsNode3D().Position()
 				actions.AsNode().SetName("ActionRenderer")
 				object.AsNode().AddChild(actions.AsNode())
@@ -346,9 +351,24 @@ func (world musicalImpl) Action(action musical.Action) error {
 	return nil
 }
 
-func (world musicalImpl) LookAt(view musical.LookAt) error { return nil }
+func (world musicalImpl) LookAt(view musical.LookAt) error {
+	if world.joining && view.Author == 0 {
+		world.time.Follow(view.Timing)
+	}
+	return nil
+}
 
 func (world *Client) Process(dt Float.X) {
+	world.time.Process(dt)
+
+	if time.Since(world.last_lookAt) > time.Second/10 {
+		world.space.LookAt(musical.LookAt{
+			Author: world.id,
+			Timing: world.time.Now(),
+		})
+		world.last_lookAt = time.Now()
+	}
+
 	Object.Use(world)
 	select {
 	case msg := <-world.println:
@@ -449,9 +469,10 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 										Author: world.id,
 										Entity: entity,
 										Target: intersect.Position,
-										Period: int64(Vector3.Distance(node3d.Position(), intersect.Position) * Float.X(time.Second)),
-										Timing: time.Now().UnixNano(), // FIXME
+										Period: musical.Period(Vector3.Distance(node3d.Position(), intersect.Position) * Float.X(time.Second) * 5),
+										Timing: world.time.Future(), // FIXME
 										Cancel: true,
+										Commit: true,
 									})
 								}
 							}
@@ -575,4 +596,69 @@ func (nv networkingVia) Recv() ([]byte, error) {
 
 func (nv networkingVia) Close() error {
 	return nil
+}
+
+type TimingCoordinator struct {
+	target musical.Timing // leader time - latency
+	smooth musical.Timing // current smoothed time
+	future musical.Timing // leader time + latency
+
+	leader []musical.Timing // ring of samples, from the host (author = 0).
+	locals []time.Time      // local times when each sample was recorded.
+	offset int              // current index in the ring
+}
+
+func (tc *TimingCoordinator) Now() musical.Timing { return tc.smooth }
+func (tc *TimingCoordinator) Future() musical.Timing {
+	if tc.future == 0 {
+		return tc.smooth
+	}
+	return tc.target
+}
+
+func (tc *TimingCoordinator) Process(delta Float.X) {
+	if tc.target > 0 {
+		if tc.smooth == 0 {
+			tc.smooth = musical.Timing(time.Now().UnixNano())
+		} else {
+			tc.smooth += musical.Timing(Float.X(delta) * Float.X(time.Second))
+		}
+		// use frame delta to exponentially move smooth timing towards target timing.
+		// this helps to avoid sudden jumps in timing.
+		diff := Float.X(tc.target - tc.smooth)
+		tc.smooth += musical.Timing(diff * Float.X(delta) * 4)
+	} else {
+		tc.smooth = musical.Timing(time.Now().UnixNano())
+	}
+}
+
+func (tc *TimingCoordinator) Follow(t musical.Timing) {
+	if tc.leader == nil {
+		tc.leader = make([]musical.Timing, 10)
+		tc.locals = make([]time.Time, 10)
+	}
+	tc.leader[tc.offset] = t
+	tc.locals[tc.offset] = time.Now()
+	tc.offset = (tc.offset + 1) % len(tc.leader)
+
+	// calculate average latency and adjust our own timing
+	// so that we are slightly behind the leader to account
+	// for network delay.
+
+	var totalDelay time.Duration
+	var count int
+	for i := 0; i < len(tc.leader); i++ {
+		if tc.leader[i] != 0 {
+			leaderTime := time.Unix(0, int64(tc.leader[i]))
+			localTime := tc.locals[i]
+			delay := localTime.Sub(leaderTime)
+			totalDelay += delay
+			count++
+		}
+	}
+	if count > 0 {
+		avgDelay := totalDelay / time.Duration(count)
+		tc.target = musical.Timing(time.Now().Add(-avgDelay).UnixNano())
+		tc.future = musical.Timing(time.Now().Add(avgDelay).UnixNano())
+	}
 }

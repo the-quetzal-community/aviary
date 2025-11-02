@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"reflect"
+	"time"
 
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Euler"
@@ -37,6 +38,11 @@ type Record struct {
 	Author Author
 	Number uint16
 }
+
+type (
+	Timing int64
+	Period time.Duration
+)
 
 // UsersSpace3D (.mus3) represents creative contributions to a shared 3D space.
 type UsersSpace3D interface {
@@ -105,20 +111,26 @@ type Change struct {
 	Bounds Vector3.XYZ   // size of the entity within the scene.
 	Angles Euler.Radians // orientation of the entity within the scene.
 	Colour Color.RGBA    // colour tint of the entity within the scene.
+	Speeds Speeds        // when taking actions
 
 	Record Record // to record.
-	Timing int64  // timing within the record.
+	Timing Timing // timing of the record.
 
-	Remove bool // if true, removes the design from the entity.
+	Remove bool // if true, removes the design/record from the entity.
 	Commit bool // if false, then this is a preview (not persisted).
+}
+
+type Speeds struct {
+	Offset Float.X
+	Angles Float.X
 }
 
 type Action struct {
 	Author Author      // author making the contribution.
 	Entity Entity      // entity taking the action.
 	Target Vector3.XYZ // target position, in global space.
-	Timing int64       // time of the action.
-	Period int64       // duration of the action.
+	Timing Timing      // time of the action.
+	Period Period      // duration of the action.
 
 	Design Design // design to apply to the entity for the period of the action.
 	Record Record // to playback.
@@ -145,7 +157,7 @@ type LookAt struct {
 	Angles Euler.Radians // orientation of the author.
 	Bounds Vector3.XYZ   // size of the author.
 	Colour Color.RGBA    // colour of the author.
-	Timing int64         // timing of the viewer.
+	Timing Timing        // timing of the viewer.
 }
 
 type entryType uint8

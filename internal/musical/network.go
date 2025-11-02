@@ -85,7 +85,6 @@ func (c client) handle(replica UsersSpace3D) {
 	}()
 	for {
 		packet, err := c.Instructions.Recv()
-		fmt.Println("PACKET")
 		if err != nil {
 			c.ErrorReports.ReportError(xray.New(err))
 			return
@@ -95,7 +94,6 @@ func (c client) handle(replica UsersSpace3D) {
 			c.ErrorReports.ReportError(xray.New(err))
 			return
 		}
-		fmt.Println(req)
 		switch v := req.(type) {
 		case Member:
 			replica.Member(v)
