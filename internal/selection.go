@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
@@ -23,6 +24,9 @@ func Select(node Node.Instance, selected bool) {
 				shader.SetShader(outline)
 				shader.SetShaderParameter("outline_width", 1.05)
 				shader.SetShaderParameter("outline_color", Color.X11.White)
+				if mat, ok := Object.As[BaseMaterial3D.Instance](mesh.SurfaceGetMaterial(i)); ok {
+					shader.SetShaderParameter("texture_albedo", mat.AsBaseMaterial3D().AlbedoTexture())
+				}
 				mat := Resource.Duplicate(mesh.SurfaceGetMaterial(i))
 				mat.SetNextPass(shader.AsMaterial())
 				instance.SetSurfaceOverrideMaterial(i, mat)
