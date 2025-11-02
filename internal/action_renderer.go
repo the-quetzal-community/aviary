@@ -1,8 +1,6 @@
 package internal
 
 import (
-	"sort"
-
 	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/Node"
@@ -33,10 +31,18 @@ func (ar *ActionRenderer) Ready() {
 }
 
 func (ar *ActionRenderer) Add(action musical.Action) {
+	if len(ar.actions) > 0 {
+		if action.Timing < ar.actions[len(ar.actions)-1].Timing {
+			return
+		}
+		if action.Cancel {
+			previous := ar.actions[ar.current]
+			ar.Initial = Vector3.Lerp(ar.Initial, previous.Target, Float.X(ar.client.time.Now()-previous.Timing)/Float.X(previous.Period))
+			ar.actions = ar.actions[0:0:cap(ar.actions)]
+			ar.current = 0
+		}
+	}
 	ar.actions = append(ar.actions, action)
-	sort.Slice(ar.actions, func(i, j int) bool {
-		return ar.actions[i].Timing < ar.actions[j].Timing
-	})
 	ar.AsNode().SetProcess(true)
 }
 

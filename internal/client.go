@@ -110,7 +110,8 @@ type Client struct {
 
 	time TimingCoordinator
 
-	last_lookAt time.Time
+	last_LookAt      musical.LookAt
+	last_lookAt_time time.Time
 
 	authors map[musical.Author]Node3D.ID
 }
@@ -401,17 +402,21 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
 
-	if time.Since(world.last_lookAt) > time.Second/10 && world.space != nil {
+	if time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
 		angles := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalRotation()
 		angles.X = -angles.X
 		angles.Y += Angle.Pi
-		world.space.LookAt(musical.LookAt{
+		view := musical.LookAt{
 			Offset: Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalPosition(),
 			Angles: angles,
 			Author: world.id,
 			Timing: world.time.Now(),
-		})
-		world.last_lookAt = time.Now()
+		}
+		if world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || !world.joining {
+			world.space.LookAt(view)
+			world.last_LookAt = view
+			world.last_lookAt_time = time.Now()
+		}
 	}
 
 	Object.Use(world)
