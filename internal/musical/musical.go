@@ -98,6 +98,7 @@ type Contribution struct {
 	Bounds Vector3.XYZ   // size of the entity within the scene.
 	Angles Euler.Radians // orientation of the entity within the scene.
 	Colour Color.RGBA    // colour tint of the entity within the scene.
+	Timing int64         // time offset for the contribution, in milliseconds.
 	Remove bool          // if true, remove the design fom the entity, instead of adding it.
 	Tweens bool          // if true, the contribution represents tweening velocities.
 	Commit bool          // if false, then this is a preview (not persisted).

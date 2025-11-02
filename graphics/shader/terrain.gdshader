@@ -18,6 +18,9 @@ uniform float radius;
 uniform bool brush_active;
 uniform bool paint_active;
 
+uniform vec3 selection;
+uniform bool selection_active;
+
 uniform sampler2D paint_texture : source_color, filter_linear_mipmap, repeat_enable;
 
 varying vec3 world;
@@ -67,6 +70,13 @@ void fragment() {
 	if (paint_active && dx*dx+dy*dy < radius*radius) {
         albedo_tex = texture(paint_texture, base_uv);
     }
+    ALBEDO = albedo_tex.rgb * highlight;
 
-	ALBEDO = albedo_tex.rgb * highlight;
+    if (selection_active) {
+        float sdx = (world.x - selection.x);
+        float sdy = (world.z - selection.y);
+        if (sdx*sdx+sdy*sdy < selection.z*selection.z) {
+           ALBEDO = vec3(1.0, 1.0, 1.0);
+        }
+    }
 }

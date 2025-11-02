@@ -35,7 +35,13 @@ type FlightPlanner struct {
 	client *Client
 }
 
-func (fl *FlightPlanner) Ready() {
+func (fl *FlightPlanner) Reload() {
+	for i, child := range fl.Maps.AsNode().GetChildren() {
+		if i > 0 {
+			child.QueueFree()
+		}
+	}
+	fl.Maps.SetColumns(int(fl.AsControl().Size().X/256) - 1)
 	for save := range DirAccess.Open("user://").Iter() {
 		if strings.HasSuffix(save, ".png") {
 			mapButton := TextureButton.New()
@@ -58,6 +64,10 @@ func (fl *FlightPlanner) Ready() {
 			fl.Maps.AsNode().AddChild(mapButton.AsNode())
 		}
 	}
+}
+
+func (fl *FlightPlanner) Ready() {
+	fl.Reload()
 	fl.Code.SetText("")
 	fl.Back.AsBaseButton().OnPressed(func() {
 		fl.AsCanvasItem().SetVisible(false)

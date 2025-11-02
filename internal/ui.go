@@ -127,6 +127,9 @@ func (ui *UI) Ready() {
 			OS.ShellOpen("https://the.quetzal.community/aviary/account?connection=" + OneTimeUseCode)
 		} else {
 			ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
+			if ui.Cloudy.AsCanvasItem().Visible() {
+				ui.Cloudy.Reload()
+			}
 		}
 	})
 }

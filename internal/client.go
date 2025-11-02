@@ -23,9 +23,11 @@ import (
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Viewport"
@@ -99,6 +101,8 @@ type Client struct {
 	clientReady sync.WaitGroup
 
 	load_last_save bool
+
+	selection Node.ID
 }
 
 func NewClient() *Client {
@@ -296,6 +300,7 @@ func (world musicalImpl) Create(con musical.Contribution) error {
 		if node.AsNode().HasNode("AnimationPlayer") {
 			anim := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
 			anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
+			fmt.Println("Playing idle animation for", anim.AsAnimationMixer().GetAnimationList())
 			if anim.AsAnimationMixer().HasAnimation("Idle") {
 				anim.PlayNamed("Idle")
 			}
@@ -360,12 +365,39 @@ func (world *Client) Process(dt Float.X) {
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
 	if !world.scroll_lock {
-		if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && !Input.IsKeyPressed(Input.KeyShift) {
-			if event.ButtonIndex() == Input.MouseButtonWheelUp {
+		mouse, ok := Object.As[InputEventMouseButton.Instance](event)
+		if ok && !Input.IsKeyPressed(Input.KeyShift) {
+			if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
 				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
 			}
-			if event.ButtonIndex() == Input.MouseButtonWheelDown {
+			if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
 				world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
+			}
+		}
+		if ok && mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed() {
+			cam := Viewport.Get(world.AsNode()).GetCamera3d()
+			space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
+			mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
+			ray_from, ray_to := cam.ProjectRayOrigin(mpos_2d), cam.ProjectPosition(mpos_2d, 1000)
+			var query = PhysicsRayQueryParameters3D.Create(ray_from, ray_to, nil)
+			var intersect = space_state.IntersectRay(query)
+
+			if world.selection != 0 {
+				node, ok := world.selection.Instance()
+				if ok {
+					Select(node, false)
+				}
+			}
+
+			if Object.Is[*TerrainTile](intersect.Collider) {
+				world.selection = 0
+			} else {
+				node, ok := Object.As[Node.Instance](intersect.Collider)
+				if ok {
+					node = node.GetParent()
+					world.selection = node.ID()
+					Select(node, true)
+				}
 			}
 		}
 	}
