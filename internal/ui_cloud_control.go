@@ -79,7 +79,7 @@ func (ui *CloudControl) Setup() {
 		}
 		ui.on_process <- func(cc *CloudControl) { cc.set_online_status_indicator(true) }
 
-		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community/aviary")
+		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community")
 		if err != nil {
 			Engine.Raise(err)
 			return
