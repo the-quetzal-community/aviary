@@ -30,6 +30,7 @@ import (
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
@@ -74,7 +75,7 @@ type Client struct {
 	mouseOver chan Vector3.XYZ
 
 	PreviewRenderer *PreviewRenderer
-	VultureRenderer *Renderer
+	TerrainRenderer *TerrainRenderer
 
 	signalling signalling.API
 
@@ -95,8 +96,9 @@ type Client struct {
 	entity_to_object map[musical.Entity]Node3D.ID
 	object_to_entity map[Node3D.ID]musical.Entity
 
-	designs map[musical.Design]PackedScene.ID
-	loaded  map[string]musical.Design
+	packed_scenes map[musical.Design]PackedScene.ID
+	textures      map[musical.Design]Texture2D.ID
+	loaded        map[string]musical.Design
 
 	clients chan musical.Networking
 
@@ -120,7 +122,8 @@ func NewClient() *Client {
 		clientReady:      sync.WaitGroup{},
 		entity_to_object: make(map[musical.Entity]Node3D.ID),
 		object_to_entity: make(map[Node3D.ID]musical.Entity),
-		designs:          make(map[musical.Design]PackedScene.ID),
+		packed_scenes:    make(map[musical.Design]PackedScene.ID),
+		textures:         make(map[musical.Design]Texture2D.ID),
 		loaded:           make(map[string]musical.Design),
 		clients:          make(chan musical.Networking),
 		authors:          make(map[musical.Author]Node3D.ID),
@@ -241,18 +244,18 @@ func (world *Client) Ready() {
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.client = world
-	world.VultureRenderer.texture = make(chan Path.ToResource, 1)
-	world.VultureRenderer.client = world
+	world.TerrainRenderer.texture = make(chan Path.ToResource, 1)
+	world.TerrainRenderer.client = world
+	world.TerrainRenderer.tile.client = world
 	world.PreviewRenderer.mouseOver = world.mouseOver
-	world.PreviewRenderer.terrain = world.VultureRenderer
-	world.VultureRenderer.mouseOver = world.mouseOver
-	world.VultureRenderer.start()
+	world.PreviewRenderer.terrain = world.TerrainRenderer
+	world.TerrainRenderer.mouseOver = world.mouseOver
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
 	if ok {
 		editor.preview = world.PreviewRenderer.preview
-		editor.texture = world.VultureRenderer.texture
+		editor.texture = world.TerrainRenderer.texture
 		editor.client = world
 		world.AsNode().AddChild(editor.AsNode())
 		editor.Setup()
@@ -260,7 +263,6 @@ func (world *Client) Ready() {
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
 	world.Light.AsNode3D().SetRotation(Euler.Radians{X: -Angle.Pi / 2})
-	world.VultureRenderer.SetFocalPoint3D(Vector3.Zero)
 	RenderingServer.SetDebugGenerateWireframes(true)
 }
 
@@ -289,15 +291,28 @@ func (world musicalImpl) Member(req musical.Member) error {
 	return nil
 }
 
-func (world musicalImpl) Upload(file musical.Upload) error  { return nil }
-func (world musicalImpl) Sculpt(brush musical.Sculpt) error { return nil }
+func (world musicalImpl) Upload(file musical.Upload) error { return nil }
+func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
+	Callable.Defer(Callable.New(func() {
+		world.TerrainRenderer.Sculpt(brush)
+	}))
+	return nil
+}
 func (world musicalImpl) Import(uri musical.Import) error {
 	Callable.Defer(Callable.New(func() {
+		if _, ok := world.loaded[uri.Import]; ok {
+			return
+		}
 		if uri.Design.Author == world.id {
 			world.design_ids = max(world.design_ids, uri.Design.Number)
 		}
-		res := Object.Leak(Resource.Load[PackedScene.Is[Node3D.Instance]](uri.Import))
-		world.designs[uri.Design] = res.AsPackedScene().ID()
+		res := Object.Leak(Resource.Load[Resource.Instance](uri.Import))
+		switch {
+		case Object.Is[PackedScene.Instance](res):
+			world.packed_scenes[uri.Design] = Object.To[PackedScene.Instance](res).ID()
+		case Object.Is[Texture2D.Instance](res):
+			world.textures[uri.Design] = Object.To[Texture2D.Instance](res).ID()
+		}
 		world.loaded[uri.Import] = uri.Design
 	}))
 	return nil
@@ -307,7 +322,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 		if con.Entity.Author == world.id {
 			world.entities = max(world.entities, con.Entity.Number)
 		}
-		container := world.VultureRenderer.AsNode()
+		container := world.TerrainRenderer.AsNode()
 
 		exists, ok := world.entity_to_object[con.Entity].Instance()
 		if ok {
@@ -322,7 +337,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 			return
 		}
 
-		scene, ok := world.designs[con.Design].Instance()
+		scene, ok := world.packed_scenes[con.Design].Instance()
 		if !ok {
 			return
 		}
@@ -452,7 +467,6 @@ func (world *Client) Process(dt Float.X) {
 	if Input.IsKeyPressed(Input.KeyMinus) {
 		world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.5))
 	}
-	world.VultureRenderer.SetFocalPoint3D(world.FocalPoint.AsNode3D().Position())
 }
 
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
@@ -469,9 +483,8 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
-				if world.VultureRenderer.PaintActive {
-					world.VultureRenderer.shader.SetShaderParameter("paint_active", false)
-					world.VultureRenderer.PaintActive = false
+				if world.TerrainRenderer.PaintActive {
+					world.TerrainRenderer.Paint(mouse.AsInputEventMouse())
 					break
 				}
 				if world.PreviewRenderer.Enabled() {
@@ -503,9 +516,9 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
-				if world.VultureRenderer.PaintActive {
-					world.VultureRenderer.shader.SetShaderParameter("paint_active", false)
-					world.VultureRenderer.PaintActive = false
+				if world.TerrainRenderer.PaintActive {
+					world.TerrainRenderer.shader.SetShaderParameter("paint_active", false)
+					world.TerrainRenderer.PaintActive = false
 					break
 				}
 				if world.PreviewRenderer.Enabled() {

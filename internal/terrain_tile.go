@@ -17,11 +17,13 @@ import (
 	"graphics.gd/classdb/StaticBody3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Packed"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 type TerrainTile struct {
@@ -34,6 +36,10 @@ type TerrainTile struct {
 	side_shader ShaderMaterial.Instance
 
 	shape_owner int
+
+	client    *Client
+	reloading bool
+	sculpts   []musical.Sculpt
 }
 
 func (tile *TerrainTile) Ready() {
@@ -41,12 +47,35 @@ func (tile *TerrainTile) Ready() {
 	tile.Reload()
 }
 
+func (tile *TerrainTile) Sculpt(brush musical.Sculpt) {
+	tile.sculpts = append(tile.sculpts, brush)
+	if tile.reloading {
+		return
+	}
+	tile.reloading = true
+	Callable.Defer(Callable.New(func() {
+		tile.Reload()
+	}))
+}
+
 func (tile *TerrainTile) Reload() {
-	grass := Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png")
+	tile.reloading = false
+
 	terrains := Texture2DArray.New()
-	terrains.AsImageTextureLayered().CreateFromImages([]Image.Instance{
-		grass.AsTexture2D().GetImage(),
-	})
+	images := []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
+	mapper := make(map[musical.Design]int)
+	for _, sculpt := range tile.sculpts {
+		if _, exists := mapper[sculpt.Design]; exists {
+			continue
+		}
+		texture, ok := tile.client.textures[sculpt.Design].Instance()
+		if ok {
+			mapper[sculpt.Design] = len(images)
+			images = append(images, texture.GetImage())
+		}
+	}
+	terrains.AsImageTextureLayered().CreateFromImages(images)
+	tile.shader.SetShaderParameter("texture_albedo", terrains)
 
 	var vertices = Packed.New[Vector3.XYZ]()
 	vertices.Resize(16 * 16 * 6)
@@ -63,19 +92,35 @@ func (tile *TerrainTile) Reload() {
 	weights := Packed.New[float32]()
 	weights.Resize(16 * 16 * 6 * 4)
 
-	//heightm := tile.heightMapping[tile.region]
-	var sample [16 * 16][4]uint8
+	offset := Vector3.XYZ{
+		-8, 0, -8,
+	}
 
-	add := func(index int, cell int, x, y int, w1, w2, w3, w4 Float.X) {
+	//heightm := tile.heightMapping[tile.region]
+	var sample_texture = func(x, y int) int {
+		pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
+		for i := len(tile.sculpts) - 1; i >= 0; i-- {
+			sculpt := tile.sculpts[i]
+			dx := pos.X - sculpt.Target.X
+			dy := pos.Z - sculpt.Target.Z
+			dist := Float.Sqrt(dx*dx + dy*dy)
+			if dist <= sculpt.Radius {
+				return mapper[sculpt.Design]
+			}
+		}
+		return 0
+	}
+
+	add := func(index int, cell_x, cell_y int, x, y int, w1, w2, w3, w4 Float.X) {
 		vertices.SetIndex(index, Vector3.XYZ{float32(x), Float.X(heights[x+y*17]), float32(y)})
 		normals.SetIndex(index, Vector3.XYZ{0, 1, 0})
 		uvs.SetIndex(index, Vector2.XY{Float.X(x) / 16, Float.X(y) / 16})
 
 		// Need to blend these correctly.w
-		textures.SetIndex(index*4, float32(sample[cell][0]))   // top left
-		textures.SetIndex(index*4+1, float32(sample[cell][1])) // top right
-		textures.SetIndex(index*4+2, float32(sample[cell][2])) // bottom left
-		textures.SetIndex(index*4+3, float32(sample[cell][3])) // bottom right
+		textures.SetIndex(index*4+0, float32(sample_texture(cell_x, cell_y)))     // top left
+		textures.SetIndex(index*4+1, float32(sample_texture(cell_x+1, cell_y)))   // top right
+		textures.SetIndex(index*4+2, float32(sample_texture(cell_x, cell_y+1)))   // bottom left
+		textures.SetIndex(index*4+3, float32(sample_texture(cell_x+1, cell_y+1))) // bottom right
 
 		weights.SetIndex(index*4, float32(w1))
 		weights.SetIndex(index*4+1, float32(w2))
@@ -85,13 +130,12 @@ func (tile *TerrainTile) Reload() {
 	// generate the triangle pairs of the plane mesh
 	for x := range 16 {
 		for y := range 16 {
-			cell := x + 16*y
-			add(6*(x+16*y)+0, cell, x, y, 1, 0, 0, 0)     // top left
-			add(6*(x+16*y)+1, cell, x+1, y, 0, 1, 0, 0)   // top right
-			add(6*(x+16*y)+2, cell, x, y+1, 0, 0, 1, 0)   // bottom left
-			add(6*(x+16*y)+3, cell, x+1, y, 0, 1, 0, 0)   // top right
-			add(6*(x+16*y)+4, cell, x+1, y+1, 0, 0, 0, 1) // bottom right
-			add(6*(x+16*y)+5, cell, x, y+1, 0, 0, 1, 0)   // bottom left
+			add(6*(x+16*y)+0, x, y, x, y, 1, 0, 0, 0)     // top left
+			add(6*(x+16*y)+1, x, y, x+1, y, 0, 1, 0, 0)   // top right
+			add(6*(x+16*y)+2, x, y, x, y+1, 0, 0, 1, 0)   // bottom left
+			add(6*(x+16*y)+3, x, y, x+1, y, 0, 1, 0, 0)   // top right
+			add(6*(x+16*y)+4, x, y, x+1, y+1, 0, 0, 0, 1) // bottom right
+			add(6*(x+16*y)+5, x, y, x, y+1, 0, 0, 1, 0)   // bottom left
 		}
 	}
 

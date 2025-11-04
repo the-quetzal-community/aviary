@@ -24,7 +24,7 @@ type PreviewRenderer struct {
 
 	preview chan Path.ToResource // resource name
 
-	terrain *Renderer
+	terrain *TerrainRenderer
 
 	current string
 

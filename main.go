@@ -38,7 +38,7 @@ func main() {
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
-	classdb.Register[internal.Renderer]()
+	classdb.Register[internal.TerrainRenderer]()
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()

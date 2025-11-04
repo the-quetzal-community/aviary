@@ -139,6 +139,10 @@ func (ui *UI) scaling() {
 	// Calculate uniform scale factor based on height ratio (360 base height at 2160 screen height)
 	var scale_factor Float.X = Float.X(display.Y) / 2160.0
 
+	if scale_factor < 0.5 {
+		scale_factor = 0.5
+	}
+
 	// Set uniform scale for both X and Y (to scale contents like tab icons without distortion)
 	scale := Vector2.XY{X: scale_factor, Y: scale_factor}
 	ui.Editor.AsControl().SetScale(scale)
@@ -156,9 +160,9 @@ func (ui *UI) scaling() {
 	ui.Editor.AsControl().SetPosition(pos)
 
 	// scale root UI elements based on display size
-	ui.scale(ui.CloudControl.AsControl(), Float.X(3840), Float.X(2160))
-	ui.scale(ui.ThemeSelector.AsControl(), Float.X(3840), Float.X(2160))
-	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160))
+	ui.scale(ui.CloudControl.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	ui.scale(ui.ThemeSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 
 	// ThemeSelector needs to be centered to the top center
 	theme_pos := ui.ThemeSelector.AsControl().Position()
@@ -171,7 +175,7 @@ func (ui *UI) scaling() {
 	ui.lastDisplay = display
 }
 
-func (ui *UI) scale(control Control.Instance, base_screen_width Float.X, base_screen_height Float.X) {
+func (ui *UI) scale(control Control.Instance, base_screen_width, base_screen_height, min_scale Float.X) {
 	display := DisplayServer.WindowGetSize(0)
 
 	// Determine which change is more significant
@@ -182,6 +186,10 @@ func (ui *UI) scale(control Control.Instance, base_screen_width Float.X, base_sc
 	} else {
 		// Width change is larger (or equal): scale based on width, preserving aspect
 		scale_factor = Float.X(display.X) / base_screen_width
+	}
+
+	if scale_factor < min_scale {
+		scale_factor = min_scale
 	}
 
 	// Set uniform scale for both X and Y (preserves aspect, scales icons etc.)
