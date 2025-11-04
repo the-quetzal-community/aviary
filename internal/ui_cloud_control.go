@@ -76,6 +76,7 @@ type CloudControl struct {
 }
 
 func (ui *CloudControl) Setup() {
+	ui.on_process = make(chan func(*CloudControl), 10)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -119,7 +120,7 @@ func (ui *CloudControl) Setup() {
 				return
 			}
 
-			func() {
+			ui.on_process <- func(cc *CloudControl) {
 				req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/library.pck", nil)
 				if err != nil {
 					Engine.Raise(err)
@@ -139,7 +140,7 @@ func (ui *CloudControl) Setup() {
 					Engine.Raise(err)
 					return
 				}
-				if remote_time.UnixMilli() > int64(FileAccess.GetModifiedTime("res://library.pck")) && remote_time.UnixMilli() > int64(FileAccess.GetModifiedTime("user://library.pck")) {
+				if remote_time.Unix() > int64(FileAccess.GetModifiedTime("res://library.pck")) && remote_time.Unix() > int64(FileAccess.GetModifiedTime("user://library.pck")) {
 					if FileAccess.FileExists("res://library.pck") {
 						if err := DirAccess.RenameAbsolute("res://library.pck", "res://library.pck.backup"); err != nil {
 							Engine.Raise(err)
@@ -153,7 +154,7 @@ func (ui *CloudControl) Setup() {
 						}
 					}
 				}
-			}()
+			}
 
 			restart := func() {
 				if err := manager.ApplyUpdatesAndRestart(latest); err != nil {
@@ -167,7 +168,6 @@ func (ui *CloudControl) Setup() {
 }
 
 func (ui *CloudControl) Ready() {
-	ui.on_process = make(chan func(*CloudControl), 10)
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
 		if !ui.sharing {
 			ui.sharing = true
