@@ -36,6 +36,7 @@ void vertex() {
 	if (dx*dx+dy*dy < radius*radius) {
         VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
     }
+    VERTEX.y = max(VERTEX.y, -2.0);
     world = VERTEX;
     texture = CUSTOM0;
     weights = CUSTOM1;

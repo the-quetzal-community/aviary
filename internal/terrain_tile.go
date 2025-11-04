@@ -1,10 +1,9 @@
 package internal
 
 import (
-	"math"
-
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/CollisionShape3D"
 	"graphics.gd/classdb/HeightMapShape3D"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
@@ -65,7 +64,7 @@ func (tile *TerrainTile) Reload() {
 	images := []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
 	mapper := make(map[musical.Design]int)
 	for _, sculpt := range tile.sculpts {
-		if _, exists := mapper[sculpt.Design]; exists {
+		if _, exists := mapper[sculpt.Design]; exists || sculpt.Design == (musical.Design{}) {
 			continue
 		}
 		texture, ok := tile.client.textures[sculpt.Design].Instance()
@@ -87,8 +86,6 @@ func (tile *TerrainTile) Reload() {
 	var textures = Packed.New[float32]()
 	textures.Resize(16 * 16 * 6 * 4)
 
-	heights := make([]float32, 17*17)
-
 	weights := Packed.New[float32]()
 	weights.Resize(16 * 16 * 6 * 4)
 
@@ -96,11 +93,13 @@ func (tile *TerrainTile) Reload() {
 		-8, 0, -8,
 	}
 
-	//heightm := tile.heightMapping[tile.region]
 	var sample_texture = func(x, y int) int {
 		pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
 		for i := len(tile.sculpts) - 1; i >= 0; i-- {
 			sculpt := tile.sculpts[i]
+			if sculpt.Design == (musical.Design{}) {
+				continue
+			}
 			dx := pos.X - sculpt.Target.X
 			dy := pos.Z - sculpt.Target.Z
 			dist := Float.Sqrt(dx*dx + dy*dy)
@@ -110,9 +109,31 @@ func (tile *TerrainTile) Reload() {
 		}
 		return 0
 	}
+	var sample_height = func(x, y int) Float.X {
+		pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
+		height := Float.X(0)
+		for i := range tile.sculpts {
+			sculpt := tile.sculpts[i]
+			if sculpt.Design != (musical.Design{}) {
+				continue
+			}
+			dx := pos.X - sculpt.Target.X
+			dy := pos.Z - sculpt.Target.Z
+			if dx*dx+dy*dy <= sculpt.Radius*sculpt.Radius {
+				height += sculpt.Amount * (1 - (dx*dx+dy*dy)/(sculpt.Radius*sculpt.Radius))
+			}
+		}
+		return max(-2, height)
+	}
+	var heights = make([]float32, 17*17)
+	for x := range 17 {
+		for y := range 17 {
+			heights[x+y*17] = float32(sample_height(x, y))
+		}
+	}
 
 	add := func(index int, cell_x, cell_y int, x, y int, w1, w2, w3, w4 Float.X) {
-		vertices.SetIndex(index, Vector3.XYZ{float32(x), Float.X(heights[x+y*17]), float32(y)})
+		vertices.SetIndex(index, Vector3.XYZ{Float.X(x), sample_height(x, y), Float.X(y)})
 		normals.SetIndex(index, Vector3.XYZ{0, 1, 0})
 		uvs.SetIndex(index, Vector2.XY{Float.X(x) / 16, Float.X(y) / 16})
 
@@ -157,15 +178,6 @@ func (tile *TerrainTile) Reload() {
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
 	)
-
-	// Compute min height and base
-	min_h := float32(math.MaxFloat32)
-	for _, h := range heights {
-		if h < min_h {
-			min_h = h
-		}
-	}
-	base_h := min_h - 2
 	tile_size := float32(1.0) // Adjust for texture tiling scale
 
 	// Sides mesh data
@@ -206,6 +218,8 @@ func (tile *TerrainTile) Reload() {
 				h_near = heights[sp.fixedIndex+coord*17]
 				h_far = heights[sp.fixedIndex+(coord+1)*17]
 			}
+			h_near += 2.2
+			h_far += 2.2
 
 			pos_near := float32(i)
 			pos_far := float32(i + 1)
@@ -213,13 +227,13 @@ func (tile *TerrainTile) Reload() {
 			if sp.isZFixed {
 				tl = Vector3.XYZ{pos_near, h_near, sp.fixed}
 				tr = Vector3.XYZ{pos_far, h_far, sp.fixed}
-				bl = Vector3.XYZ{pos_near, base_h, sp.fixed}
-				br = Vector3.XYZ{pos_far, base_h, sp.fixed}
+				bl = Vector3.XYZ{pos_near, 0, sp.fixed}
+				br = Vector3.XYZ{pos_far, 0, sp.fixed}
 			} else {
 				tl = Vector3.XYZ{sp.fixed, h_near, pos_near}
 				tr = Vector3.XYZ{sp.fixed, h_far, pos_far}
-				bl = Vector3.XYZ{sp.fixed, base_h, pos_near}
-				br = Vector3.XYZ{sp.fixed, base_h, pos_far}
+				bl = Vector3.XYZ{sp.fixed, 0, pos_near}
+				br = Vector3.XYZ{sp.fixed, 0, pos_far}
 			}
 
 			var v1, v2 Vector3.XYZ
@@ -231,49 +245,45 @@ func (tile *TerrainTile) Reload() {
 				v2 = Vector3.Sub(tr, bl)
 			}
 			n := Vector3.Normalized(Vector3.Cross(v1, v2))
-			nComp := Vector3.Index(n, sp.normalAxis)
-			if (nComp > 0) == sp.negateIfPositive {
-				n = Vector3.Inverse(n)
-			}
 
 			// Triangle 1
 			vertices_side.SetIndex(index_base+0, bl)
 			normals_side.SetIndex(index_base+0, n)
-			uvs_side.SetIndex(index_base+0, Vector2.XY{float32(i) / tile_size, (base_h - base_h) / tile_size})
+			uvs_side.SetIndex(index_base+0, Vector2.XY{float32(i) / tile_size, 0 / tile_size})
 			if sp.flippedWinding {
 				vertices_side.SetIndex(index_base+1, tr)
 				normals_side.SetIndex(index_base+1, n)
-				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
 				vertices_side.SetIndex(index_base+2, tl)
 				normals_side.SetIndex(index_base+2, n)
-				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i) / tile_size, (h_near - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i) / tile_size, h_near / tile_size})
 			} else {
 				vertices_side.SetIndex(index_base+1, tl)
 				normals_side.SetIndex(index_base+1, n)
-				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i) / tile_size, (h_near - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i) / tile_size, h_near / tile_size})
 				vertices_side.SetIndex(index_base+2, tr)
 				normals_side.SetIndex(index_base+2, n)
-				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
 			}
 
 			// Triangle 2
 			vertices_side.SetIndex(index_base+3, bl)
 			normals_side.SetIndex(index_base+3, n)
-			uvs_side.SetIndex(index_base+3, Vector2.XY{float32(i) / tile_size, (base_h - base_h) / tile_size})
+			uvs_side.SetIndex(index_base+3, Vector2.XY{float32(i) / tile_size, 0 / tile_size})
 			if sp.flippedWinding {
 				vertices_side.SetIndex(index_base+4, br)
 				normals_side.SetIndex(index_base+4, n)
-				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, (base_h - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, 0 / tile_size})
 				vertices_side.SetIndex(index_base+5, tr)
 				normals_side.SetIndex(index_base+5, n)
-				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
 			} else {
 				vertices_side.SetIndex(index_base+4, tr)
 				normals_side.SetIndex(index_base+4, n)
-				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
 				vertices_side.SetIndex(index_base+5, br)
 				normals_side.SetIndex(index_base+5, n)
-				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, (base_h - base_h) / tile_size})
+				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, 0 / tile_size})
 			}
 
 			index_base += 6
@@ -289,12 +299,19 @@ func (tile *TerrainTile) Reload() {
 		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv,
 	)
 
-	if tile.shape_owner != -1 {
-		tile.AsCollisionObject3D().ShapeOwnerClearShapes(tile.shape_owner)
-	} else {
-		tile.shape_owner = tile.AsCollisionObject3D().CreateShapeOwner(tile.AsObject())
+	var collision_shape CollisionShape3D.Instance
+	for i := 0; i < tile.AsNode().GetChildCount(); i++ {
+		child := tile.AsNode().GetChild(i)
+		if shape, ok := Object.As[CollisionShape3D.Instance](child); ok {
+			collision_shape = shape
+			break
+		}
 	}
-	tile.AsCollisionObject3D().ShapeOwnerAddShape(tile.shape_owner, shape.AsShape3D())
+	if collision_shape == CollisionShape3D.Nil {
+		collision_shape = CollisionShape3D.New()
+		tile.AsNode().AddChild(collision_shape.AsNode())
+	}
+	collision_shape.SetShape(shape.AsShape3D())
 
 	tile.Mesh.SetMesh(mesh.AsMesh())
 	tile.Mesh.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
@@ -302,11 +319,6 @@ func (tile *TerrainTile) Reload() {
 	tile.Mesh.AsNode3D().SetPosition(Vector3.XYZ{
 		-8, 0, -8,
 	})
-	/*tile.AsNode3D().SetPosition(Vector3.XYZ{
-	  float32(tile.region[0])*16 + 8 - 0.5,
-	  0,
-	  float32(tile.region[1])*16 + 8 - 0.5,
-	  })*/
 }
 
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {

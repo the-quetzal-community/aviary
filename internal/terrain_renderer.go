@@ -1,8 +1,6 @@
 package internal
 
 import (
-	"fmt"
-
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
@@ -76,6 +74,8 @@ func (tr *TerrainRenderer) Ready() {
 	tr.shader_buried = ShaderMaterial.New()
 	tr.shader_buried.SetShader(buried)
 	tr.shader_buried.SetShaderParameter("texture_albedo", rock)
+	tr.shader_buried.SetShaderParameter("radius", 2.0)
+	tr.shader_buried.SetShaderParameter("height", 0.0)
 
 	tr.BrushRadius = 2.0
 
@@ -104,6 +104,7 @@ func (tr *TerrainRenderer) Paint(event InputEventMouse.Instance) {
 		Radius: tr.BrushRadius,
 		Amount: tr.BrushAmount,
 		Design: design,
+		Commit: true,
 	})
 	tr.shader.SetShaderParameter("paint_active", false)
 	tr.PaintActive = false
@@ -120,11 +121,11 @@ func (vr *TerrainRenderer) Process(dt Float.X) {
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
 			vr.mouseOver <- event.BrushTarget
-			vr.BrushTarget = Vector3.Round(event.BrushTarget)
+			vr.BrushTarget = event.BrushTarget
 			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
+			vr.shader_buried.SetShaderParameter("uplift", event.BrushTarget)
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
-				vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 				vr.client.space.Sculpt(musical.Sculpt{
 					Author: vr.client.id,
 					Target: event.BrushTarget,
@@ -135,14 +136,11 @@ func (vr *TerrainRenderer) Process(dt Float.X) {
 			} else if !Input.IsKeyPressed(Input.KeyShift) {
 
 			} else {
-				event.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.BrushTarget = event.BrushTarget
 				vr.BrushDeltaV = event.BrushDeltaV
 				if event.BrushDeltaV != 0 {
 					vr.BrushActive = true
 				}
-				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
-				fmt.Println("Brush at:", vr.BrushTarget, " delta:", vr.BrushDeltaV, Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
 			}
 			continue
 		default:
@@ -152,10 +150,15 @@ func (vr *TerrainRenderer) Process(dt Float.X) {
 	if vr.BrushActive {
 		vr.BrushAmount += dt * vr.BrushDeltaV
 		vr.shader.SetShaderParameter("height", vr.BrushAmount)
+		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
 	}
 }
 
 func (vr *TerrainRenderer) Sculpt(brush musical.Sculpt) {
+	if brush.Author == vr.client.id {
+		vr.shader.SetShaderParameter("height", 0.0)
+		vr.shader_buried.SetShaderParameter("height", 0.0)
+	}
 	vr.tile.Sculpt(brush)
 }
 
@@ -177,17 +180,24 @@ func (tr *TerrainRenderer) UnhandledInput(event InputEvent.Instance) {
 					tr.BrushRadius = 0.5
 				}
 				tr.shader.SetShaderParameter("radius", tr.BrushRadius)
+				tr.shader_buried.SetShaderParameter("radius", tr.BrushRadius)
 			}
 			if event.ButtonIndex() == Input.MouseButtonWheelUp {
 				tr.BrushRadius += 0.5
 				tr.shader.SetShaderParameter("radius", tr.BrushRadius)
+				tr.shader_buried.SetShaderParameter("radius", tr.BrushRadius)
 			}
 		}
 		if tr.BrushActive && event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsReleased() {
-			/*if err := tr.edits.LiftTerrain(tr.BrushTarget, tr.BrushRadius, tr.BrushAmount, 1); err != nil {
-				Engine.Raise(err)
-				return
-			}*/
+			tr.client.space.Sculpt(musical.Sculpt{
+				Author: tr.client.id,
+				Target: tr.BrushTarget,
+				Radius: tr.BrushRadius,
+				Amount: tr.BrushAmount,
+				Commit: true,
+			})
+			tr.BrushAmount = 0.0
+			tr.BrushActive = false
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && tr.PaintActive {
 			if event.AsInputEvent().IsReleased() {
@@ -199,10 +209,14 @@ func (tr *TerrainRenderer) UnhandledInput(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.Keycode() == Input.KeyShift && event.AsInputEvent().IsPressed() {
 			tr.shader.SetShaderParameter("brush_active", true)
+			tr.shader_buried.SetShaderParameter("brush_active", true)
 		}
 		if event.Keycode() == Input.KeyShift && event.AsInputEvent().IsReleased() {
 			tr.shader.SetShaderParameter("height", 0.0)
 			tr.shader.SetShaderParameter("brush_active", false)
+			tr.shader_buried.SetShaderParameter("height", 0.0)
+			tr.shader_buried.SetShaderParameter("brush_active", false)
+			tr.BrushActive = false
 		}
 	}
 }

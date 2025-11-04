@@ -12,27 +12,47 @@ uniform float height;
 uniform float radius;
 uniform bool brush_active;
 
-varying vec3 world;
-varying flat vec4 texture;
-varying vec4 weights;
+uniform float blend_sharpness = 8.0; // Higher values make transitions sharper, reducing unwanted blending/shearing on sides
+varying vec3 world_pos;
+varying vec3 world_normal;
+
+uniform float uv_scale = 0.1;
 
 void vertex() {
     float dx = (VERTEX.x - uplift.x);
     float dy = (VERTEX.z - uplift.z);
 	// uplift the terrain, if within radius
-	if (dx*dx+dy*dy < radius*radius) {
+	if (dx*dx+dy*dy < radius*radius && VERTEX.y > 0.0) {
         VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
     }
-    world = VERTEX;
-    texture = CUSTOM0;
-    weights = CUSTOM1;
+    VERTEX.y -= 2.2;
+    VERTEX.y = max(VERTEX.y, -2.0);
+    world_pos = VERTEX;
+    world_normal = NORMAL;
 }
 
 void fragment() {
-	vec4 albedo_tex = texture(texture_albedo, UV);
+    // Normalize interpolated world normal for accurate blending
+    vec3 n = normalize(world_normal);
+    ALBEDO = n * 0.5 + 0.5;
 
-	float highlight = 1.0;
-	float dx = (world.x - uplift.x);
-    float dy = (world.z - uplift.z);
-    ALBEDO = albedo_tex.rgb * highlight;
+    // Compute triplanar blend weights based on absolute world normal
+    vec3 blend = abs(n);
+    blend = max(blend, vec3(0.00001)); // Avoid zero
+    blend = pow(blend, vec3(blend_sharpness)); // Sharpen blend to reduce shearing from unwanted top projection mixing
+    blend /= (blend.x + blend.y + blend.z); // Normalize
+
+    // Procedural UVs for each projection plane (scale and fract for repeating tiles)
+    vec2 uv_x = fract(world_pos.zy * uv_scale); // Projection for X-normal dominant (side)
+    vec2 uv_y = fract(world_pos.xz * uv_scale); // Projection for Y-normal dominant (top/flat)
+    vec2 uv_z = fract(world_pos.xy * uv_scale); // Projection for Z-normal dominant (side)
+
+    // Sample the single texture for all projections
+    vec3 tex_x = texture(texture_albedo, uv_x).rgb * blend.x;
+    vec3 tex_y = texture(texture_albedo, uv_y).rgb * blend.y;
+    vec3 tex_z = texture(texture_albedo, uv_z).rgb * blend.z;
+
+    // Blend the samples
+    vec3 albedo = tex_x + tex_y + tex_z;
+    ALBEDO = albedo;
 }
