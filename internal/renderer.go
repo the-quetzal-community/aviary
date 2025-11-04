@@ -122,10 +122,10 @@ func (vr *Renderer) Process(dt Float.X) {
 		case event := <-vr.brushEvents:
 			vr.mouseOver <- event.BrushTarget
 			vr.BrushTarget = Vector3.Round(event.BrushTarget)
-			vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
+			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
-				vr.shader.SetShaderParameter("uplift", Vector3.Sub(event.BrushTarget, Vector3.New(0.5, 0.5, 0.5)))
+				vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 				vr.client.space.Sculpt(musical.Sculpt{
 					Author: vr.client.id,
 					Target: event.BrushTarget,

@@ -469,6 +469,11 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
+				if world.VultureRenderer.PaintActive {
+					world.VultureRenderer.shader.SetShaderParameter("paint_active", false)
+					world.VultureRenderer.PaintActive = false
+					break
+				}
 				if world.PreviewRenderer.Enabled() {
 					world.PreviewRenderer.Place()
 					break
@@ -498,6 +503,11 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
+				if world.VultureRenderer.PaintActive {
+					world.VultureRenderer.shader.SetShaderParameter("paint_active", false)
+					world.VultureRenderer.PaintActive = false
+					break
+				}
 				if world.PreviewRenderer.Enabled() {
 					world.PreviewRenderer.Discard()
 					break
