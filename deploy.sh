@@ -4,7 +4,7 @@ if [ -z "$1" ]; then
 fi
 GOOS=windows GOARCH=amd64 gd build
 GOOS=linux GOARCH=amd64 gd build
-vpk [linux] pack --packId "aviary" --packVersion "$1" --packDir ./releases/linux/amd64 --mainExe aviary -o ./releases/velopack
-vpk [win] pack --packId "aviary" --packVersion "$1" --packDir ./releases/windows/amd64 --mainExe aviary.exe -o ./releases/velopack
+vpk [linux] pack --packId "aviary.editor" --packVersion "$1" --packDir ./releases/linux/amd64 --mainExe aviary -o ./releases/velopack
+vpk [win] pack --packId "aviary.editor" --packVersion "$1" --packDir ./releases/windows/amd64 --mainExe aviary.exe -o ./releases/velopack
 cd releases/velopack
 rclone copy -v --max-depth 1 . r2:aviary/

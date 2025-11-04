@@ -12,6 +12,8 @@ import (
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PropertyTweener"
@@ -58,6 +60,8 @@ type UI struct {
 	queued func()
 
 	client *Client
+
+	lastDisplay Vector2i.XY
 }
 
 var categories = []string{
@@ -82,6 +86,15 @@ func (ui *UI) Setup() {
 	ui.CloudControl.Setup()
 }
 
+func (ui *UI) UnhandledInput(event InputEvent.Instance) {
+	if ui.drawExpanded.Load() && Object.Is[InputEventMouseMotion.Instance](event) {
+		height := DisplayServer.WindowGetSize(0).Y
+		if ui.Editor.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
+			ui.closeDrawer()
+		}
+	}
+}
+
 func (ui *UI) Ready() {
 	ui.themes = append(ui.themes, "")
 	Dir := DirAccess.Open("res://library")
@@ -99,12 +112,6 @@ func (ui *UI) Ready() {
 	ui.onThemeSelected(0)
 	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
 	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterStop)
-	ui.Editor.AsControl().OnMouseExited(func() {
-		height := DisplayServer.WindowGetSize(0).Y
-		if ui.Editor.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
-			ui.closeDrawer()
-		}
-	})
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.openDrawer)
@@ -118,6 +125,72 @@ func (ui *UI) Ready() {
 			}
 		}
 	})
+	ui.scaling()
+	ui.AsControl().OnResized(ui.scaling)
+}
+
+func (ui *UI) scaling() {
+	display := DisplayServer.WindowGetSize(0)
+	// If not set (first time), initialize it
+	if ui.lastDisplay.X == 0 && ui.lastDisplay.Y == 0 {
+		ui.lastDisplay = display
+	}
+
+	// Calculate uniform scale factor based on height ratio (360 base height at 2160 screen height)
+	var scale_factor Float.X = Float.X(display.Y) / 2160.0
+
+	// Set uniform scale for both X and Y (to scale contents like tab icons without distortion)
+	scale := Vector2.XY{X: scale_factor, Y: scale_factor}
+	ui.Editor.AsControl().SetScale(scale)
+
+	// Adjust logical size.X to fill the full display width after scaling
+	// (Do not change size.Y; assume it's fixed at base, e.g., 360)
+	size := ui.Editor.AsControl().Size()
+	size.X = Float.X(display.X) / scale_factor
+	ui.Editor.AsControl().SetSize(size)
+
+	// Pin to the bottom: Set position.Y so the bottom aligns with screen bottom
+	// (Assuming position.X is 0 or left-aligned; adjust if needed)
+	pos := ui.Editor.AsControl().Position()
+	pos.Y = Float.X(display.Y) - (size.Y * scale_factor)
+	ui.Editor.AsControl().SetPosition(pos)
+
+	// scale root UI elements based on display size
+	ui.scale(ui.CloudControl.AsControl(), Float.X(3840), Float.X(2160))
+	ui.scale(ui.ThemeSelector.AsControl(), Float.X(3840), Float.X(2160))
+	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160))
+
+	// ThemeSelector needs to be centered to the top center
+	theme_pos := ui.ThemeSelector.AsControl().Position()
+	theme_scale := ui.ThemeSelector.AsControl().Scale()
+	theme_size := ui.ThemeSelector.AsControl().Size()
+	theme_pos.X = (Float.X(display.X)/2 - (theme_size.X * theme_scale.X * Float.X(len(ui.themes))))
+	ui.ThemeSelector.AsControl().SetPosition(theme_pos)
+
+	// Update last display for next resize
+	ui.lastDisplay = display
+}
+
+func (ui *UI) scale(control Control.Instance, base_screen_width Float.X, base_screen_height Float.X) {
+	display := DisplayServer.WindowGetSize(0)
+
+	// Determine which change is more significant
+	var scale_factor Float.X
+	if Float.X(display.Y)/base_screen_height > Float.X(display.X)/base_screen_width {
+		// Height change is larger: scale based on height
+		scale_factor = Float.X(display.Y) / base_screen_height
+	} else {
+		// Width change is larger (or equal): scale based on width, preserving aspect
+		scale_factor = Float.X(display.X) / base_screen_width
+	}
+
+	// Set uniform scale for both X and Y (preserves aspect, scales icons etc.)
+	scale := Vector2.XY{X: scale_factor, Y: scale_factor}
+	control.SetScale(scale)
+}
+
+func (ui *UI) Close() {
+	ui.closeDrawer()
 }
 
 func (ui *UI) openDrawer() {
@@ -134,10 +207,11 @@ func (ui *UI) openDrawer() {
 	}
 	ui.client.scroll_lock = true
 	window_size := DisplayServer.WindowGetSize(0)
-	// Expand close to the top of the screen.
-	var amount Float.X = -(Float.X(window_size.Y) - 370) * 0.8
+	scale_factor := ui.Editor.AsControl().Scale().Y
+	current_eff_height := ui.Editor.AsControl().Size().Y * scale_factor
+	var amount Float.X = -(Float.X(window_size.Y) - current_eff_height) * 0.8
 	move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount)
-	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-amount)
+	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-(amount/scale_factor))
 	tween := SceneTree.Get(ui.Editor.AsNode()).CreateTween()
 	PropertyTweener.Make(tween, ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
 	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
@@ -150,7 +224,7 @@ func (ui *UI) openDrawer() {
 		}
 	})
 	ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
-	ui.drawExpansion = amount
+	// Remove ui.drawExpansion = amount (no longer needed)
 }
 
 func (ui *UI) closeDrawer() {
@@ -166,8 +240,11 @@ func (ui *UI) closeDrawer() {
 		container.scroll_lock = true
 	}
 	ui.client.scroll_lock = false
-	move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y-ui.drawExpansion)
-	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y+ui.drawExpansion)
+	window_size := DisplayServer.WindowGetSize(0)
+	scale_factor := ui.Editor.AsControl().Scale().Y
+	const base_logical_height = 360.0 // Your base collapsed logical height (adjust to 370.0 if that's intended)
+	grow := Vector2.New(ui.Editor.AsControl().Size().X, base_logical_height)
+	move := Vector2.New(ui.Editor.AsControl().Position().X, Float.X(window_size.Y)-(base_logical_height*scale_factor))
 	tween := SceneTree.Get(ui.Editor.AsNode()).CreateTween()
 	PropertyTweener.Make(tween, ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
 	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)

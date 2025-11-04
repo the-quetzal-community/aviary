@@ -85,11 +85,12 @@ anchor_left = 0.5
 anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = -161.0
+offset_left = -161.5
 offset_top = -26.0
-offset_right = 162.0
+offset_right = 161.5
 grow_horizontal = 2
 grow_vertical = 0
+pivot_offset = Vector2(161, 26)
 mouse_filter = 1
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_styles/normal = ExtResource("2_fx2qn")
@@ -126,9 +127,10 @@ offset_left = -20.0
 offset_right = 20.0
 offset_bottom = 40.0
 grow_horizontal = 2
+pivot_offset = Vector2(20, 0.09)
 
 [node name="Pointer" type="TextureRect" parent="ThemeSelector"]
-layout_mode = 2
+layout_mode = 0
 offset_left = 27.0004
 offset_top = -0.396642
 offset_right = 39.0004
@@ -265,7 +267,7 @@ offset_bottom = 97.0
 grow_horizontal = 2
 
 [node name="Keys" type="GridContainer" parent="CloudControl/Keypad"]
-layout_mode = 2
+layout_mode = 0
 offset_left = 47.0
 offset_top = 123.997
 offset_right = 235.0
