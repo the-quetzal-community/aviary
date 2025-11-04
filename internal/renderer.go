@@ -39,7 +39,8 @@ type Renderer struct {
 
 	mouseOver chan Vector3.XYZ
 
-	shader ShaderMaterial.Instance
+	shader        ShaderMaterial.Instance
+	shader_buried ShaderMaterial.Instance
 
 	texture chan Path.ToResource
 
@@ -73,10 +74,18 @@ func (tr *Renderer) Ready() {
 	tr.shader.SetShaderParameter("texture_albedo", textures)
 	tr.shader.SetShaderParameter("radius", 2.0)
 	tr.shader.SetShaderParameter("height", 0.0)
+
+	rock := Resource.Load[Texture2D.Instance]("res://terrain/rock.jpg")
+	buried := Resource.Load[Shader.Instance]("res://shader/buried.gdshader")
+	tr.shader_buried = ShaderMaterial.New()
+	tr.shader_buried.SetShader(buried)
+	tr.shader_buried.SetShaderParameter("texture_albedo", rock)
+
 	tr.BrushRadius = 2.0
 
 	tr.tile = new(TerrainTile)
 	tr.tile.shader = tr.shader
+	tr.tile.side_shader = tr.shader_buried
 	tr.tile.brushEvents = tr.brushEvents
 	tr.AsNode().AddChild(tr.tile.AsNode())
 }

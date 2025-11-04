@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"math"
+
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/HeightMapShape3D"
@@ -27,8 +29,9 @@ type TerrainTile struct {
 
 	brushEvents chan<- terrainBrushEvent
 
-	Mesh   MeshInstance3D.Instance
-	shader ShaderMaterial.Instance
+	Mesh        MeshInstance3D.Instance
+	shader      ShaderMaterial.Instance
+	side_shader ShaderMaterial.Instance
 
 	shape_owner int
 }
@@ -111,7 +114,136 @@ func (tile *TerrainTile) Reload() {
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
 	)
 
-	// generate mesh with pre-baked heights.
+	// Compute min height and base
+	min_h := float32(math.MaxFloat32)
+	for _, h := range heights {
+		if h < min_h {
+			min_h = h
+		}
+	}
+	base_h := min_h - 2
+	tile_size := float32(1.0) // Adjust for texture tiling scale
+
+	// Sides mesh data
+	var vertices_side = Packed.New[Vector3.XYZ]()
+	vertices_side.Resize(4 * 16 * 6)
+	var normals_side = Packed.New[Vector3.XYZ]()
+	normals_side.Resize(4 * 16 * 6)
+	var uvs_side = Packed.New[Vector2.XY]()
+	uvs_side.Resize(4 * 16 * 6)
+
+	index_base := 0
+
+	type sideParam struct {
+		isZFixed         bool
+		fixed            float32
+		fixedIndex       int
+		stride           int
+		flippedWinding   bool
+		normalAxis       int // 0 for X, 2 for Z
+		negateIfPositive bool
+	}
+
+	sides := []sideParam{
+		{true, 0, 0, 1, true, 2, true},      // South
+		{true, 16, 16, 1, false, 2, false},  // North
+		{false, 0, 0, 17, false, 0, true},   // West
+		{false, 16, 16, 17, true, 0, false}, // East
+	}
+
+	for _, sp := range sides {
+		for i := 0; i < 16; i++ {
+			coord := i
+			var h_near, h_far float32
+			if sp.isZFixed {
+				h_near = heights[coord+sp.fixedIndex*17]
+				h_far = heights[coord+1+sp.fixedIndex*17]
+			} else {
+				h_near = heights[sp.fixedIndex+coord*17]
+				h_far = heights[sp.fixedIndex+(coord+1)*17]
+			}
+
+			pos_near := float32(i)
+			pos_far := float32(i + 1)
+			var tl, tr, bl, br Vector3.XYZ
+			if sp.isZFixed {
+				tl = Vector3.XYZ{pos_near, h_near, sp.fixed}
+				tr = Vector3.XYZ{pos_far, h_far, sp.fixed}
+				bl = Vector3.XYZ{pos_near, base_h, sp.fixed}
+				br = Vector3.XYZ{pos_far, base_h, sp.fixed}
+			} else {
+				tl = Vector3.XYZ{sp.fixed, h_near, pos_near}
+				tr = Vector3.XYZ{sp.fixed, h_far, pos_far}
+				bl = Vector3.XYZ{sp.fixed, base_h, pos_near}
+				br = Vector3.XYZ{sp.fixed, base_h, pos_far}
+			}
+
+			var v1, v2 Vector3.XYZ
+			if sp.flippedWinding {
+				v1 = Vector3.Sub(tr, bl)
+				v2 = Vector3.Sub(tl, bl)
+			} else {
+				v1 = Vector3.Sub(tl, bl)
+				v2 = Vector3.Sub(tr, bl)
+			}
+			n := Vector3.Normalized(Vector3.Cross(v1, v2))
+			nComp := Vector3.Index(n, sp.normalAxis)
+			if (nComp > 0) == sp.negateIfPositive {
+				n = Vector3.Inverse(n)
+			}
+
+			// Triangle 1
+			vertices_side.SetIndex(index_base+0, bl)
+			normals_side.SetIndex(index_base+0, n)
+			uvs_side.SetIndex(index_base+0, Vector2.XY{float32(i) / tile_size, (base_h - base_h) / tile_size})
+			if sp.flippedWinding {
+				vertices_side.SetIndex(index_base+1, tr)
+				normals_side.SetIndex(index_base+1, n)
+				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+				vertices_side.SetIndex(index_base+2, tl)
+				normals_side.SetIndex(index_base+2, n)
+				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i) / tile_size, (h_near - base_h) / tile_size})
+			} else {
+				vertices_side.SetIndex(index_base+1, tl)
+				normals_side.SetIndex(index_base+1, n)
+				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i) / tile_size, (h_near - base_h) / tile_size})
+				vertices_side.SetIndex(index_base+2, tr)
+				normals_side.SetIndex(index_base+2, n)
+				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+			}
+
+			// Triangle 2
+			vertices_side.SetIndex(index_base+3, bl)
+			normals_side.SetIndex(index_base+3, n)
+			uvs_side.SetIndex(index_base+3, Vector2.XY{float32(i) / tile_size, (base_h - base_h) / tile_size})
+			if sp.flippedWinding {
+				vertices_side.SetIndex(index_base+4, br)
+				normals_side.SetIndex(index_base+4, n)
+				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, (base_h - base_h) / tile_size})
+				vertices_side.SetIndex(index_base+5, tr)
+				normals_side.SetIndex(index_base+5, n)
+				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+			} else {
+				vertices_side.SetIndex(index_base+4, tr)
+				normals_side.SetIndex(index_base+4, n)
+				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, (h_far - base_h) / tile_size})
+				vertices_side.SetIndex(index_base+5, br)
+				normals_side.SetIndex(index_base+5, n)
+				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, (base_h - base_h) / tile_size})
+			}
+
+			index_base += 6
+		}
+	}
+
+	var arrays_side = [Mesh.ArrayMax]any{
+		Mesh.ArrayVertex: vertices_side,
+		Mesh.ArrayNormal: normals_side,
+		Mesh.ArrayTexUv:  uvs_side,
+	}
+	ArrayMesh.Expanded(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
+		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv,
+	)
 
 	if tile.shape_owner != -1 {
 		tile.AsCollisionObject3D().ShapeOwnerClearShapes(tile.shape_owner)
@@ -120,16 +252,17 @@ func (tile *TerrainTile) Reload() {
 	}
 	tile.AsCollisionObject3D().ShapeOwnerAddShape(tile.shape_owner, shape.AsShape3D())
 
-	tile.Mesh.AsGeometryInstance3D().SetMaterialOverride(tile.shader.AsMaterial())
 	tile.Mesh.SetMesh(mesh.AsMesh())
+	tile.Mesh.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
+	tile.Mesh.SetSurfaceOverrideMaterial(1, tile.side_shader.AsMaterial())
 	tile.Mesh.AsNode3D().SetPosition(Vector3.XYZ{
 		-8, 0, -8,
 	})
 	/*tile.AsNode3D().SetPosition(Vector3.XYZ{
-	float32(tile.region[0])*16 + 8 - 0.5,
-	0,
-	float32(tile.region[1])*16 + 8 - 0.5,
-	})*/
+	  float32(tile.region[0])*16 + 8 - 0.5,
+	  0,
+	  float32(tile.region[1])*16 + 8 - 0.5,
+	  })*/
 }
 
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {
