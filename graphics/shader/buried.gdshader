@@ -16,7 +16,7 @@ uniform float blend_sharpness = 8.0; // Higher values make transitions sharper, 
 varying vec3 world_pos;
 varying vec3 world_normal;
 
-uniform float uv_scale = 0.1;
+uniform float uv_scale = 1;
 
 void vertex() {
     float dx = (VERTEX.x - uplift.x);
