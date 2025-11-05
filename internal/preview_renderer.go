@@ -105,7 +105,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 		break
 	}
 	pos := pr.AsNode3D().Position()
-	pos.Y = (pr.terrain.HeightAt(pos))
+	pos.Y = (pr.terrain.tile.HeightAt(pos))
 	pr.AsNode3D().SetPosition(pos)
 }
 

@@ -39,6 +39,8 @@ type TerrainTile struct {
 	client    *Client
 	reloading bool
 	sculpts   []musical.Sculpt
+
+	heights []float32
 }
 
 func (tile *TerrainTile) Ready() {
@@ -54,6 +56,19 @@ func (tile *TerrainTile) Sculpt(brush musical.Sculpt) {
 	tile.reloading = true
 	Callable.Defer(Callable.New(func() {
 		tile.Reload()
+
+		if brush.Design == (musical.Design{}) {
+			// raise any existing assets affected by the sculpt
+			for id := range tile.client.object_to_entity {
+				object, ok := id.Instance()
+				if !ok {
+					continue
+				}
+				pos := object.AsNode3D().GlobalPosition()
+				pos.Y = tile.HeightAt(pos)
+				object.AsNode3D().SetGlobalPosition(pos)
+			}
+		}
 	}))
 }
 
@@ -125,10 +140,10 @@ func (tile *TerrainTile) Reload() {
 		}
 		return max(-2, height)
 	}
-	var heights = make([]float32, 17*17)
+	tile.heights = make([]float32, 17*17)
 	for x := range 17 {
 		for y := range 17 {
-			heights[x+y*17] = float32(sample_height(x, y))
+			tile.heights[x+y*17] = float32(sample_height(x, y))
 		}
 	}
 
@@ -163,7 +178,7 @@ func (tile *TerrainTile) Reload() {
 	shape := HeightMapShape3D.New()
 	shape.SetMapDepth(17)
 	shape.SetMapWidth(17)
-	shape.SetMapData(heights)
+	shape.SetMapData(tile.heights)
 
 	var mesh = ArrayMesh.New()
 	var arrays = [Mesh.ArrayMax]any{
@@ -212,11 +227,11 @@ func (tile *TerrainTile) Reload() {
 			coord := i
 			var h_near, h_far float32
 			if sp.isZFixed {
-				h_near = heights[coord+sp.fixedIndex*17]
-				h_far = heights[coord+1+sp.fixedIndex*17]
+				h_near = tile.heights[coord+sp.fixedIndex*17]
+				h_far = tile.heights[coord+1+sp.fixedIndex*17]
 			} else {
-				h_near = heights[sp.fixedIndex+coord*17]
-				h_far = heights[sp.fixedIndex+(coord+1)*17]
+				h_near = tile.heights[sp.fixedIndex+coord*17]
+				h_far = tile.heights[sp.fixedIndex+(coord+1)*17]
 			}
 			h_near += 2.2
 			h_far += 2.2
@@ -319,6 +334,34 @@ func (tile *TerrainTile) Reload() {
 	tile.Mesh.AsNode3D().SetPosition(Vector3.XYZ{
 		-8, 0, -8,
 	})
+}
+
+// HeightAt returns the height of the terrain mesh at the given position, taking into account the mesh.
+func (tile *TerrainTile) HeightAt(pos Vector3.XYZ) Float.X {
+	local := Vector3.Sub(pos, tile.Mesh.AsNode3D().GlobalPosition())
+	x := local.X
+	z := local.Z
+	x = max(0.0, min(16.0, x))
+	z = max(0.0, min(16.0, z))
+	x0 := int(x)
+	z0 := int(z)
+	x1 := x0 + 1
+	z1 := z0 + 1
+	if x1 > 16 {
+		x1 = 16
+	}
+	if z1 > 16 {
+		z1 = 16
+	}
+	h00 := Float.X(tile.heights[x0+z0*17])
+	h10 := Float.X(tile.heights[x1+z0*17])
+	h01 := Float.X(tile.heights[x0+z1*17])
+	h11 := Float.X(tile.heights[x1+z1*17])
+	sx := x - Float.X(x0)
+	sz := z - Float.X(z0)
+	h0 := h00*(1-sx) + h10*sx
+	h1 := h01*(1-sx) + h11*sx
+	return (h0*(1-sz) + h1*sz)
 }
 
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {

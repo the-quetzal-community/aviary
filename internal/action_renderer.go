@@ -63,7 +63,9 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 	action := ar.actions[ar.current]
 	parent := Object.To[Node3D.Instance](ar.AsNode().GetParent())
 	for ar.client.time.Now()-action.Timing >= musical.Timing(action.Period) {
-		parent.SetPosition(action.Target)
+		pos := action.Target
+		pos.Y = ar.client.TerrainRenderer.tile.HeightAt(pos)
+		parent.SetPosition(pos)
 		ar.Initial = action.Target
 		ar.current++
 		if ar.current >= len(ar.actions) {
@@ -83,5 +85,8 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 			action.Target.Z-ar.Initial.Z,
 		),
 	})
-	parent.SetPosition(Vector3.Lerp(ar.Initial, action.Target, Float.X(ar.client.time.Now()-action.Timing)/Float.X(action.Period)))
+	pos := Vector3.Lerp(ar.Initial, action.Target, Float.X(ar.client.time.Now()-action.Timing)/Float.X(action.Period))
+	pos.Y = ar.client.TerrainRenderer.tile.HeightAt(pos)
+	parent.SetPosition(pos)
+
 }
