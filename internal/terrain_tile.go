@@ -364,6 +364,46 @@ func (tile *TerrainTile) HeightAt(pos Vector3.XYZ) Float.X {
 	return (h0*(1-sz) + h1*sz)
 }
 
+// NormalAt returns the surface normal of the terrain mesh at the given position.
+func (tile *TerrainTile) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
+	local := Vector3.Sub(pos, tile.Mesh.AsNode3D().GlobalPosition())
+	x := local.X + 8
+	z := local.Z + 8
+	x = max(0.0, min(16.0, x))
+	z = max(0.0, min(16.0, z))
+	x0 := int(x)
+	z0 := int(z)
+	x1 := x0 + 1
+	z1 := z0 + 1
+	if x1 > 16 {
+		x1 = 16
+	}
+	if z1 > 16 {
+		z1 = 16
+	}
+	h00 := Float.X(tile.heights[x0+z0*17])
+	h10 := Float.X(tile.heights[x1+z0*17])
+	h01 := Float.X(tile.heights[x0+z1*17])
+	h11 := Float.X(tile.heights[x1+z1*17])
+	sx := x - Float.X(x0)
+	sz := z - Float.X(z0)
+	fx := (1-sz)*(h10-h00) + sz*(h11-h01)
+	fz := (1-sx)*(h01-h00) + sx*(h11-h10)
+	n := Vector3.XYZ{
+		X: -fx,
+		Y: 1,
+		Z: -fz,
+	}
+	length := Float.Sqrt(n.X*n.X + n.Y*n.Y + n.Z*n.Z)
+	if length == 0 {
+		length = 1
+	}
+	n.X /= Float.X(length)
+	n.Y /= Float.X(length)
+	n.Z /= Float.X(length)
+	return n
+}
+
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && Input.IsKeyPressed(Input.KeyShift) {
 		if event.ButtonIndex() == Input.MouseButtonLeft {

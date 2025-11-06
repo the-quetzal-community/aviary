@@ -124,6 +124,10 @@ func (vr *TerrainRenderer) Process(dt Float.X) {
 			vr.BrushTarget = event.BrushTarget
 			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			vr.shader_buried.SetShaderParameter("uplift", event.BrushTarget)
+			if vr.client.PreviewRenderer.Enabled() || (!Input.IsKeyPressed(Input.KeyShift) && !vr.PaintActive) {
+				vr.BrushActive = false
+				break
+			}
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
 				vr.client.space.Sculpt(musical.Sculpt{
@@ -172,6 +176,9 @@ func (tr *TerrainRenderer) OnCreate() {
 }
 
 func (tr *TerrainRenderer) UnhandledInput(event InputEvent.Instance) {
+	if tr.client.PreviewRenderer.Enabled() {
+		return
+	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 		if Input.IsKeyPressed(Input.KeyShift) {
 			if event.ButtonIndex() == Input.MouseButtonWheelDown {

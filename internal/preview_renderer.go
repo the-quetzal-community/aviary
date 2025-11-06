@@ -2,6 +2,7 @@ package internal
 
 import (
 	"graphics.gd/classdb/CollisionObject3D"
+	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
@@ -43,7 +44,9 @@ func (pr *PreviewRenderer) Discard() {
 
 func (pr *PreviewRenderer) Place() {
 	if pr.AsNode().GetChildCount() > 0 {
-		Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
+		if !Input.IsKeyPressed(Input.KeyShift) {
+			Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
+		}
 
 		design, ok := pr.client.loaded[pr.current]
 		if !ok {
