@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/Camera3D"
@@ -48,7 +49,6 @@ import (
 
 const (
 	SignallingHost = "https://via.quetzal.community"
-	OneTimeUseCode = "4d128c18-23e9-4b98-bf70-2cb94295406f"
 )
 
 // Client represents a creative space accessible via Aviary.
@@ -130,10 +130,16 @@ func NewClient() *Client {
 		load_last_save:   true,
 	}
 	client.clientReady.Add(1)
+	client.loadUserState()
+	if UserState.Device == "" {
+		UserState.Device = uuid.NewString()
+		client.saveUserState()
+	}
 	return client
 }
 
 var UserState struct {
+	Device string // device identifier, to be linked with a Quetzal Community Account.
 	Record musical.Unique
 }
 
@@ -149,15 +155,29 @@ func NewClientLoading(record musical.Unique) *Client {
 	client.record = record
 	UserState.Record = record
 	client.load_last_save = false
+	client.saveUserState()
+	return client
+}
+
+func (world *Client) saveUserState() {
 	userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Write)
 	buf, err := json.Marshal(UserState)
 	if err != nil {
 		Engine.Raise(fmt.Errorf("failed to marshal user state: %w", err))
-		return client
+		return
 	}
 	userfile.StoreBuffer(buf)
 	userfile.Close()
-	return client
+}
+
+func (world *Client) loadUserState() {
+	userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Read)
+	if userfile != FileAccess.Nil {
+		buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetUserDataDir() + "/user.json"))
+		if err := json.Unmarshal(buf, &UserState); err != nil {
+			Engine.Raise(fmt.Errorf("failed to unmarshal user state: %w", err))
+		}
+	}
 }
 
 func (world *Client) isOnline() bool {
@@ -203,16 +223,8 @@ func (world *Client) apiHost() (networking.Code, error) {
 func (world *Client) Ready() {
 	defer world.clientReady.Done()
 
-	if !world.joining && world.load_last_save {
-		userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Read)
-		if userfile != FileAccess.Nil {
-			buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetUserDataDir() + "/user.json"))
-			if err := json.Unmarshal(buf, &UserState); err != nil {
-				Engine.Raise(fmt.Errorf("failed to unmarshal user state: %w", err))
-				return
-			}
-			world.record = UserState.Record
-		}
+	if !world.joining && world.load_last_save && UserState.Record != (musical.Unique{}) {
+		world.record = UserState.Record
 	}
 
 	if !world.joining {
@@ -240,7 +252,7 @@ func (world *Client) Ready() {
 		}
 	}
 	world.updates = make(chan []byte, 20)
-	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+OneTimeUseCode))
+	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+UserState.Device))
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.client = world

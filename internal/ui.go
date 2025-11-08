@@ -23,9 +23,12 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/Tween"
+	"graphics.gd/classdb/Viewport"
+	"graphics.gd/classdb/Window"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
+	"graphics.gd/variant/Signal"
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
@@ -117,7 +120,10 @@ func (ui *UI) Ready() {
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.openDrawer)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		if !ui.client.isOnline() {
-			OS.ShellOpen("https://the.quetzal.community/aviary/account?connection=" + OneTimeUseCode)
+			OS.ShellOpen("https://the.quetzal.community/aviary/connection?id=" + UserState.Device)
+			Object.To[Window.Instance](Viewport.Get(ui.AsNode())).OnFocusEntered(func() {
+				ui.Setup()
+			}, Signal.OneShot)
 		} else {
 			ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
 			if ui.Cloudy.AsCanvasItem().Visible() {
