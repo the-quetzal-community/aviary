@@ -81,7 +81,7 @@ func (fl *FlightPlanner) Reload() {
 func (fl *FlightPlanner) fetchCloudSnaps() {
 	fl.clientReady.Wait()
 	fl.client.clientReady.Wait()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	saves, err := fl.client.signalling.CloudSaves(ctx)
 	if err != nil {

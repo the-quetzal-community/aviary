@@ -39,7 +39,7 @@ var PendingSaves sync.WaitGroup
 func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(work[:])
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	parts, err := community.CloudParts(ctx, signalling.WorkID(name))
@@ -63,12 +63,18 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	closers = append(closers, file)
 
 	var readers []io.Reader
-	var header [len(musical.MagicHeader)]byte
-	if _, err := io.ReadFull(file, header[:]); err != nil && !errors.Is(err, io.EOF) {
-		return nil, xray.New(err)
-	} else if err == nil {
-		if string(header[:]) != musical.MagicHeader {
-			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
+	if size > 0 {
+		var header [len(musical.MagicHeader)]byte
+		if _, err := io.ReadFull(file, header[:]); err != nil && !errors.Is(err, io.EOF) {
+			return nil, xray.New(err)
+		} else if err == nil {
+			if string(header[:]) != musical.MagicHeader {
+				return nil, xray.New(errors.New("invalid musical.Users3DScene file: " + string(header[:])))
+			}
+		}
+	} else if size == 0 {
+		if _, err := file.Write([]byte(musical.MagicHeader)); err != nil {
+			return nil, xray.New(err)
 		}
 	}
 	readers = append(readers, strings.NewReader(musical.MagicHeader))

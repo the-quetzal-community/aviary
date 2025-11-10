@@ -37,6 +37,7 @@ import (
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Signal"
+	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
 	"the.quetzal.community/aviary/internal/networking"
 )
@@ -100,7 +101,12 @@ func (ui *CloudControl) Setup() {
 		user, err := ui.client.signalling.LookupUser(context.Background())
 		if err != nil {
 			Engine.Raise(err)
-			ui.on_process <- func(cc *CloudControl) { cc.set_online_status_indicator(false) }
+			ui.on_process <- func(cc *CloudControl) {
+				if err.Error() == "Unauthorized" {
+					UserState.Aviary = signalling.User{}
+				}
+				cc.set_online_status_indicator(false)
+			}
 			return
 		}
 		ui.on_process <- func(cc *CloudControl) {
