@@ -120,7 +120,7 @@ func (ui *UI) Ready() {
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.openDrawer)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		if !ui.client.isOnline() {
-			OS.ShellOpen("https://the.quetzal.community/aviary/connection?id=" + UserState.Device)
+			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Device)
 			Object.To[Window.Instance](Viewport.Get(ui.AsNode())).OnFocusEntered(func() {
 				ui.Setup()
 			}, Signal.OneShot)

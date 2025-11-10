@@ -184,7 +184,7 @@ func (ui *CloudControl) Setup() {
 func (ui *CloudControl) Ready() {
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
 		if time.Now().After(ui.client.user.TogetherUntil) {
-			OS.ShellOpen("https://the.quetzal.community/aviary/connection?id=" + UserState.Device)
+			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Device)
 			Object.To[Window.Instance](Viewport.Get(ui.AsNode())).OnFocusEntered(func() {
 				ui.Setup()
 			}, Signal.OneShot)
