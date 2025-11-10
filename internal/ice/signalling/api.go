@@ -2,6 +2,7 @@ package signalling
 
 import (
 	"context"
+	"time"
 
 	"runtime.link/api"
 	"runtime.link/xyz"
@@ -12,7 +13,12 @@ import (
 type API struct {
 	api.Specification
 
-	LookupUser func(context.Context) (string, error) `rest:"GET /account user_id"`
+	LookupUser func(context.Context) (User, error) `rest:"GET /account"`
+}
+
+type User struct {
+	ID            string    `json:"user_id"`
+	TogetherUntil time.Time `json:"together_until"`
 }
 
 type Code string

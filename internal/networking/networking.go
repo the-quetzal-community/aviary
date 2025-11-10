@@ -17,9 +17,6 @@ import (
 
 const debug = false
 
-// Authentication token should differ for each released binary. This token represents a development/testing token.
-const Authentication = "4d128c18-23e9-4b98-bf70-2cb94295406f"
-
 type Server func(client Client)
 
 type Client struct {
@@ -42,6 +39,8 @@ type Connectivity struct {
 
 	Raise func(error)
 	Print func(string, ...any)
+
+	Authentication string
 }
 
 type iceMessageType string
@@ -97,7 +96,7 @@ func (c *Connectivity) setup() (err error) {
 		defer c.Print("Connectivity setup complete.\n")
 	}
 	c.community, _, err = websocket.DefaultDialer.Dial("wss://via.quetzal.community/connection", http.Header{
-		"Authorization": []string{"Bearer " + Authentication},
+		"Authorization": []string{"Bearer " + c.Authentication},
 	})
 	if err != nil {
 		return xray.New(err)
@@ -131,7 +130,7 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 		return xray.New(err)
 	}
 	signalling, _, err := websocket.DefaultDialer.Dial("wss://via.quetzal.community/code/"+string(code), http.Header{
-		"Authorization": []string{"Bearer " + Authentication},
+		"Authorization": []string{"Bearer " + c.Authentication},
 	})
 	if err != nil {
 		return xray.New(err)
@@ -408,7 +407,7 @@ func (c *Connectivity) Host(updates chan<- []byte, server Server) (Code, error) 
 		return "", err
 	}
 	signalling, _, err := websocket.DefaultDialer.Dial("wss://via.quetzal.community/code", http.Header{
-		"Authorization": []string{"Bearer " + Authentication},
+		"Authorization": []string{"Bearer " + c.Authentication},
 	})
 	if err != nil {
 		return "", xray.New(err)

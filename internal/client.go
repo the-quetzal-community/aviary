@@ -85,7 +85,7 @@ type Client struct {
 
 	saving atomic.Bool
 
-	user_id string
+	user signalling.User
 
 	id         musical.Author
 	record     musical.Unique
@@ -135,6 +135,7 @@ func NewClient() *Client {
 		UserState.Device = uuid.NewString()
 		client.saveUserState()
 	}
+	client.network.Authentication = UserState.Device
 	return client
 }
 
@@ -181,7 +182,7 @@ func (world *Client) loadUserState() {
 }
 
 func (world *Client) isOnline() bool {
-	return world.user_id != ""
+	return world.user.ID != ""
 }
 
 func (world *Client) apiJoin(code networking.Code) {
