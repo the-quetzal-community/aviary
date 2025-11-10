@@ -3,15 +3,18 @@ package internal
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/OS"
+	"runtime.link/api/xray"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
 )
@@ -60,6 +63,19 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	closers = append(closers, file)
 
 	var readers []io.Reader
+	if size == 0 && len(parts) > 0 {
+		readers = append(readers, strings.NewReader(musical.MagicHeader))
+	} else if size > 0 {
+		var header [len(musical.MagicHeader)]byte
+		_, err := io.ReadFull(file, header[:])
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, xray.New(err)
+		} else if err == nil {
+			if string(header[:]) != musical.MagicHeader {
+				return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
+			}
+		}
+	}
 	readers = append(readers, file)
 
 	for part, stat := range parts {
@@ -107,15 +123,31 @@ func (cr *cloudReader) Read(p []byte) (n int, err error) {
 			if err != nil {
 				return 0, err
 			}
-			cache, err := os.OpenFile(OS.GetUserDataDir()+"/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+			cache, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 			if err != nil {
 				return 0, err
 			}
 			cr.read = io.TeeReader(file, cache)
+			var header [len(musical.MagicHeader)]byte
+			n, err := io.ReadFull(cr.read, header[:])
+			if err != nil && !errors.Is(err, io.EOF) {
+				return n, xray.New(err)
+			} else if err == nil {
+				if string(header[:]) != musical.MagicHeader {
+					return n, xray.New(errors.New("invalid musical.Users3DScene file"))
+				}
+			}
 			cr.shut = func() {
 				file.Close()
 				cache.Close()
 			}
+			cr.open = true
+		} else {
+			local, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_RDONLY, 0666)
+			if err != nil {
+				return 0, err
+			}
+			cr.read = local
 			cr.open = true
 		}
 	}
@@ -175,6 +207,9 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 			file, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+fw.name+"/"+UserState.Device+".mus3", os.O_RDONLY, 0666)
 			if err != nil {
 				Engine.Raise(err)
+				return
+			}
+			if stat, err := file.Stat(); err == nil && stat.Size() < int64(len(musical.MagicHeader)) {
 				return
 			}
 			if err := fw.community.InsertSave(ctx, signalling.WorkID(fw.name), signalling.PartID(UserState.Device), file); err != nil {

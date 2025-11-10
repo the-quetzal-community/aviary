@@ -13,7 +13,7 @@ type Storage interface {
 	Open(WorkID) (fs.File, error)
 }
 
-const magicHeader = "the.quetzal.community/musical.Users3DScene@v0.1"
+const MagicHeader = "the.quetzal.community/musical.Users3DScene@v0.1"
 
 // Storage implements [UsersSpace3D] via a [io.ReadWriteSeeker].
 // This would typically be a .mu3s file on the local filesystem.
@@ -38,11 +38,11 @@ func newStorage(mus3 fs.File, limit int, client UsersSpace3D) (UsersSpace3D, err
 		return nil, xray.New(err)
 	}
 
-	var header [len(magicHeader)]byte
+	var header [len(MagicHeader)]byte
 	if _, err := io.ReadFull(store.reader, header[:]); err != nil && !errors.Is(err, io.EOF) {
 		return nil, xray.New(err)
 	} else if err == nil {
-		if string(header[:]) != magicHeader {
+		if string(header[:]) != MagicHeader {
 			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
 		}
 	}
@@ -51,7 +51,7 @@ func newStorage(mus3 fs.File, limit int, client UsersSpace3D) (UsersSpace3D, err
 		return nil, xray.New(err)
 	}
 	if stat.Size() == 0 && n == 0 && writable {
-		if _, err := w.Write([]byte(magicHeader)); err != nil {
+		if _, err := w.Write([]byte(MagicHeader)); err != nil {
 			return nil, xray.New(err)
 		}
 	}

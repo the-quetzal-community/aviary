@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -131,12 +132,25 @@ func NewClient() *Client {
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
+	var save = false
 	if UserState.Secret == "" {
 		UserState.Secret = uuid.NewString()
-		client.saveUserState()
+		save = true
 	}
 	if UserState.Device == "" {
 		UserState.Device = uuid.NewString()
+		save = true
+	}
+	if UserState.WorkID == (musical.WorkID{}) {
+		var buf [16]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			Engine.Raise(fmt.Errorf("failed to generate work ID: %w", err))
+		} else {
+			save = true
+			UserState.WorkID = musical.WorkID(buf)
+		}
+	}
+	if save {
 		client.saveUserState()
 	}
 	client.network.Authentication = UserState.Secret
@@ -293,7 +307,7 @@ type musicalImpl struct {
 }
 
 func (world musicalImpl) ReportError(err error) {
-	Engine.Raise(err)
+	Engine.Raise(fmt.Errorf("%s", err))
 }
 
 func (world musicalImpl) Open(space musical.WorkID) (fs.File, error) {
