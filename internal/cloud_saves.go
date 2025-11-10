@@ -63,19 +63,15 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	closers = append(closers, file)
 
 	var readers []io.Reader
-	if size == 0 && len(parts) > 0 {
-		readers = append(readers, strings.NewReader(musical.MagicHeader))
-	} else if size > 0 {
-		var header [len(musical.MagicHeader)]byte
-		_, err := io.ReadFull(file, header[:])
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, xray.New(err)
-		} else if err == nil {
-			if string(header[:]) != musical.MagicHeader {
-				return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
-			}
+	var header [len(musical.MagicHeader)]byte
+	if _, err := io.ReadFull(file, header[:]); err != nil && !errors.Is(err, io.EOF) {
+		return nil, xray.New(err)
+	} else if err == nil {
+		if string(header[:]) != musical.MagicHeader {
+			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
 		}
 	}
+	readers = append(readers, strings.NewReader(musical.MagicHeader))
 	readers = append(readers, file)
 
 	for part, stat := range parts {

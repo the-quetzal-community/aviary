@@ -51,6 +51,7 @@ func (fl *FlightPlanner) Reload() {
 		}
 	}
 	fl.Maps.SetColumns(int(fl.AsControl().Size().X/256) - 1)
+	DirAccess.MakeDirAbsolute("user://snaps")
 	for save := range DirAccess.Open("user://snaps").Iter() {
 		if strings.HasSuffix(save, ".png") {
 			fl.processed[save] = struct{}{}

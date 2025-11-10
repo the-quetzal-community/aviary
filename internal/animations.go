@@ -33,7 +33,7 @@ func AnimateTheSceneBeingSaved(parent Node.Any, name musical.WorkID) {
 	saving := new(AnimationSaving)
 	saving.AsTextureRect().SetTexture(tex.AsTexture2D())
 	parent.AsNode().AddChild(saving.AsNode())
-	DirAccess.MakeDirAbsolute("user://snaps/")
+	DirAccess.MakeDirAbsolute("user://snaps")
 	tex.AsTexture2D().GetImage().SavePng("user://snaps/" + base64.RawURLEncoding.EncodeToString(name[:]) + ".png")
 	currently_saving = false
 }
