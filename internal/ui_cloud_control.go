@@ -37,6 +37,7 @@ import (
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Signal"
+	"the.quetzal.community/aviary/internal/musical"
 	"the.quetzal.community/aviary/internal/networking"
 )
 
@@ -81,6 +82,7 @@ type CloudControl struct {
 }
 
 var setting_up atomic.Bool
+var version string
 
 func (ui *CloudControl) Setup() {
 	ui.on_process = make(chan func(*CloudControl), 10)
@@ -102,21 +104,29 @@ func (ui *CloudControl) Setup() {
 			return
 		}
 		ui.on_process <- func(cc *CloudControl) {
-			ui.client.user = user
+			if UserState.Aviary.ID != user.ID {
+				fresh := NewClientLoading(musical.WorkID(ui.client.record))
+				for _, child := range SceneTree.Get(ui.AsNode()).Root().AsNode().GetChildren() {
+					child.QueueFree()
+				}
+				SceneTree.Add(fresh)
+			}
+			UserState.Aviary = user
+			cc.client.saveUserState()
 			cc.set_online_status_indicator(true)
 		}
-		if time.Now().After(user.TogetherUntil) {
-			return
-		}
-
 		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community")
 		if err != nil {
 			Engine.Raise(err)
 			return
 		}
-		version := manager.CurrentlyInstalledVersion()
+		version = "v" + manager.CurrentlyInstalledVersion()
 		ui.on_process <- func(cc *CloudControl) {
-			ui.JoinCode.Versioning.Version.SetText("v" + version)
+			ui.JoinCode.Versioning.Version.SetText(version)
+		}
+
+		if time.Now().After(user.TogetherUntil) {
+			return
 		}
 		latest, update, err := manager.CheckForUpdates()
 		if err != nil {
@@ -183,8 +193,8 @@ func (ui *CloudControl) Setup() {
 
 func (ui *CloudControl) Ready() {
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
-		if time.Now().After(ui.client.user.TogetherUntil) {
-			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Device)
+		if time.Now().After(UserState.Aviary.TogetherUntil) {
+			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Secret)
 			Object.To[Window.Instance](Viewport.Get(ui.AsNode())).OnFocusEntered(func() {
 				ui.Setup()
 			}, Signal.OneShot)

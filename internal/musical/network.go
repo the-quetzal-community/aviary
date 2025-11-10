@@ -44,7 +44,7 @@ func (network Networking) send(val encodable, media bool) error {
 	return nil
 }
 
-func Join(network Networking, userID Unique, replica UsersSpace3D) (UsersSpace3D, error) {
+func Join(network Networking, userID WorkID, replica UsersSpace3D) (UsersSpace3D, error) {
 	scene := client{network}
 	go scene.handle(replica)
 	return scene, nil
@@ -113,13 +113,15 @@ func (c client) handle(replica UsersSpace3D) {
 	}
 }
 
-func Host(network iter.Seq[Networking], initial Unique, storage Storage, replica UsersSpace3D, reports ErrorReporter) (UsersSpace3D, chan<- Unique, error) {
+func Host(name string, network iter.Seq[Networking], initial WorkID, storage Storage, replica UsersSpace3D, reports ErrorReporter) (UsersSpace3D, chan<- WorkID, error) {
 	var srv = server{
+		name: name,
+
 		initial: initial,
 		storage: storage,
 		replica: replica,
 		clients: make(chan Networking),
-		changes: make(chan Unique),
+		changes: make(chan WorkID),
 		request: make(chan encodable),
 		reports: reports,
 	}
@@ -134,12 +136,14 @@ func Host(network iter.Seq[Networking], initial Unique, storage Storage, replica
 }
 
 type server struct {
-	initial Unique
+	name string
+
+	initial WorkID
 	storage Storage
 	replica UsersSpace3D
 	reports ErrorReporter
 	clients chan Networking
-	changes chan Unique
+	changes chan WorkID
 	request chan encodable
 }
 
@@ -179,6 +183,7 @@ func (srv server) run() {
 					Record: current,
 					Number: tracker.value,
 					Author: assign,
+					Server: srv.name,
 					Assign: true,
 				}
 				authors[assign] = orc
@@ -232,7 +237,7 @@ func (srv server) run() {
 	}
 }
 
-func (srv server) handle(author Author, network Networking, current Unique, catchup uint64) {
+func (srv server) handle(author Author, network Networking, current WorkID, catchup uint64) {
 	go func() {
 		file, err := srv.storage.Open(current)
 		if err != nil {

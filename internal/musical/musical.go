@@ -30,8 +30,8 @@ type Design struct {
 // Author of contributions within a musical user's 3D scene.
 type Author uint16
 
-// Unique identifies a particular instance of a [UsersSpace3D].
-type Unique [16]byte
+// WorkID identifies a particular instance of a [UsersSpace3D].
+type WorkID [16]byte
 
 // Record indentifier.
 type Record struct {
@@ -86,9 +86,10 @@ const (
 )
 
 type Member struct {
-	Record Unique // expected identifier for the user/scene.
+	Record WorkID // expected identifier for the user/scene.
 	Number uint64 // a number of instructions observed for the scene.
 	Author Author // author for the receiver to exclusively adopt.
+	Server string // server identifier.
 
 	Assign bool // if true, the receiver should adopt the specified [Author].
 }

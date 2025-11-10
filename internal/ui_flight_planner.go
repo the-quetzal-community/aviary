@@ -1,9 +1,13 @@
 package internal
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"strings"
+	"sync"
+	"time"
 
 	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Button"
@@ -16,6 +20,7 @@ import (
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextEdit"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector2"
 	"the.quetzal.community/aviary/internal/musical"
@@ -32,7 +37,11 @@ type FlightPlanner struct {
 
 	Maps GridContainer.Instance `gd:"%Maps"`
 
-	client *Client
+	client      *Client
+	clientReady sync.WaitGroup
+
+	processed  map[string]struct{}
+	on_process chan func()
 }
 
 func (fl *FlightPlanner) Reload() {
@@ -42,17 +51,18 @@ func (fl *FlightPlanner) Reload() {
 		}
 	}
 	fl.Maps.SetColumns(int(fl.AsControl().Size().X/256) - 1)
-	for save := range DirAccess.Open("user://").Iter() {
+	for save := range DirAccess.Open("user://snaps").Iter() {
 		if strings.HasSuffix(save, ".png") {
+			fl.processed[save] = struct{}{}
 			mapButton := TextureButton.New()
-			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(Image.LoadFromFile("user://" + save)).AsTexture2D())
+			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(Image.LoadFromFile("user://snaps/" + save)).AsTexture2D())
 			mapButton.AsBaseButton().OnPressed(func() {
 				record, err := base64.RawURLEncoding.DecodeString(strings.TrimSuffix(save, ".png"))
 				if err != nil {
 					Engine.Raise(err)
 					return
 				}
-				fresh := NewClientLoading(musical.Unique(record))
+				fresh := NewClientLoading(musical.WorkID(record))
 				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
 					child.QueueFree()
 				}
@@ -64,16 +74,69 @@ func (fl *FlightPlanner) Reload() {
 			fl.Maps.AsNode().AddChild(mapButton.AsNode())
 		}
 	}
+	go fl.fetchCloudSnaps()
+}
+
+func (fl *FlightPlanner) fetchCloudSnaps() {
+	fl.clientReady.Wait()
+	fl.client.clientReady.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	saves, err := fl.client.signalling.CloudSaves(ctx)
+	if err != nil {
+		Engine.Raise(err)
+		return
+	}
+	for _, save := range saves {
+		if _, ok := fl.processed[string(save)+".png"]; ok {
+			continue
+		}
+		snap, err := fl.client.signalling.LookupSnap(ctx, save)
+		if err != nil {
+			Engine.Raise(err)
+			continue
+		}
+		buf, err := io.ReadAll(snap)
+		if err != nil {
+			Engine.Raise(err)
+			continue
+		}
+		Callable.Defer(Callable.New(func() {
+			var image = Image.New()
+			image.LoadPngFromBuffer(buf)
+			mapButton := TextureButton.New()
+			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(image).AsTexture2D())
+			mapButton.AsBaseButton().OnPressed(func() {
+				record, err := base64.RawURLEncoding.DecodeString(string(save))
+				if err != nil {
+					Engine.Raise(err)
+					return
+				}
+				fresh := NewClientLoading(musical.WorkID(record))
+				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
+					child.QueueFree()
+				}
+				SceneTree.Add(fresh)
+			})
+			mapButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+			mapButton.SetIgnoreTextureSize(true)
+			mapButton.SetStretchMode(TextureButton.StretchKeepAspect)
+			fl.Maps.AsNode().AddChild(mapButton.AsNode())
+		}))
+	}
 }
 
 func (fl *FlightPlanner) Ready() {
+	fl.clientReady.Add(1)
+	fl.on_process = make(chan func(), 10)
+	fl.processed = make(map[string]struct{})
 	fl.Reload()
 	fl.Code.SetText("")
 	fl.Back.AsBaseButton().OnPressed(func() {
 		fl.AsCanvasItem().SetVisible(false)
 	})
 	fl.Plus.AsBaseButton().OnPressed(func() {
-		var record musical.Unique
+		var record musical.WorkID
 		if _, err := rand.Read(record[:]); err != nil {
 			Engine.Raise(err)
 			return

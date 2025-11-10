@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,10 +87,8 @@ type Client struct {
 
 	saving atomic.Bool
 
-	user signalling.User
-
 	id         musical.Author
-	record     musical.Unique
+	record     musical.WorkID
 	space      musical.UsersSpace3D
 	entities   uint16
 	design_ids uint16
@@ -131,17 +131,23 @@ func NewClient() *Client {
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
+	if UserState.Secret == "" {
+		UserState.Secret = uuid.NewString()
+		client.saveUserState()
+	}
 	if UserState.Device == "" {
 		UserState.Device = uuid.NewString()
 		client.saveUserState()
 	}
-	client.network.Authentication = UserState.Device
+	client.network.Authentication = UserState.Secret
 	return client
 }
 
 var UserState struct {
-	Device string // device identifier, to be linked with a Quetzal Community Account.
-	Record musical.Unique
+	Aviary signalling.User
+	Device string // public device name
+	Secret string // secret to be linked with a Quetzal Community Account.
+	WorkID musical.WorkID
 }
 
 func NewClientJoining() *Client {
@@ -151,10 +157,10 @@ func NewClientJoining() *Client {
 	return client
 }
 
-func NewClientLoading(record musical.Unique) *Client {
+func NewClientLoading(record musical.WorkID) *Client {
 	var client = NewClient()
 	client.record = record
-	UserState.Record = record
+	UserState.WorkID = record
 	client.load_last_save = false
 	client.saveUserState()
 	return client
@@ -182,7 +188,7 @@ func (world *Client) loadUserState() {
 }
 
 func (world *Client) isOnline() bool {
-	return world.user.ID != ""
+	return UserState.Aviary.ID != ""
 }
 
 func (world *Client) apiJoin(code networking.Code) {
@@ -196,7 +202,7 @@ func (world *Client) apiJoin(code networking.Code) {
 		Instructions: networkingVia{&world.network, world.updates},
 		MediaUploads: stubbedNetwork{},
 		ErrorReports: musicalImpl{world},
-	}, musical.Unique{}, musicalImpl{world})
+	}, musical.WorkID{}, musicalImpl{world})
 	if err != nil {
 		Engine.Raise(fmt.Errorf("failed to join musical room %s: %w", code, err))
 		return
@@ -224,9 +230,11 @@ func (world *Client) apiHost() (networking.Code, error) {
 func (world *Client) Ready() {
 	defer world.clientReady.Done()
 
-	if !world.joining && world.load_last_save && UserState.Record != (musical.Unique{}) {
-		world.record = UserState.Record
+	if !world.joining && world.load_last_save && UserState.WorkID != (musical.WorkID{}) {
+		world.record = UserState.WorkID
 	}
+
+	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+UserState.Secret))
 
 	if !world.joining {
 		clients_iter := func(yield func(musical.Networking) bool) {
@@ -237,7 +245,7 @@ func (world *Client) Ready() {
 			}
 		}
 		var err error
-		world.space, _, err = musical.Host(clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
+		world.space, _, err = musical.Host("Aviary v"+version, clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
 		if err != nil {
 			Engine.Raise(err)
 		}
@@ -253,7 +261,6 @@ func (world *Client) Ready() {
 		}
 	}
 	world.updates = make(chan []byte, 20)
-	world.signalling = api.Import[signalling.API](rest.API, SignallingHost, rest.Header("Authorization", "Bearer "+UserState.Device))
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.client = world
@@ -289,13 +296,46 @@ func (world musicalImpl) ReportError(err error) {
 	Engine.Raise(err)
 }
 
-func (world musicalImpl) Open(space musical.Unique) (fs.File, error) {
+func (world musicalImpl) Open(space musical.WorkID) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(space[:])
-	return os.OpenFile(OS.GetUserDataDir()+"/"+name+".mus3", os.O_RDWR|os.O_CREATE, 0666)
+	if UserState.Aviary.TogetherUntil.After(time.Now()) {
+		fmt.Println("opening cloud save for", name)
+		return OpenCloud(world.signalling, space)
+	}
+	if err := os.MkdirAll(OS.GetUserDataDir()+"/saves/"+name, 0777); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+func parseVersion(version string) (major, minor, patch int) {
+	_, version, _ = strings.Cut(version, " ")
+	version = strings.TrimPrefix(version, ".")
+	splits := strings.Split(version, ".")
+	if len(splits) != 3 {
+		return 0, 0, 0
+	}
+	fmt.Sscan(splits[0], &major)
+	fmt.Sscan(splits[0], &minor)
+	fmt.Sscan(splits[0], &patch)
+	return
 }
 
 func (world musicalImpl) Member(req musical.Member) error {
 	if req.Assign {
+		if req.Server != "" {
+			our_major, our_minor, our_patch := parseVersion(version)
+			srv_major, srv_minor, srv_patch := parseVersion(req.Server)
+			if srv_major > our_major || srv_major > srv_minor || srv_patch > our_patch {
+				if !(our_major == 0 && our_minor == 0 && our_patch == 0) && !(srv_major == 0 && srv_minor == 0 && srv_patch == 0) {
+					OS.ShellOpen("https://the.quetzal.community/aviary/mismatch")
+				}
+			}
+		}
 		Callable.Defer(Callable.New(func() {
 			world.id = req.Author
 			world.record = req.Record
@@ -574,6 +614,22 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		}
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyS && Input.IsKeyPressed(Input.KeyCtrl) && !event.AsInputEvent().IsEcho() {
 			AnimateTheSceneBeingSaved(world, world.record)
+			go func() {
+				name := base64.RawURLEncoding.EncodeToString(world.record[:])
+				file, err := os.Open(OS.GetUserDataDir() + "/snaps/" + name + ".png")
+				if err != nil {
+					Engine.Raise(fmt.Errorf("failed to open snapshot for upload: %w", err))
+					return
+				}
+				defer file.Close()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+
+				if err := world.signalling.InsertSnap(ctx, signalling.WorkID(name), file); err != nil {
+					Engine.Raise(fmt.Errorf("failed to upload snapshot: %w", err))
+				}
+			}()
 		}
 		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() {
 			node, ok := world.selection.Instance()

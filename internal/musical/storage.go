@@ -10,7 +10,7 @@ import (
 )
 
 type Storage interface {
-	Open(Unique) (fs.File, error)
+	Open(WorkID) (fs.File, error)
 }
 
 const magicHeader = "the.quetzal.community/musical.Users3DScene@v0.1"

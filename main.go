@@ -57,4 +57,6 @@ func main() {
 	startup.LoadingScene()
 	SceneTree.Add(internal.NewClient())
 	startup.Scene()
+	close(internal.ShuttingDown)
+	internal.PendingSaves.Wait()
 }

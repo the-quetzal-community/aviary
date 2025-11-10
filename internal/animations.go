@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/base64"
 
+	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/PropertyTweener"
@@ -23,7 +24,7 @@ type AnimationSaving struct {
 
 // AnimateTheSceneBeingSaved animates the scene being saved by adding [AnimationSaving]
 // to the [SceneTree]. TODO/FIXME make GUI hidden.
-func AnimateTheSceneBeingSaved(parent Node.Any, name musical.Unique) {
+func AnimateTheSceneBeingSaved(parent Node.Any, name musical.WorkID) {
 	if currently_saving {
 		return
 	}
@@ -32,7 +33,8 @@ func AnimateTheSceneBeingSaved(parent Node.Any, name musical.Unique) {
 	saving := new(AnimationSaving)
 	saving.AsTextureRect().SetTexture(tex.AsTexture2D())
 	parent.AsNode().AddChild(saving.AsNode())
-	tex.AsTexture2D().GetImage().SavePng("user://" + base64.RawURLEncoding.EncodeToString(name[:]) + ".png")
+	DirAccess.MakeDirAbsolute("user://snaps/")
+	tex.AsTexture2D().GetImage().SavePng("user://snaps/" + base64.RawURLEncoding.EncodeToString(name[:]) + ".png")
 	currently_saving = false
 }
 

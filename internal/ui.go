@@ -85,6 +85,7 @@ var categories = []string{
 
 func (ui *UI) Setup() {
 	ui.Cloudy.client = ui.client
+	ui.Cloudy.clientReady.Done()
 	ui.CloudControl.client = ui.client
 	ui.CloudControl.Setup()
 }
@@ -120,7 +121,7 @@ func (ui *UI) Ready() {
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.openDrawer)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		if !ui.client.isOnline() {
-			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Device)
+			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Secret)
 			Object.To[Window.Instance](Viewport.Get(ui.AsNode())).OnFocusEntered(func() {
 				ui.Setup()
 			}, Signal.OneShot)

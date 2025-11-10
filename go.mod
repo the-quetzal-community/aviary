@@ -8,7 +8,7 @@ require (
 	github.com/pion/webrtc/v4 v4.1.3
 	github.com/quaadgras/velopack-go v0.0.1358
 	graphics.gd v0.0.0-20250526063741-ffcae8f56f4c
-	runtime.link v0.0.0-20250724024108-1bea2a27f700
+	runtime.link v0.0.0-20251110101815-59f3debe833d
 )
 
 require (
