@@ -40,18 +40,22 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(work[:])
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-
 	parts, err := community.CloudParts(ctx, signalling.WorkID(name))
 	if err != nil {
 		Engine.Raise(err) // not fatal.
 	}
+	cancel()
+
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 
 	if err := os.MkdirAll(OS.GetUserDataDir()+"/saves/"+name, 0777); err != nil {
+		cancel()
 		return nil, err
 	}
 
 	file, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	var size int64
@@ -83,15 +87,18 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 
 	if size == 0 && other_parts > 0 {
 		if _, err := file.Write([]byte(musical.MagicHeader)); err != nil {
+			cancel()
 			return nil, xray.New(err)
 		}
 		total_size++
 	} else if size > 0 {
 		var header = make([]byte, len(musical.MagicHeader))
 		if _, err := io.ReadFull(file, header); err != nil {
+			cancel()
 			return nil, xray.New(err)
 		}
 		if string(header) != musical.MagicHeader {
+			cancel()
 			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
 		}
 	}
@@ -128,28 +135,32 @@ func (cr *cloudReader) Read(p []byte) (n int, err error) {
 		stat, err := os.Stat(OS.GetUserDataDir() + "/" + string(cr.work) + "/" + string(cr.part) + ".mus3")
 		if err != nil || stat.ModTime().Before(cr.time) || stat.Size() != cr.size {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
 			file, err := cr.community.LookupSave(ctx, cr.work, cr.part)
 			if err != nil {
+				cancel()
 				return 0, err
 			}
 			cache, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 			if err != nil {
+				cancel()
 				return 0, err
 			}
 			cr.read = io.TeeReader(file, cache)
 			var header [len(musical.MagicHeader)]byte
 			n, err := io.ReadFull(cr.read, header[:])
 			if err != nil && !errors.Is(err, io.EOF) {
+				cancel()
 				return n, xray.New(err)
 			} else if err == nil {
 				if string(header[:]) != musical.MagicHeader {
+					cancel()
 					return n, xray.New(errors.New("invalid musical.Users3DScene file"))
 				}
 			}
 			cr.shut = func() {
 				file.Close()
 				cache.Close()
+				cancel()
 			}
 			cr.open = true
 		} else {
