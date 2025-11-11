@@ -3,11 +3,14 @@ package internal
 import (
 	"graphics.gd/classdb/CollisionObject3D"
 	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
@@ -110,6 +113,19 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 	pos := pr.AsNode3D().Position()
 	pos.Y = (pr.terrain.tile.HeightAt(pos))
 	pr.AsNode3D().SetPosition(pos)
+}
+
+func (pr *PreviewRenderer) Input(event InputEvent.Instance) {
+	if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
+		if Input.IsKeyPressed(Input.KeyShift) {
+			if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+				pr.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, -Angle.Pi/64)
+			}
+			if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+				pr.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, Angle.Pi/64)
+			}
+		}
+	}
 }
 
 func (pr *PreviewRenderer) Ready() {
