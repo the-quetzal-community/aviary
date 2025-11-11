@@ -6,7 +6,7 @@ fully cooperative, with zero proprietary lock-in. Users retain usage rights to a
 (subject to attribution).
 
 # Contributions
-The project is written in Go + Godot via the graphics.gd project, install the graphics.gd/cmd and use `gd run` 
+The project is written in Go + Godot via the [graphics.gd](https://graphics.gd) project, install the graphics.gd/cmd and use `gd run` 
 to build and run it. See the roadmap on the [Aviary](https://the.quetzal.community/aviary) for planned features. 
 
 # Open Software
