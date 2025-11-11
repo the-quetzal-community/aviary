@@ -28,7 +28,7 @@ type CloudBacked struct {
 
 	reader io.Reader
 	writer io.Writer
-	closer io.Closer
+	closer func() error
 
 	community signalling.API
 }
@@ -40,7 +40,6 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(work[:])
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	parts, err := community.CloudParts(ctx, signalling.WorkID(name))
 	if err != nil {
@@ -59,8 +58,6 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	if stat, err := file.Stat(); err == nil {
 		size = stat.Size()
 	}
-	var closers []io.Closer
-	closers = append(closers, file)
 
 	var readers []io.Reader
 	if size > 0 {
@@ -95,11 +92,17 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	}
 
 	return &CloudBacked{
-		name:      name,
-		size:      size,
-		writer:    file,
-		reader:    io.MultiReader(readers...),
-		closer:    file,
+		name:   name,
+		size:   size,
+		writer: file,
+		reader: io.MultiReader(readers...),
+		closer: func() error {
+			cancel()
+			if err := file.Close(); err != nil {
+				return err
+			}
+			return nil
+		},
 		community: community,
 	}, nil
 }
@@ -225,5 +228,5 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 }
 
 func (cb *CloudBacked) Close() error {
-	return cb.closer.Close()
+	return cb.closer()
 }
