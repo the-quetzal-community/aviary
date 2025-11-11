@@ -55,32 +55,22 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 		return nil, err
 	}
 	var size int64
+	var total_size int64
 	if stat, err := file.Stat(); err == nil {
 		size = stat.Size()
+		total_size += stat.Size()
 	}
 
 	var readers []io.Reader
-	if size > 0 {
-		var header [len(musical.MagicHeader)]byte
-		if _, err := io.ReadFull(file, header[:]); err != nil && !errors.Is(err, io.EOF) {
-			return nil, xray.New(err)
-		} else if err == nil {
-			if string(header[:]) != musical.MagicHeader {
-				return nil, xray.New(errors.New("invalid musical.Users3DScene file: " + string(header[:])))
-			}
-		}
-	} else if size == 0 {
-		if _, err := file.Write([]byte(musical.MagicHeader)); err != nil {
-			return nil, xray.New(err)
-		}
-	}
 	readers = append(readers, strings.NewReader(musical.MagicHeader))
 	readers = append(readers, file)
 
+	var other_parts int
 	for part, stat := range parts {
 		if part == signalling.PartID(UserState.Device) {
 			continue
 		}
+		other_parts++
 		readers = append(readers, &cloudReader{
 			community: community,
 			work:      signalling.WorkID(name),
@@ -88,12 +78,27 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 			size:      stat.Size,
 			time:      stat.Time,
 		})
-		size += stat.Size
+		total_size += stat.Size
+	}
+
+	if size == 0 && other_parts > 0 {
+		if _, err := file.Write([]byte(musical.MagicHeader)); err != nil {
+			return nil, xray.New(err)
+		}
+		total_size++
+	} else if size > 0 {
+		var header = make([]byte, len(musical.MagicHeader))
+		if _, err := io.ReadFull(file, header); err != nil {
+			return nil, xray.New(err)
+		}
+		if string(header) != musical.MagicHeader {
+			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
+		}
 	}
 
 	return &CloudBacked{
 		name:   name,
-		size:   size,
+		size:   total_size,
 		writer: file,
 		reader: io.MultiReader(readers...),
 		closer: func() error {

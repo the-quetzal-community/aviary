@@ -2,9 +2,11 @@ package musical
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"math"
+	"reflect"
 
 	"runtime.link/api/xray"
 )
@@ -198,7 +200,7 @@ func (mus3 storage) decode(limit int) (int, error) {
 		case LookAt:
 			return n, xray.New(errors.New("unexpected LookAt entry in storage"))
 		default:
-			return n, xray.New(errors.New("unknown entry type"))
+			return n, xray.New(errors.New("unknown entry type " + fmt.Sprint(reflect.TypeOf(packet))))
 		}
 	}
 	return n, nil

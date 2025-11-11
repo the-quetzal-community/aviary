@@ -3,6 +3,7 @@ package musical
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"reflect"
@@ -275,7 +276,7 @@ func decode(r io.Reader) (encodable, error) {
 	case entryTypeLookAt:
 		v = reflect.New(reflect.TypeOf(LookAt{})).Elem()
 	default:
-		return nil, nil
+		return nil, xray.New(errors.New("unknown entry type " + fmt.Sprint(et)))
 	}
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Field(i)
