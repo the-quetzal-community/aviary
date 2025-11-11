@@ -21,6 +21,7 @@ import (
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
@@ -296,7 +297,12 @@ func (world *Client) Ready() {
 	}
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
-	world.Light.AsNode3D().SetRotation(Euler.Radians{X: -Angle.Pi / 2})
+	world.Light.AsNode3D().SetRotation(Euler.Radians{X: -Angle.Pi / 3})
+
+	env := Environment.New()
+	env.SetSdfgiEnabled(true)
+
+	world.AsNode3D().GetWorld3d().SetEnvironment(env)
 	RenderingServer.SetDebugGenerateWireframes(true)
 }
 
