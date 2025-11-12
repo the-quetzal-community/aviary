@@ -72,6 +72,7 @@ void fragment() {
     vec3 normalBR = texture(texture_normal, vec3(base_uv, texture.a)).rgb * 2.0 - 1.0;
 
     vec3 normal_tex = normalize(normalTL * weights.x + normalTR * weights.y + normalBL * weights.z + normalBR * weights.w);
+    normal_tex.y = 1.0 - normal_tex.y; // Flip Y for Godot's coordinate system
     NORMAL_MAP = normal_tex;
 
     // Sample ORM similarly and unpack channels
