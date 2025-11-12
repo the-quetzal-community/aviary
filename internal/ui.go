@@ -12,7 +12,9 @@ import (
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OS"
@@ -22,9 +24,11 @@ import (
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/Tween"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/Window"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
@@ -47,6 +51,10 @@ type UI struct {
 	Editor TabContainer.Instance
 
 	ExpansionIndicator Button.Instance
+	EditorIndicator    TextureRect.Instance
+
+	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
+	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
 
 	CloudControl  *CloudControl
 	ThemeSelector *ThemeSelector
@@ -65,7 +73,17 @@ type UI struct {
 	client *Client
 
 	lastDisplay Vector2i.XY
+
+	mode Mode
 }
+
+// Mode represents whether the editor is currently in geometry or material mode.
+type Mode bool
+
+const (
+	ModeGeometry Mode = false // add/remove/move/scale/rotate components.
+	ModeMaterial Mode = true  // add colours, paint textures & set materials
+)
 
 var categories = []string{
 	"terrain",
@@ -90,6 +108,42 @@ func (ui *UI) Setup() {
 	ui.CloudControl.Setup()
 }
 
+func (ui *UI) SetMode(mode Mode) {
+	if ui.mode == mode {
+		return
+	}
+	const half = 4
+	switch mode {
+	case ModeGeometry:
+		pos := ui.ModeGeometry.AsControl().Position()
+		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
+		ui.ModeGeometry.AsControl().SetSize(Vector2.New(32, 32))
+
+		ui.ModeMaterial.AsControl().SetSize(Vector2.New(24, 24))
+		pos = ui.ModeMaterial.AsControl().Position()
+		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	case ModeMaterial:
+		pos := ui.ModeMaterial.AsControl().Position()
+		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
+		ui.ModeMaterial.AsControl().SetSize(Vector2.New(32, 32))
+
+		ui.ModeGeometry.AsControl().SetSize(Vector2.New(24, 24))
+		pos = ui.ModeGeometry.AsControl().Position()
+		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	}
+	ui.mode = mode
+}
+
+func (ui *UI) Input(event InputEvent.Instance) {
+	if event, ok := Object.As[InputEventKey.Instance](event); ok {
+		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() {
+			if event.Keycode() == Input.KeyTab {
+				ui.SetMode(!ui.mode) // toggle between [ModeGeometry] and [ModeMaterial]
+			}
+		}
+	}
+}
+
 func (ui *UI) UnhandledInput(event InputEvent.Instance) {
 	if ui.drawExpanded.Load() && Object.Is[InputEventMouseMotion.Instance](event) {
 		height := DisplayServer.WindowGetSize(0).Y
@@ -100,6 +154,19 @@ func (ui *UI) UnhandledInput(event InputEvent.Instance) {
 }
 
 func (ui *UI) Ready() {
+	ui.ModeGeometry.AsBaseButton().OnPressed(func() {
+		fmt.Println("Switched to geometry mode")
+		ui.SetMode(ModeGeometry)
+	})
+	ui.ModeMaterial.AsBaseButton().OnPressed(func() {
+		ui.SetMode(ModeMaterial)
+	})
+	Callable.Defer(Callable.New(func() {
+		pos := ui.ModeGeometry.AsControl().Position()
+		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-4, -4)))
+		ui.ModeGeometry.AsControl().SetSize(Vector2.New(32, 32))
+	}))
+
 	ui.themes = append(ui.themes, "")
 	Dir := DirAccess.Open("res://library")
 	if Dir == (DirAccess.Instance{}) {
@@ -170,6 +237,7 @@ func (ui *UI) scaling() {
 	ui.scale(ui.CloudControl.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.ThemeSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 
 	// ThemeSelector needs to be centered to the top center
 	theme_pos := ui.ThemeSelector.AsControl().Position()

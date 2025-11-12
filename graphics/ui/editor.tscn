@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=21 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -10,7 +10,10 @@
 [ext_resource type="Texture2D" uid="uid://cx55slyyp10ef" path="res://ui/restart.svg" id="9_75vv8"]
 [ext_resource type="Texture2D" uid="uid://qrqs88rqwn0n" path="res://ui/updates.svg" id="10_4rs6f"]
 [ext_resource type="Texture2D" uid="uid://btesx4fxc3ldh" path="res://ui/pointer.svg" id="10_tj0f7"]
+[ext_resource type="Texture2D" uid="uid://8njh8i6ykrsx" path="res://ui/colour.svg" id="11_8sq1u"]
 [ext_resource type="PackedScene" uid="uid://dqndk14imylnj" path="res://ui/cloudy.tscn" id="11_75vv8"]
+[ext_resource type="Texture2D" uid="uid://b5v5k7ro0nyfc" path="res://ui/editor.svg" id="11_ny7lf"]
+[ext_resource type="Texture2D" uid="uid://c6rwr8c88miha" path="res://ui/terrain.svg" id="14_8sq1u"]
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
 load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
@@ -365,6 +368,65 @@ offset_right = 179.0
 offset_bottom = 101.0
 show_percentage = false
 
+[node name="ModeIndicator" type="HBoxContainer" parent="CloudControl"]
+layout_mode = 0
+offset_left = 19.936977
+offset_top = 101.01247
+offset_right = 107.93698
+offset_bottom = 141.01248
+pivot_offset = Vector2(66.563576, 18.513847)
+
+[node name="MarginGeometry" type="MarginContainer" parent="CloudControl/ModeIndicator"]
+layout_mode = 2
+theme_override_constants/margin_left = 5
+theme_override_constants/margin_right = 10
+
+[node name="ModeGeometry" type="TextureButton" parent="CloudControl/ModeIndicator/MarginGeometry"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(24, 32)
+layout_mode = 2
+texture_normal = ExtResource("11_ny7lf")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="MarginMaterial" type="MarginContainer" parent="CloudControl/ModeIndicator"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_right = 5
+
+[node name="ModeMaterial" type="TextureButton" parent="CloudControl/ModeIndicator/MarginMaterial"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(24, 32)
+layout_mode = 2
+texture_normal = ExtResource("11_8sq1u")
+ignore_texture_size = true
+stretch_mode = 4
+
 [node name="Cloudy" parent="." instance=ExtResource("11_75vv8")]
 visible = false
 layout_mode = 1
+
+[node name="EditorIndicator" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -209.00146
+offset_top = 2.5883825
+offset_right = 214.55847
+offset_bottom = 196.9512
+grow_horizontal = 0
+pivot_offset = Vector2(208.68042, -3.5928783)
+texture = ExtResource("10_tj0f7")
+expand_mode = 3
+
+[node name="EditorIcon" type="TextureRect" parent="EditorIndicator"]
+layout_mode = 0
+offset_left = 84.99568
+offset_top = 7.0530343
+offset_right = 205.61478
+offset_bottom = 105.54082
+pivot_offset = Vector2(59.656982, 53.900574)
+texture = ExtResource("14_8sq1u")
+expand_mode = 1
+stretch_mode = 4
