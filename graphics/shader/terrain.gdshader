@@ -4,6 +4,9 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx, world_vertex_coords;
 
 uniform sampler2DArray texture_albedo : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2DArray texture_normal : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2DArray texture_orm    : source_color, filter_linear_mipmap, repeat_enable;
+
 uniform float point_size : hint_range(0.1, 128.0, 0.1);
 
 uniform vec3 uv1_scale;

@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b770q5t7it58f"
-path="res://.godot/imported/rock.jpg-853010a81ebf66cf0e6218c7bf049017.ctex"
+uid="uid://bdfsw5by3ee1p"
+path="res://.godot/imported/aquatic.svg-d122d1a9f60395e571ca0d9f354c0efa.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://terrain/rock.jpg"
-dest_files=["res://.godot/imported/rock.jpg-853010a81ebf66cf0e6218c7bf049017.ctex"]
+source_file="res://ui/aquatic.svg"
+dest_files=["res://.godot/imported/aquatic.svg-d122d1a9f60395e571ca0d9f354c0efa.ctex"]
 
 [params]
 
-compress/mode=4
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -38,3 +38,6 @@ process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
 detect_3d/compress_to=1
+svg/scale=1.0
+editor/scale_with_editor_scale=false
+editor/convert_colors_with_editor_theme=false

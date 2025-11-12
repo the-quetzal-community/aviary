@@ -87,7 +87,6 @@ const (
 
 var categories = []string{
 	"terrain",
-	"texture",
 	"foliage",
 	"mineral",
 	"shelter",
@@ -99,6 +98,17 @@ var categories = []string{
 	// "fencing"
 	// "vehicle"
 	// "polygon"
+}
+
+var terrain_categories = []string{
+	"aquatic",
+	"deserts",
+	"dryland",
+	"forests",
+	"glacial",
+	"manmade",
+	"organic",
+	"volcano",
 }
 
 func (ui *UI) Setup() {
@@ -348,7 +358,11 @@ func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D
 
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
-	themes := DirAccess.Open("res://library/" + ui.themes[idx])
+	theme_path := "res://library/" + ui.themes[idx]
+	if ui.mode == ModeMaterial {
+		theme_path += "/terrain"
+	}
+	themes := DirAccess.Open(theme_path)
 	if themes == DirAccess.Nil {
 		return
 	}
@@ -357,6 +371,10 @@ func (ui *UI) onThemeSelected(idx int) {
 		if ok {
 			container.AsObject()[0].Free()
 		}
+	}
+	categories := categories
+	if ui.mode == ModeMaterial {
+		categories = terrain_categories
 	}
 	ui.gridContainers = ui.gridContainers[:0]
 	var glb = ".glb"
@@ -373,12 +391,17 @@ func (ui *UI) onThemeSelected(idx int) {
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			ui.gridContainers = append(ui.gridContainers, gridflow)
 			elements := gridflow.Scrollable.GridContainer
-			resources := DirAccess.Open("res://library/" + ui.themes[idx] + "/" + name)
+			var path = "res://library/" + ui.themes[idx] + "/"
+			if ui.mode == ModeMaterial {
+				path += "terrain/"
+			}
+			path += name
+			resources := DirAccess.Open(path)
 			if resources == DirAccess.Nil {
 				continue
 			}
 			var ext = glb
-			if name == "texture" {
+			if ui.mode == ModeMaterial {
 				ext = png
 			}
 			for resource := range resources.Iter() {
@@ -386,15 +409,18 @@ func (ui *UI) onThemeSelected(idx int) {
 				if !String.HasSuffix(resource, ext) {
 					continue
 				}
-				var path = Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + resource))
+				if String.HasSuffix(resource, "_norm.png") || String.HasSuffix(resource, "_spec.png") {
+					continue
+				}
+				var path = Path.ToResource(String.New(theme_path + "/" + name + "/" + resource))
 				switch ext {
 				case glb:
-					renamed := Path.ToResource(String.New("res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".png"))
+					renamed := Path.ToResource(String.New(theme_path + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".png"))
 					preview := Resource.Load[Texture2D.Instance](Path.ToResource(renamed))
 					if preview == Texture2D.Nil {
 						continue
 					}
-					tscn := "res://library/" + ui.themes[idx] + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"
+					tscn := theme_path + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"
 					if FileAccess.FileExists(tscn) {
 						path = Path.ToResource(String.New(tscn))
 					}
