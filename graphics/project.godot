@@ -14,6 +14,7 @@ config/name="Aviary"
 run/main_scene="res://main.tscn"
 config/use_custom_user_dir=true
 config/custom_user_dir_name="aviary"
+run/main_loop_type="GoMainLoop"
 config/features=PackedStringArray("4.5")
 config/icon="uid://c0x02yjix1yk"
 

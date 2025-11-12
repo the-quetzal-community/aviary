@@ -1,9 +1,13 @@
 package internal
 
 import (
+	"path"
+	"strings"
+
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/CollisionShape3D"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HeightMapShape3D"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
@@ -41,6 +45,8 @@ type TerrainTile struct {
 	sculpts   []musical.Sculpt
 
 	heights []float32
+
+	plain_normal Image.Instance
 }
 
 func (tile *TerrainTile) Ready() {
@@ -77,6 +83,7 @@ func (tile *TerrainTile) Reload() {
 
 	terrains := Texture2DArray.New()
 	images := []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
+	bumpmaps := []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
 	mapper := make(map[musical.Design]int)
 	for _, sculpt := range tile.sculpts {
 		if _, exists := mapper[sculpt.Design]; exists || sculpt.Design == (musical.Design{}) {
@@ -86,10 +93,21 @@ func (tile *TerrainTile) Reload() {
 		if ok {
 			mapper[sculpt.Design] = len(images)
 			images = append(images, texture.GetImage())
+
+			ext := path.Ext(texture.AsResource().ResourcePath())
+			normal_path := strings.TrimSuffix(texture.AsResource().ResourcePath(), ext) + "_normal" + ext
+			if FileAccess.FileExists(normal_path) {
+				bumpmaps = append(bumpmaps, Resource.Load[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
+			} else {
+				bumpmaps = append(bumpmaps, Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
+			}
 		}
 	}
 	terrains.AsImageTextureLayered().CreateFromImages(images)
 	tile.shader.SetShaderParameter("texture_albedo", terrains)
+	normals_array := Texture2DArray.New()
+	normals_array.AsImageTextureLayered().CreateFromImages(bumpmaps)
+	tile.shader.SetShaderParameter("texture_normal", normals_array)
 
 	var vertices = Packed.New[Vector3.XYZ]()
 	vertices.Resize(16 * 16 * 6)

@@ -1,11 +1,12 @@
 // NOTE: Shader automatically converted from Godot Engine 4.3.stable's StandardMaterial3D.
+// Updated for proper normal map blending and ORM sampling.
 
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx, world_vertex_coords;
 
 uniform sampler2DArray texture_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2DArray texture_normal : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2DArray texture_orm    : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2DArray texture_normal : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2DArray texture_orm    : filter_linear_mipmap, repeat_enable;
 
 uniform float point_size : hint_range(0.1, 128.0, 0.1);
 
@@ -31,12 +32,12 @@ varying flat vec4 texture;
 varying vec4 weights;
 
 void vertex() {
-	UV = UV * uv1_scale.xy + uv1_offset.xy;
+    UV = UV * uv1_scale.xy + uv1_offset.xy;
 
     float dx = (VERTEX.x - uplift.x);
     float dy = (VERTEX.z - uplift.z);
-	// uplift the terrain, if within radius
-	if (dx*dx+dy*dy < radius*radius) {
+    // uplift the terrain, if within radius
+    if (dx*dx+dy*dy < radius*radius) {
         VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
     }
     VERTEX.y = max(VERTEX.y, -2.0);
@@ -52,29 +53,60 @@ bool in_brush(vec2 uv) {
 }
 
 void fragment() {
-	vec2 base_uv = UV;
+    vec2 base_uv = UV;
 
     // texture has top-left, top-right, bottom-left, bottom-right
     // samples of the terrain around the vertex, we will interpolate
     // between these samples to get the final albedo
-	vec4 colorTL = texture(texture_albedo, vec3(base_uv, texture.r));
-	vec4 colorTR = texture(texture_albedo, vec3(base_uv, texture.g));
-	vec4 colorBL = texture(texture_albedo, vec3(base_uv, texture.b));
-	vec4 colorBR = texture(texture_albedo, vec3(base_uv, texture.a));
+    vec4 colorTL = texture(texture_albedo, vec3(base_uv, texture.r));
+    vec4 colorTR = texture(texture_albedo, vec3(base_uv, texture.g));
+    vec4 colorBL = texture(texture_albedo, vec3(base_uv, texture.b));
+    vec4 colorBR = texture(texture_albedo, vec3(base_uv, texture.a));
 
     vec4 albedo_tex = colorTL * weights.x + colorTR * weights.y + colorBL * weights.z + colorBR * weights.w;
 
-	float highlight = 1.0;
-	float dx = (world.x - uplift.x);
+    // Sample normals from the four layers, unpack to [-1,1], interpolate, and renormalize
+    vec3 normalTL = texture(texture_normal, vec3(base_uv, texture.r)).rgb * 2.0 - 1.0;
+    vec3 normalTR = texture(texture_normal, vec3(base_uv, texture.g)).rgb * 2.0 - 1.0;
+    vec3 normalBL = texture(texture_normal, vec3(base_uv, texture.b)).rgb * 2.0 - 1.0;
+    vec3 normalBR = texture(texture_normal, vec3(base_uv, texture.a)).rgb * 2.0 - 1.0;
+
+    vec3 normal_tex = normalize(normalTL * weights.x + normalTR * weights.y + normalBL * weights.z + normalBR * weights.w);
+    NORMAL_MAP = normal_tex;
+
+    // Sample ORM similarly and unpack channels
+    vec4 ormTL = texture(texture_orm, vec3(base_uv, texture.r));
+    vec4 ormTR = texture(texture_orm, vec3(base_uv, texture.g));
+    vec4 ormBL = texture(texture_orm, vec3(base_uv, texture.b));
+    vec4 ormBR = texture(texture_orm, vec3(base_uv, texture.a));
+
+    vec4 orm_tex = ormTL * weights.x + ormTR * weights.y + ormBL * weights.z + ormBR * weights.w;
+
+    AO = orm_tex.r;
+    ROUGHNESS = orm_tex.g;
+    METALLIC = orm_tex.b;
+    ROUGHNESS = 1.0;
+    METALLIC = 0.0;
+    AO = 1.0;
+
+    float highlight = 1.0;
+    float dx = (world.x - uplift.x);
     float dy = (world.z - uplift.z);
-	// uplift the terrain, if within radius
-	if (brush_active && dx*dx+dy*dy < radius*radius) {
+    if (brush_active && dx*dx+dy*dy < radius*radius) {
         highlight = 2.0;
-	}
-	if (paint_active && dx*dx+dy*dy < radius*radius) {
-        albedo_tex = texture(paint_texture, base_uv);
     }
-    ALBEDO = albedo_tex.rgb * highlight;
+
+    vec3 albedo_final = albedo_tex.rgb * highlight;
+
+    if (paint_active && in_brush(base_uv)) {
+        albedo_final = texture(paint_texture, base_uv).rgb * highlight;
+        NORMAL_MAP = vec3(0.0, 0.0, 1.0);
+        ROUGHNESS = 1.0;
+        METALLIC = 0.0;
+        AO = 1.0;
+    }
+
+    ALBEDO = albedo_final;
 
     if (selection_active) {
         float sdx = (world.x - selection.x);

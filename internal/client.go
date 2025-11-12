@@ -37,8 +37,10 @@ import (
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
+	"graphics.gd/classdb/WorldEnvironment"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
+	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -117,6 +119,10 @@ type Client struct {
 	last_lookAt_time time.Time
 
 	authors map[musical.Author]Node3D.ID
+
+	queue chan func()
+
+	member bool // true when we have been assigned an author ID
 }
 
 func NewClient() *Client {
@@ -130,6 +136,7 @@ func NewClient() *Client {
 		clients:          make(chan musical.Networking),
 		authors:          make(map[musical.Author]Node3D.ID),
 		load_last_save:   true,
+		queue:            make(chan func(), 1000),
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
@@ -243,6 +250,8 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
+	fmt.Println("Client Ready")
+
 	defer world.clientReady.Done()
 
 	if !world.joining && world.load_last_save && UserState.WorkID != (musical.WorkID{}) {
@@ -297,13 +306,26 @@ func (world *Client) Ready() {
 	}
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
-	world.Light.AsNode3D().SetRotation(Euler.Radians{X: -Angle.Pi / 3})
+
+	world.Light.AsNode3D().SetRotation(Euler.Radians{X: Angle.InRadians(-100), Y: Angle.InRadians(-30), Z: 0})
+	world.Light.AsLight3D().SetLightEnergy(2)
+	world.Light.AsLight3D().SetShadowEnabled(true)
+	world.Light.SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal)
 
 	env := Environment.New()
-	env.SetSdfgiEnabled(true)
+	env.SetBackgroundMode(Environment.BgClearColor)
+	env.SetAmbientLightColor(Color.X11.White)
+	env.SetAmbientLightSkyContribution(0)
+	env.SetAmbientLightSource(Environment.AmbientSourceColor)
+	env.SetAmbientLightEnergy(0.5)
 
-	world.AsNode3D().GetWorld3d().SetEnvironment(env)
+	worldenv := WorldEnvironment.New()
+	worldenv.SetEnvironment(env)
+
+	world.AsNode().AddChild(worldenv.AsNode())
 	RenderingServer.SetDebugGenerateWireframes(true)
+
+	fmt.Println("Client setup complete")
 }
 
 const speed = 8
@@ -359,6 +381,7 @@ func (world musicalImpl) Member(req musical.Member) error {
 		Callable.Defer(Callable.New(func() {
 			world.id = req.Author
 			world.record = req.Record
+			world.member = true
 		}))
 	}
 	return nil
@@ -366,13 +389,13 @@ func (world musicalImpl) Member(req musical.Member) error {
 
 func (world musicalImpl) Upload(file musical.Upload) error { return nil }
 func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
-	Callable.Defer(Callable.New(func() {
+	world.queue <- func() {
 		world.TerrainRenderer.Sculpt(brush)
-	}))
+	}
 	return nil
 }
 func (world musicalImpl) Import(uri musical.Import) error {
-	Callable.Defer(Callable.New(func() {
+	world.queue <- func() {
 		if _, ok := world.loaded[uri.Import]; ok {
 			return
 		}
@@ -387,11 +410,11 @@ func (world musicalImpl) Import(uri musical.Import) error {
 			world.textures[uri.Design] = Object.To[Texture2D.Instance](res).ID()
 		}
 		world.loaded[uri.Import] = uri.Design
-	}))
+	}
 	return nil
 }
 func (world musicalImpl) Change(con musical.Change) error {
-	Callable.Defer(Callable.New(func() {
+	world.queue <- func() {
 		if con.Entity.Author == world.id {
 			world.entities = max(world.entities, con.Entity.Number)
 		}
@@ -428,12 +451,12 @@ func (world musicalImpl) Change(con musical.Change) error {
 		world.entity_to_object[con.Entity] = node.ID()
 		world.object_to_entity[node.ID()] = con.Entity
 		container.AddChild(node.AsNode())
-	}))
+	}
 	return nil
 }
 
 func (world musicalImpl) Action(action musical.Action) error {
-	Callable.Defer(Callable.New(func() {
+	world.queue <- func() {
 		object, ok := world.entity_to_object[action.Entity].Instance()
 		if ok {
 			if !object.AsNode().HasNode("ActionRenderer") {
@@ -446,12 +469,12 @@ func (world musicalImpl) Action(action musical.Action) error {
 			actions := Object.To[*ActionRenderer](object.AsNode().GetNode("ActionRenderer"))
 			actions.Add(action)
 		}
-	}))
+	}
 	return nil
 }
 
 func (world musicalImpl) LookAt(view musical.LookAt) error {
-	Callable.Defer(Callable.New(func() {
+	world.queue <- func() {
 		if world.joining && view.Author == 0 {
 			world.time.Follow(view.Timing)
 		}
@@ -477,14 +500,14 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 		}
 		world.AsNode().AddChild(avatar.AsNode())
 		world.authors[view.Author] = avatar.ID()
-	}))
+	}
 	return nil
 }
 
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
 
-	if time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
+	if world.member && time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
 		angles := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalRotation()
 		angles.X = -angles.X
 		angles.Y += Angle.Pi
@@ -507,9 +530,19 @@ func (world *Client) Process(dt Float.X) {
 		os.Stderr.WriteString(msg)
 	default:
 	}
+
+	for i := 0; i < len(world.queue); i++ {
+		select {
+		case fn := <-world.queue:
+			fn()
+		default:
+		}
+	}
+
 	if Input.IsKeyPressed(Input.KeyCtrl) {
 		return
 	}
+
 	if Input.IsKeyPressed(Input.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), -Angle.Radians(dt))
 	}
