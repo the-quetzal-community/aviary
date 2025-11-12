@@ -90,11 +90,12 @@ func (tr *TerrainRenderer) Paint(event InputEventMouse.Instance) {
 	design, ok := tr.client.loaded[tr.BrushDesign]
 	if !ok {
 		tr.client.design_ids++
+		design = musical.Design{
+			Author: tr.client.id,
+			Number: tr.client.design_ids,
+		}
 		tr.client.space.Import(musical.Import{
-			Design: musical.Design{
-				Author: tr.client.id,
-				Number: tr.client.design_ids,
-			},
+			Design: design,
 			Import: tr.BrushDesign,
 		})
 	}

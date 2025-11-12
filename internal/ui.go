@@ -62,6 +62,7 @@ type UI struct {
 	Cloudy *FlightPlanner
 
 	themes         []string
+	theme_index    int
 	gridContainers []*GridFlowContainer
 
 	drawExpanded  atomic.Bool
@@ -142,6 +143,7 @@ func (ui *UI) SetMode(mode Mode) {
 		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
 	}
 	ui.mode = mode
+	ui.onThemeSelected(ui.theme_index)
 }
 
 func (ui *UI) Input(event InputEvent.Instance) {
@@ -165,7 +167,6 @@ func (ui *UI) UnhandledInput(event InputEvent.Instance) {
 
 func (ui *UI) Ready() {
 	ui.ModeGeometry.AsBaseButton().OnPressed(func() {
-		fmt.Println("Switched to geometry mode")
 		ui.SetMode(ModeGeometry)
 	})
 	ui.ModeMaterial.AsBaseButton().OnPressed(func() {
@@ -358,6 +359,7 @@ func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D
 
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
+	ui.theme_index = idx
 	theme_path := "res://library/" + ui.themes[idx]
 	if ui.mode == ModeMaterial {
 		theme_path += "/terrain"
