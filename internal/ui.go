@@ -364,16 +364,26 @@ func (ui *UI) onThemeSelected(idx int) {
 	if ui.mode == ModeMaterial {
 		theme_path += "/terrain"
 	}
-	themes := DirAccess.Open(theme_path)
-	if themes == DirAccess.Nil {
-		return
-	}
 	for _, node := range ui.Editor.AsNode().GetChildren() {
 		container, ok := Object.As[*GridFlowContainer](Node.Instance(node))
 		if ok {
 			container.AsObject()[0].Free()
 		}
 	}
+	if ui.Editor.AsNode().GetChildCount() == 0 {
+		ui.Editor.AsCanvasItem().SetVisible(false)
+		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
+	}
+	themes := DirAccess.Open(theme_path)
+	if themes == DirAccess.Nil {
+		return
+	}
+	defer func() {
+		if ui.Editor.AsNode().GetChildCount() > 0 {
+			ui.Editor.AsCanvasItem().SetVisible(true)
+			ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
+		}
+	}()
 	categories := categories
 	if ui.mode == ModeMaterial {
 		categories = terrain_categories

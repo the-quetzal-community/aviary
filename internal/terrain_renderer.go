@@ -88,10 +88,10 @@ func (tr *TerrainRenderer) Ready() {
 func (tr *TerrainRenderer) Paint() {
 	design, ok := tr.client.loaded[tr.BrushDesign]
 	if !ok {
-		tr.client.design_ids++
+		tr.client.design_ids[tr.client.id]++
 		design = musical.Design{
 			Author: tr.client.id,
-			Number: tr.client.design_ids,
+			Number: tr.client.design_ids[tr.client.id],
 		}
 		tr.client.space.Import(musical.Import{
 			Design: design,

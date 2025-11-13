@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,9 +95,10 @@ type Client struct {
 	id         musical.Author
 	record     musical.WorkID
 	space      musical.UsersSpace3D
-	entities   uint16
-	design_ids uint16
+	entity_ids map[musical.Author]uint16
+	design_ids map[musical.Author]uint16
 
+	design_to_entity map[musical.Design][]Node3D.ID
 	entity_to_object map[musical.Entity]Node3D.ID
 	object_to_entity map[Node3D.ID]musical.Entity
 
@@ -137,6 +139,9 @@ func NewClient() *Client {
 		loaded:           make(map[string]musical.Design),
 		clients:          make(chan musical.Networking),
 		authors:          make(map[musical.Author]Node3D.ID),
+		design_ids:       make(map[musical.Author]uint16),
+		entity_ids:       make(map[musical.Author]uint16),
+		design_to_entity: make(map[musical.Design][]Node3D.ID),
 		load_last_save:   true,
 		queue:            make(chan func(), 1000),
 	}
@@ -401,9 +406,7 @@ func (world musicalImpl) Import(uri musical.Import) error {
 		if _, ok := world.loaded[uri.Import]; ok {
 			return
 		}
-		if uri.Design.Author == world.id {
-			world.design_ids = max(world.design_ids, uri.Design.Number)
-		}
+		world.design_ids[uri.Design.Author] = max(world.design_ids[uri.Design.Author], uri.Design.Number)
 		res := Object.Leak(Resource.Load[Resource.Instance](uri.Import))
 		switch {
 		case Object.Is[PackedScene.Instance](res):
@@ -412,19 +415,47 @@ func (world musicalImpl) Import(uri musical.Import) error {
 			world.textures[uri.Design] = Object.To[Texture2D.Instance](res).ID()
 		}
 		world.loaded[uri.Import] = uri.Design
+
+		redesigns := world.design_to_entity[uri.Design]
+		for i, id := range redesigns {
+			node, ok := id.Instance()
+			if !ok {
+				continue
+			}
+			if scene, ok := world.packed_scenes[uri.Design].Instance(); ok {
+				new_node := Object.To[Node3D.Instance](scene.Instantiate())
+				new_node.SetPosition(node.AsNode3D().Position())
+				new_node.SetRotation(node.AsNode3D().Rotation())
+				new_node.SetScale(node.AsNode3D().Scale())
+				if new_node.AsNode().HasNode("AnimationPlayer") {
+					anim := Object.To[AnimationPlayer.Instance](new_node.AsNode().GetNode("AnimationPlayer"))
+					anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
+					if anim.AsAnimationMixer().HasAnimation("Idle") {
+						anim.PlayNamed("Idle")
+					}
+				}
+				node.AsNode().ReplaceBy(new_node.AsNode())
+				node.AsNode().QueueFree()
+				redesigns[i] = new_node.ID()
+				world.entity_to_object[world.object_to_entity[id]] = new_node.ID()
+				world.object_to_entity[new_node.ID()] = world.object_to_entity[id]
+				delete(world.object_to_entity, id)
+			}
+		}
+		world.design_to_entity[uri.Design] = redesigns
 	}
 	return nil
 }
 func (world musicalImpl) Change(con musical.Change) error {
 	world.queue <- func() {
-		if con.Entity.Author == world.id {
-			world.entities = max(world.entities, con.Entity.Number)
-		}
+		world.entity_ids[con.Entity.Author] = max(world.entity_ids[con.Entity.Author], con.Entity.Number)
 		container := world.TerrainRenderer.AsNode()
 
 		exists, ok := world.entity_to_object[con.Entity].Instance()
 		if ok {
 			if con.Remove {
+				idx := slices.Index(world.design_to_entity[con.Design], exists.ID())
+				world.design_to_entity[con.Design] = slices.Delete(world.design_to_entity[con.Design], idx, idx)
 				exists.AsNode().QueueFree()
 				return
 			}
@@ -434,12 +465,13 @@ func (world musicalImpl) Change(con musical.Change) error {
 			exists.SetScale(Vector3.New(0.1, 0.1, 0.1))
 			return
 		}
-
+		var node Node3D.Instance
 		scene, ok := world.packed_scenes[con.Design].Instance()
-		if !ok {
-			return
+		if ok {
+			node = Object.To[Node3D.Instance](scene.Instantiate())
+		} else {
+			node = Node3D.New()
 		}
-		node := Object.To[Node3D.Instance](scene.Instantiate())
 		if node.AsNode().HasNode("AnimationPlayer") {
 			anim := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
 			anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
@@ -452,6 +484,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
 		world.entity_to_object[con.Entity] = node.ID()
 		world.object_to_entity[node.ID()] = con.Entity
+		world.design_to_entity[con.Design] = append(world.design_to_entity[con.Design], node.ID())
 		container.AddChild(node.AsNode())
 	}
 	return nil

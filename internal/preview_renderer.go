@@ -53,22 +53,22 @@ func (pr *PreviewRenderer) Place() {
 
 		design, ok := pr.client.loaded[pr.current]
 		if !ok {
-			pr.client.design_ids++
+			pr.client.design_ids[pr.client.id]++
 			design = musical.Design{
 				Author: pr.client.id,
-				Number: pr.client.design_ids,
+				Number: pr.client.design_ids[pr.client.id],
 			}
 			pr.client.space.Import(musical.Import{
 				Design: design,
 				Import: pr.current,
 			})
 		}
-		pr.client.entities++
+		pr.client.entity_ids[pr.client.id]++
 		pr.client.space.Change(musical.Change{
 			Author: pr.client.id,
 			Entity: musical.Entity{
 				Author: pr.client.id,
-				Number: pr.client.entities,
+				Number: pr.client.entity_ids[pr.client.id],
 			},
 			Design: design,
 			Offset: pr.AsNode3D().Position(),
