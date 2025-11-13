@@ -23,7 +23,6 @@ import (
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
-	"graphics.gd/variant/Packed"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/internal/musical"
@@ -47,10 +46,57 @@ type TerrainTile struct {
 	heights []float32
 
 	plain_normal Image.Instance
+
+	// Store mesh and packed arrays for reuse
+	mesh        ArrayMesh.Instance
+	side_mesh   ArrayMesh.Instance
+	arrays      [Mesh.ArrayMax]any
+	arrays_side [Mesh.ArrayMax]any
+
+	vertices      []Vector3.XYZ
+	normals       []Vector3.XYZ
+	uvs           []Vector2.XY
+	textures      []float32
+	weights       []float32
+	vertices_side []Vector3.XYZ
+	normals_side  []Vector3.XYZ
+	uvs_side      []Vector2.XY
 }
 
 func (tile *TerrainTile) Ready() {
 	tile.shape_owner = -1
+
+	// Allocate mesh and arrays if not already done
+	if tile.mesh == ArrayMesh.Nil {
+		tile.mesh = ArrayMesh.New()
+	}
+	if tile.side_mesh == ArrayMesh.Nil {
+		tile.side_mesh = ArrayMesh.New()
+	}
+	if tile.vertices == nil || len(tile.vertices) != 16*16*6 {
+		tile.vertices = make([]Vector3.XYZ, 16*16*6)
+	}
+	if tile.normals == nil || len(tile.normals) != 16*16*6 {
+		tile.normals = make([]Vector3.XYZ, 16*16*6)
+	}
+	if tile.uvs == nil || len(tile.uvs) != 16*16*6 {
+		tile.uvs = make([]Vector2.XY, 16*16*6)
+	}
+	if tile.textures == nil || len(tile.textures) != 16*16*6*4 {
+		tile.textures = make([]float32, 16*16*6*4)
+	}
+	if tile.weights == nil || len(tile.weights) != 16*16*6*4 {
+		tile.weights = make([]float32, 16*16*6*4)
+	}
+	if tile.vertices_side == nil || len(tile.vertices_side) != 4*16*6 {
+		tile.vertices_side = make([]Vector3.XYZ, 4*16*6)
+	}
+	if tile.normals_side == nil || len(tile.normals_side) != 4*16*6 {
+		tile.normals_side = make([]Vector3.XYZ, 4*16*6)
+	}
+	if tile.uvs_side == nil || len(tile.uvs_side) != 4*16*6 {
+		tile.uvs_side = make([]Vector2.XY, 4*16*6)
+	}
 	tile.Reload()
 }
 
@@ -109,19 +155,6 @@ func (tile *TerrainTile) Reload() {
 	normals_array.AsImageTextureLayered().CreateFromImages(bumpmaps)
 	tile.shader.SetShaderParameter("texture_normal", normals_array)
 
-	var vertices = Packed.New[Vector3.XYZ]()
-	vertices.Resize(16 * 16 * 6)
-	var normals = Packed.New[Vector3.XYZ]()
-	normals.Resize(16 * 16 * 6)
-	var uvs = Packed.New[Vector2.XY]()
-	uvs.Resize(16 * 16 * 6)
-
-	var textures = Packed.New[float32]()
-	textures.Resize(16 * 16 * 6 * 4)
-
-	weights := Packed.New[float32]()
-	weights.Resize(16 * 16 * 6 * 4)
-
 	offset := Vector3.XYZ{
 		-8, 0, -8,
 	}
@@ -158,32 +191,34 @@ func (tile *TerrainTile) Reload() {
 		}
 		return max(-2, height)
 	}
-	tile.heights = make([]float32, 17*17)
-	for x := range 17 {
-		for y := range 17 {
+	// Update heights
+	if tile.heights == nil || len(tile.heights) != 17*17 {
+		tile.heights = make([]float32, 17*17)
+	}
+	for x := 0; x < 17; x++ {
+		for y := 0; y < 17; y++ {
 			tile.heights[x+y*17] = float32(sample_height(x, y))
 		}
 	}
 
+	// Update mesh arrays in-place
 	add := func(index int, cell_x, cell_y int, x, y int, w1, w2, w3, w4 Float.X) {
-		vertices.SetIndex(index, Vector3.XYZ{Float.X(x), sample_height(x, y), Float.X(y)})
-		normals.SetIndex(index, Vector3.XYZ{0, 1, 0})
-		uvs.SetIndex(index, Vector2.XY{Float.X(x) / 16, Float.X(y) / 16})
+		tile.vertices[index] = Vector3.XYZ{Float.X(x), sample_height(x, y), Float.X(y)}
+		tile.normals[index] = Vector3.XYZ{0, 1, 0}
+		tile.uvs[index] = Vector2.XY{Float.X(x) / 16, Float.X(y) / 16}
 
-		// Need to blend these correctly.w
-		textures.SetIndex(index*4+0, float32(sample_texture(cell_x, cell_y)))     // top left
-		textures.SetIndex(index*4+1, float32(sample_texture(cell_x+1, cell_y)))   // top right
-		textures.SetIndex(index*4+2, float32(sample_texture(cell_x, cell_y+1)))   // bottom left
-		textures.SetIndex(index*4+3, float32(sample_texture(cell_x+1, cell_y+1))) // bottom right
+		tile.textures[index*4+0] = float32(sample_texture(cell_x, cell_y))     // top left
+		tile.textures[index*4+1] = float32(sample_texture(cell_x+1, cell_y))   // top right
+		tile.textures[index*4+2] = float32(sample_texture(cell_x, cell_y+1))   // bottom left
+		tile.textures[index*4+3] = float32(sample_texture(cell_x+1, cell_y+1)) // bottom right
 
-		weights.SetIndex(index*4, float32(w1))
-		weights.SetIndex(index*4+1, float32(w2))
-		weights.SetIndex(index*4+2, float32(w3))
-		weights.SetIndex(index*4+3, float32(w4))
+		tile.weights[index*4] = float32(w1)
+		tile.weights[index*4+1] = float32(w2)
+		tile.weights[index*4+2] = float32(w3)
+		tile.weights[index*4+3] = float32(w4)
 	}
-	// generate the triangle pairs of the plane mesh
-	for x := range 16 {
-		for y := range 16 {
+	for x := 0; x < 16; x++ {
+		for y := 0; y < 16; y++ {
 			add(6*(x+16*y)+0, x, y, x, y, 1, 0, 0, 0)     // top left
 			add(6*(x+16*y)+1, x, y, x+1, y, 0, 1, 0, 0)   // top right
 			add(6*(x+16*y)+2, x, y, x, y+1, 0, 0, 1, 0)   // bottom left
@@ -198,15 +233,21 @@ func (tile *TerrainTile) Reload() {
 	shape.SetMapWidth(17)
 	shape.SetMapData(tile.heights)
 
-	var mesh = ArrayMesh.New()
-	var arrays = [Mesh.ArrayMax]any{
-		Mesh.ArrayVertex:  vertices,
-		Mesh.ArrayTexUv:   uvs,
-		Mesh.ArrayNormal:  normals,
-		Mesh.ArrayCustom0: textures,
-		Mesh.ArrayCustom1: weights,
+	// Prepare mesh arrays for main surface
+	tile.arrays = [Mesh.ArrayMax]any{
+		Mesh.ArrayVertex:  tile.vertices,
+		Mesh.ArrayTexUv:   tile.uvs,
+		Mesh.ArrayNormal:  tile.normals,
+		Mesh.ArrayCustom0: tile.textures,
+		Mesh.ArrayCustom1: tile.weights,
 	}
-	ArrayMesh.Expanded(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:], nil, nil,
+
+	// Remove previous surfaces if any
+	for tile.mesh.AsMesh().GetSurfaceCount() > 0 {
+		tile.mesh.SurfaceRemove(0)
+	}
+
+	ArrayMesh.Expanded(tile.mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, tile.arrays[:], nil, nil,
 		Mesh.ArrayFormatVertex|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
@@ -214,13 +255,6 @@ func (tile *TerrainTile) Reload() {
 	tile_size := float32(1.0) // Adjust for texture tiling scale
 
 	// Sides mesh data
-	var vertices_side = Packed.New[Vector3.XYZ]()
-	vertices_side.Resize(4 * 16 * 6)
-	var normals_side = Packed.New[Vector3.XYZ]()
-	normals_side.Resize(4 * 16 * 6)
-	var uvs_side = Packed.New[Vector2.XY]()
-	uvs_side.Resize(4 * 16 * 6)
-
 	index_base := 0
 
 	type sideParam struct {
@@ -280,55 +314,62 @@ func (tile *TerrainTile) Reload() {
 			n := Vector3.Normalized(Vector3.Cross(v1, v2))
 
 			// Triangle 1
-			vertices_side.SetIndex(index_base+0, bl)
-			normals_side.SetIndex(index_base+0, n)
-			uvs_side.SetIndex(index_base+0, Vector2.XY{float32(i) / tile_size, 0 / tile_size})
+			tile.vertices_side[index_base+0] = bl
+			tile.normals_side[index_base+0] = n
+			tile.uvs_side[index_base+0] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
 			if sp.flippedWinding {
-				vertices_side.SetIndex(index_base+1, tr)
-				normals_side.SetIndex(index_base+1, n)
-				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
-				vertices_side.SetIndex(index_base+2, tl)
-				normals_side.SetIndex(index_base+2, n)
-				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i) / tile_size, h_near / tile_size})
+				tile.vertices_side[index_base+1] = tr
+				tile.normals_side[index_base+1] = n
+				tile.uvs_side[index_base+1] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
+				tile.vertices_side[index_base+2] = tl
+				tile.normals_side[index_base+2] = n
+				tile.uvs_side[index_base+2] = Vector2.XY{float32(i) / tile_size, h_near / tile_size}
 			} else {
-				vertices_side.SetIndex(index_base+1, tl)
-				normals_side.SetIndex(index_base+1, n)
-				uvs_side.SetIndex(index_base+1, Vector2.XY{float32(i) / tile_size, h_near / tile_size})
-				vertices_side.SetIndex(index_base+2, tr)
-				normals_side.SetIndex(index_base+2, n)
-				uvs_side.SetIndex(index_base+2, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
+				tile.vertices_side[index_base+1] = tl
+				tile.normals_side[index_base+1] = n
+				tile.uvs_side[index_base+1] = Vector2.XY{float32(i) / tile_size, h_near / tile_size}
+				tile.vertices_side[index_base+2] = tr
+				tile.normals_side[index_base+2] = n
+				tile.uvs_side[index_base+2] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
 			}
 
 			// Triangle 2
-			vertices_side.SetIndex(index_base+3, bl)
-			normals_side.SetIndex(index_base+3, n)
-			uvs_side.SetIndex(index_base+3, Vector2.XY{float32(i) / tile_size, 0 / tile_size})
+			tile.vertices_side[index_base+3] = bl
+			tile.normals_side[index_base+3] = n
+			tile.uvs_side[index_base+3] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
 			if sp.flippedWinding {
-				vertices_side.SetIndex(index_base+4, br)
-				normals_side.SetIndex(index_base+4, n)
-				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, 0 / tile_size})
-				vertices_side.SetIndex(index_base+5, tr)
-				normals_side.SetIndex(index_base+5, n)
-				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
+				tile.vertices_side[index_base+4] = br
+				tile.normals_side[index_base+4] = n
+				tile.uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
+				tile.vertices_side[index_base+5] = tr
+				tile.normals_side[index_base+5] = n
+				tile.uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
 			} else {
-				vertices_side.SetIndex(index_base+4, tr)
-				normals_side.SetIndex(index_base+4, n)
-				uvs_side.SetIndex(index_base+4, Vector2.XY{float32(i+1) / tile_size, h_far / tile_size})
-				vertices_side.SetIndex(index_base+5, br)
-				normals_side.SetIndex(index_base+5, n)
-				uvs_side.SetIndex(index_base+5, Vector2.XY{float32(i+1) / tile_size, 0 / tile_size})
+				tile.vertices_side[index_base+4] = tr
+				tile.normals_side[index_base+4] = n
+				tile.uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
+				tile.vertices_side[index_base+5] = br
+				tile.normals_side[index_base+5] = n
+				tile.uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
 			}
 
 			index_base += 6
 		}
 	}
 
-	var arrays_side = [Mesh.ArrayMax]any{
-		Mesh.ArrayVertex: vertices_side,
-		Mesh.ArrayNormal: normals_side,
-		Mesh.ArrayTexUv:  uvs_side,
+	// Prepare mesh arrays for side surface
+	tile.arrays_side = [Mesh.ArrayMax]any{
+		Mesh.ArrayVertex: tile.vertices_side,
+		Mesh.ArrayNormal: tile.normals_side,
+		Mesh.ArrayTexUv:  tile.uvs_side,
 	}
-	ArrayMesh.Expanded(mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
+
+	// Remove previous side surfaces if any
+	for tile.mesh.AsMesh().GetSurfaceCount() > 1 {
+		tile.mesh.SurfaceRemove(1)
+	}
+
+	ArrayMesh.Expanded(tile.mesh).AddSurfaceFromArrays(Mesh.PrimitiveTriangles, tile.arrays_side[:], nil, nil,
 		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv,
 	)
 
@@ -346,7 +387,7 @@ func (tile *TerrainTile) Reload() {
 	}
 	collision_shape.SetShape(shape.AsShape3D())
 
-	tile.Mesh.SetMesh(mesh.AsMesh())
+	tile.Mesh.SetMesh(tile.mesh.AsMesh())
 	tile.Mesh.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
 	tile.Mesh.SetSurfaceOverrideMaterial(1, tile.side_shader.AsMaterial())
 	tile.Mesh.AsNode3D().SetPosition(Vector3.XYZ{

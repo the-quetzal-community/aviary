@@ -527,7 +527,7 @@ func (world *Client) Process(dt Float.X) {
 	}
 
 	if world.TerrainRenderer.PaintActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
-		if time.Since(world.last_PaintAt) > time.Second/2 {
+		if time.Since(world.last_PaintAt) > time.Second/5 {
 			world.TerrainRenderer.Paint()
 			world.last_PaintAt = time.Now()
 		}
