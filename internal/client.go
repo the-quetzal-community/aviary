@@ -455,7 +455,9 @@ func (world musicalImpl) Change(con musical.Change) error {
 		if ok {
 			if con.Remove {
 				idx := slices.Index(world.design_to_entity[con.Design], exists.ID())
-				world.design_to_entity[con.Design] = slices.Delete(world.design_to_entity[con.Design], idx, idx)
+				if idx >= 0 {
+					world.design_to_entity[con.Design] = slices.Delete(world.design_to_entity[con.Design], idx, idx)
+				}
 				exists.AsNode().QueueFree()
 				return
 			}
