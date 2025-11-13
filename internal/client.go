@@ -118,6 +118,8 @@ type Client struct {
 	last_LookAt      musical.LookAt
 	last_lookAt_time time.Time
 
+	last_PaintAt time.Time
+
 	authors map[musical.Author]Node3D.ID
 
 	queue chan func()
@@ -524,6 +526,13 @@ func (world *Client) Process(dt Float.X) {
 		}
 	}
 
+	if world.TerrainRenderer.PaintActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
+		if time.Since(world.last_PaintAt) > time.Second/2 {
+			world.TerrainRenderer.Paint()
+			world.last_PaintAt = time.Now()
+		}
+	}
+
 	Object.Use(world)
 	select {
 	case msg := <-world.println:
@@ -585,10 +594,6 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
-				if world.TerrainRenderer.PaintActive {
-					world.TerrainRenderer.Paint(mouse.AsInputEventMouse())
-					break
-				}
 				if world.PreviewRenderer.Enabled() {
 					world.PreviewRenderer.Place()
 					break

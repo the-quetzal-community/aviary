@@ -5,7 +5,6 @@ import (
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
-	"graphics.gd/classdb/InputEventMouse"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
@@ -86,7 +85,7 @@ func (tr *TerrainRenderer) Ready() {
 	tr.AsNode().AddChild(tr.tile.AsNode())
 }
 
-func (tr *TerrainRenderer) Paint(event InputEventMouse.Instance) {
+func (tr *TerrainRenderer) Paint() {
 	design, ok := tr.client.loaded[tr.BrushDesign]
 	if !ok {
 		tr.client.design_ids++
@@ -107,8 +106,6 @@ func (tr *TerrainRenderer) Paint(event InputEventMouse.Instance) {
 		Design: design,
 		Commit: true,
 	})
-	tr.shader.SetShaderParameter("paint_active", false)
-	tr.PaintActive = false
 }
 
 func (vr *TerrainRenderer) Process(dt Float.X) {
@@ -210,7 +207,7 @@ func (tr *TerrainRenderer) UnhandledInput(event InputEvent.Instance) {
 		if event.ButtonIndex() == Input.MouseButtonLeft && tr.PaintActive {
 			if event.AsInputEvent().IsReleased() {
 				tr.PaintActive = false
-
+				tr.shader.SetShaderParameter("paint_active", false)
 			}
 		}
 	}
