@@ -196,7 +196,7 @@ func (tr *TerrainRenderer) UnhandledInput(event InputEvent.Instance) {
 				tr.shader_buried.SetShaderParameter("radius", tr.BrushRadius)
 			}
 		}
-		if tr.BrushActive && event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsReleased() {
+		if !tr.PaintActive && (tr.BrushActive && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased()) {
 			tr.client.space.Sculpt(musical.Sculpt{
 				Author: tr.client.id,
 				Target: tr.BrushTarget,

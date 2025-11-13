@@ -532,11 +532,7 @@ func (world *Client) Process(dt Float.X) {
 	}
 
 	for i := 0; i < len(world.queue); i++ {
-		select {
-		case fn := <-world.queue:
-			fn()
-		default:
-		}
+		(<-world.queue)()
 	}
 
 	if Input.IsKeyPressed(Input.KeyCtrl) {

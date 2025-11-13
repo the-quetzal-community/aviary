@@ -3,7 +3,6 @@ package musical
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"iter"
 
@@ -167,12 +166,19 @@ func (srv server) run() {
 		srv.reports.ReportError(xray.New(err))
 		return
 	}
-
-	fmt.Println("WAITING FOR CLIENTS")
+	if err := srv.replica.Member(Member{
+		Record: current,
+		Number: tracker.value,
+		Author: 0,
+		Server: srv.name,
+		Assign: true,
+	}); err != nil {
+		srv.reports.ReportError(xray.New(err))
+		return
+	}
 	for {
 		select {
 		case client, ok := <-srv.clients:
-			fmt.Println("NEW CLIENT")
 			if !ok {
 				return
 			}
