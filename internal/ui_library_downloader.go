@@ -16,6 +16,7 @@ import (
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/ProgressBar"
 	"graphics.gd/classdb/ProjectSettings"
+	"graphics.gd/classdb/ResourceLoader"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/TextureRect"
@@ -136,6 +137,7 @@ func (dl *LibraryDownloader) Process(delta Float.X) {
 			DirAccess.RemoveAbsolute("user://preview.pck.backup")
 		}
 		ProjectSettings.LoadResourcePack("user://preview.pck", 0)
+		ResourceLoader.AddResourceFormatLoader(NewCommunityResourceLoader().AsResourceFormatLoader(), true)
 		SceneTree.Add(NewClient())
 		dl.AsNode().QueueFree()
 		return

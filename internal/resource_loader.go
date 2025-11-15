@@ -17,16 +17,16 @@ import (
 
 // CommunityResourceLoader is responsible for loading community library resources into
 // Godot's "res://" resource file system. This is achieved by pulling individual
-// resources from the community library .zip file that is hosted in the cloud.
+// resources from the community library .pck file that is hosted in the cloud.
 //
-// Once on startup, we load the central directory of the remote .zip file into memory,
-// then whenever [Resource.Load] is called with a library path, we check if the local zip
-// has this resource and if it doesn't, we fetch the corresponding resource from the remote
-// .zip file using an HTTP range request and then we write this back into our local
-// user://library.zip" and ask Godot to reload the .zip file.
+// Once on startup, we load the file directory of the remote .pck, we write this locally,
+// along with preallocated space for each file, then whenever [Resource.Load] is called with
+// a library path, we check if the local pck has this resource and if it doesn't, we fetch the
+// corresponding resource from the remote .pck file using an HTTP range request and then we
+// write this back into our local user://library.pck" before Godot has the chance to read it.
 //
 // In Aviary, we may assume that CommunityResourceLoader is only ever called from a
-// dedicated resource loading thread.
+// single dedicated resource loading thread.
 type CommunityResourceLoader struct {
 	ResourceFormatLoader.Extension[CommunityResourceLoader]
 
@@ -40,7 +40,13 @@ type CommunityResourceLoader struct {
 
 func NewCommunityResourceLoader() *CommunityResourceLoader {
 	crl := &CommunityResourceLoader{}
-	crl.load()
+	cloud, err := httpseek.New("https://vpk.quetzal.community/library.pck")
+	if err != nil {
+		Engine.Raise(err)
+	} else {
+		cloud.OnResourceModified(crl.load)
+	}
+	crl.load(cloud)
 	ProjectSettings.LoadResourcePack("user://library.pck", 0)
 	return crl
 }
@@ -95,33 +101,12 @@ func (crl *CommunityResourceLoader) remap(entry pck.File) bool {
 func (crl *CommunityResourceLoader) download(path string) {
 	var reader io.ReadSeeker = crl.cache
 	if crl.cache == nil {
-		cache, last_modified, err := httpseek.New("https://vpk.quetzal.community/library.pck")
+		cache, err := httpseek.New("https://vpk.quetzal.community/library.pck")
 		if err != nil {
 			Engine.Raise(err)
 			return
 		}
-		_ = last_modified // FIXME
 		reader = cache
-	}
-	var cloud = crl.cloud[path]
-	if strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap") {
-		if _, err := reader.Seek(cloud.Seek, io.SeekStart); err != nil {
-			Engine.Raise(err)
-			return
-		}
-		var remap = make([]byte, cloud.Size)
-		if _, err := io.ReadFull(reader, remap); err != nil {
-			Engine.Raise(err)
-			return
-		}
-		for line := range bytes.SplitSeq(remap, []byte("\n")) {
-			if path, ok := bytes.CutPrefix(line, []byte("path=\"res://")); ok {
-				crl.download(string(bytes.TrimSuffix(path, []byte("\""))))
-				break
-			}
-		}
-		reader = bytes.NewReader(remap)
-		cloud.Seek = 0
 	}
 	local, err := os.OpenFile(OS.GetUserDataDir()+"/library.pck", os.O_RDWR, 0644)
 	if err != nil {
@@ -129,10 +114,13 @@ func (crl *CommunityResourceLoader) download(path string) {
 		return
 	}
 	defer local.Close()
-	if err := pck.Remap(local, reader, crl.local[path], cloud); err != nil {
+	if err := pck.Remap(local, reader, crl.local[path], crl.cloud[path]); err != nil {
 		Engine.Raise(err)
 		return
 	}
+	file := crl.local[path]
+	file.Flag = 0
+	crl.local[path] = file
 }
 
 type localFetcher struct {
@@ -161,7 +149,7 @@ func (f localFetcher) Fetch(start, end *int64) (io.Reader, error) {
 	return reader, nil
 }
 
-func (crl *CommunityResourceLoader) load() {
+func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
 	local, err := os.OpenFile(OS.GetUserDataDir()+"/library.pck", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		Engine.Raise(err)
@@ -179,33 +167,29 @@ func (crl *CommunityResourceLoader) load() {
 			return
 		}
 	}
-	cloud, _, err := httpseek.New("https://vpk.quetzal.community/library.pck")
-	if err != nil {
-		Engine.Raise(err)
-		return
-	}
-	defer cloud.Close()
-	crl.cloud, err = pck.Index(cloud)
-	if err != nil {
-		Engine.Raise(err)
-		return
-	}
-	if _, err := local.Seek(0, io.SeekStart); err != nil {
-		Engine.Raise(err)
-		return
-	}
-	if err := pck.Append(local, crl.cloud); err != nil {
-		Engine.Raise(fmt.Errorf("failed to update local library.pck: %w", err))
-		return
-	}
-	if _, err := local.Seek(0, io.SeekStart); err != nil {
-		Engine.Raise(err)
-		return
-	}
-	crl.local, err = pck.Index(local)
-	if err != nil {
-		Engine.Raise(err)
-		return
+	if resource != nil {
+		crl.cloud, err = pck.Index(resource)
+		if err != nil {
+			Engine.Raise(err)
+			return
+		}
+		if _, err := local.Seek(0, io.SeekStart); err != nil {
+			Engine.Raise(err)
+			return
+		}
+		if err := pck.Append(local, crl.cloud); err != nil {
+			Engine.Raise(fmt.Errorf("failed to update local library.pck: %w", err))
+			return
+		}
+		if _, err := local.Seek(0, io.SeekStart); err != nil {
+			Engine.Raise(err)
+			return
+		}
+		crl.local, err = pck.Index(local)
+		if err != nil {
+			Engine.Raise(err)
+			return
+		}
 	}
 	preview, err := os.OpenFile(OS.GetUserDataDir()+"/preview.pck", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
