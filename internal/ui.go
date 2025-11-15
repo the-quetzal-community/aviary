@@ -190,6 +190,7 @@ func (ui *UI) Ready() {
 		ui.themes = append(ui.themes, name)
 		count++
 	}
+	ui.ThemeSelector.LoadThemes(ui.themes)
 	ui.onThemeSelected(0)
 	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
 	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterStop)
@@ -359,6 +360,7 @@ func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
 	ui.theme_index = idx
+
 	preview_path := "res://preview/" + ui.themes[idx]
 	if ui.mode == ModeMaterial {
 		preview_path += "/terrain"

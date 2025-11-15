@@ -3,7 +3,6 @@ package internal
 import (
 	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Control"
-	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
@@ -25,13 +24,11 @@ type ThemeSelector struct {
 	ThemeSelected Signal.Solo[int] `gd:"theme_selected"`
 }
 
-func (selector *ThemeSelector) Ready() {
-	themes := DirAccess.Open("res://library")
-	if themes == DirAccess.Nil {
-		selector.Themes.AsNode().QueueFree()
-		return
-	}
-	for _, theme := range themes.GetDirectories() {
+func (selector *ThemeSelector) LoadThemes(themes []string) {
+	for _, theme := range themes {
+		if theme == "" {
+			continue
+		}
 		var button = TextureButton.New()
 		button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + theme + "/icon.png"))
 		button.SetIgnoreTextureSize(true)
