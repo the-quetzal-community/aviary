@@ -120,7 +120,7 @@ func (crl *CommunityResourceLoader) download(path string) {
 	}
 	defer local.Close()
 	if err := pck.Remap(local, reader, crl.local[path], crl.cloud[path]); err != nil {
-		Engine.Raise(err)
+		Engine.Raise(fmt.Errorf("failed to download resource %q from community library: %v", path, err))
 		return
 	}
 	file := crl.local[path]
@@ -212,9 +212,12 @@ func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
 		return
 	}
 	for path, entry := range crl.preview {
+		if path == ".godot/uid_cache.bin" {
+			continue
+		}
 		if slot, ok := crl.local[path]; ok {
 			if err := pck.Remap(local, preview, slot, entry); err != nil {
-				Engine.Raise(err)
+				Engine.Raise(fmt.Errorf("failed to update local of %s from preview.pck: %w", path, err))
 				return
 			}
 		}
