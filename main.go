@@ -8,6 +8,7 @@ import (
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/ResourceLoader"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/startup"
 	"the.quetzal.community/aviary/internal"
@@ -46,15 +47,15 @@ func main() {
 	classdb.Register[internal.FlightPlanner]()
 	classdb.Register[internal.AnimationSaving]()
 	classdb.Register[internal.ActionRenderer]()
-	if !ProjectSettings.LoadResourcePack("res://library.pck", 0) {
-		if !ProjectSettings.LoadResourcePack("user://library.pck", 0) {
-			startup.LoadingScene()
-			SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
-			startup.Scene()
-			return
-		}
+	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
+	if !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
+		startup.LoadingScene()
+		SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
+		startup.Scene()
+		return
 	}
 	startup.LoadingScene()
+	ResourceLoader.AddResourceFormatLoader(internal.NewCommunityResourceLoader().AsResourceFormatLoader(), true)
 	SceneTree.Add(internal.NewClient())
 	startup.Scene()
 	close(internal.ShuttingDown)

@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -360,9 +359,13 @@ func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
 	ui.theme_index = idx
-	theme_path := "res://library/" + ui.themes[idx]
+	preview_path := "res://preview/" + ui.themes[idx]
 	if ui.mode == ModeMaterial {
-		theme_path += "/terrain"
+		preview_path += "/terrain"
+	}
+	library_path := "res://library/" + ui.themes[idx]
+	if ui.mode == ModeMaterial {
+		library_path += "/terrain"
 	}
 	for _, node := range ui.Editor.AsNode().GetChildren() {
 		container, ok := Object.As[*GridFlowContainer](Node.Instance(node))
@@ -374,7 +377,7 @@ func (ui *UI) onThemeSelected(idx int) {
 		ui.Editor.AsCanvasItem().SetVisible(false)
 		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
 	}
-	themes := DirAccess.Open(theme_path)
+	themes := DirAccess.Open(preview_path)
 	if themes == DirAccess.Nil {
 		return
 	}
@@ -403,7 +406,7 @@ func (ui *UI) onThemeSelected(idx int) {
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			ui.gridContainers = append(ui.gridContainers, gridflow)
 			elements := gridflow.Scrollable.GridContainer
-			var path = "res://library/" + ui.themes[idx] + "/"
+			var path = "res://preview/" + ui.themes[idx] + "/"
 			if ui.mode == ModeMaterial {
 				path += "terrain/"
 			}
@@ -417,24 +420,20 @@ func (ui *UI) onThemeSelected(idx int) {
 				ext = png
 			}
 			for resource := range resources.Iter() {
-				resource = String.TrimSuffix(resource, ".import")
-				if !String.HasSuffix(resource, ext) {
+				resource = strings.TrimSuffix(resource, ".import")
+				if !String.HasSuffix(resource, ".png") {
 					continue
 				}
-				if String.HasSuffix(resource, "_norm.png") || String.HasSuffix(resource, "_spec.png") {
-					continue
-				}
-				var path = Path.ToResource(String.New(theme_path + "/" + name + "/" + resource))
+				var path = preview_path + "/" + name + "/" + resource
 				switch ext {
 				case glb:
-					renamed := Path.ToResource(String.New(theme_path + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".png"))
-					preview := Resource.Load[Texture2D.Instance](Path.ToResource(renamed))
+					preview := Resource.Load[Texture2D.Instance](path)
 					if preview == Texture2D.Nil {
 						continue
 					}
-					tscn := theme_path + "/" + name + "/" + String.TrimSuffix(resource, glb) + ".tscn"
-					if FileAccess.FileExists(tscn) {
-						path = Path.ToResource(String.New(tscn))
+					resource := library_path + "/" + name + "/" + strings.TrimSuffix(string(resource), ".png")
+					if tscn := library_path + "/" + name + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
+						resource = tscn
 					}
 					ImageButton := TextureButton.New()
 					ImageButton.SetTextureNormal(preview)
@@ -444,8 +443,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
-						case ui.preview <- path:
-							fmt.Println(path)
+						case ui.preview <- Path.ToResource(String.New(resource)):
 							ui.closeDrawer()
 						default:
 						}
@@ -453,6 +451,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					elements.AsNode().AddChild(ImageButton.AsNode())
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
+					resource := library_path + "/" + name + "/" + resource
 					ImageButton := TextureButton.New()
 					ImageButton.SetTextureNormal(texture)
 					ImageButton.SetIgnoreTextureSize(true)
@@ -461,7 +460,7 @@ func (ui *UI) onThemeSelected(idx int) {
 					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
 					ImageButton.AsBaseButton().OnPressed(func() {
 						select {
-						case ui.texture <- path:
+						case ui.texture <- Path.ToResource(String.New(resource)):
 							ui.closeDrawer()
 						default:
 						}

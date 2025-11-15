@@ -45,7 +45,7 @@ func (dl *LibraryDownloader) Ready() {
 	dl.bytes_downloaded = make(chan datasize.ByteSize, 1)
 	dl.done = make(chan struct{}, 1)
 	dl.Progress.AsCanvasItem().SetVisible(false)
-	req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/library.pck", nil)
+	req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/preview.pck", nil)
 	if err != nil {
 		Engine.Raise(err)
 		return
@@ -56,7 +56,7 @@ func (dl *LibraryDownloader) Ready() {
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		Engine.Raise(errors.New("failed to fetch library.pck: " + resp.Status))
+		Engine.Raise(errors.New("failed to fetch preview.pck: " + resp.Status))
 		return
 	}
 	dl.setContentLength(resp)
@@ -67,7 +67,7 @@ func (dl *LibraryDownloader) Ready() {
 		dl.downloading = true
 		dl.DownloadButton.Pointer.AsCanvasItem().SetVisible(false)
 		dl.Progress.AsCanvasItem().SetVisible(true)
-		resp, err := http.Get("https://vpk.quetzal.community/library.pck")
+		resp, err := http.Get("https://vpk.quetzal.community/preview.pck")
 		if err != nil {
 			Engine.Raise(err)
 			return
@@ -110,7 +110,7 @@ func (dl *LibraryDownloader) download(body io.ReadCloser) {
 		Notify: dl.bytes_downloaded,
 	}
 	reader := io.TeeReader(body, counter)
-	library, err := os.Create(filepath.Join(OS.GetUserDataDir(), "library.pck"))
+	library, err := os.Create(filepath.Join(OS.GetUserDataDir(), "preview.pck"))
 	if err != nil {
 		Engine.Raise(err)
 		return
@@ -129,13 +129,13 @@ func (dl *LibraryDownloader) Process(delta Float.X) {
 		dl.Progress.AsRange().SetValue(Float.X(bytes))
 		dl.DownloadButton.Size.SetText((dl.total - bytes).HumanReadable())
 	case <-dl.done:
-		if FileAccess.FileExists("res://library.pck.backup") {
-			DirAccess.RemoveAbsolute("res://library.pck.backup")
+		if FileAccess.FileExists("res://preview.pck.backup") {
+			DirAccess.RemoveAbsolute("res://preview.pck.backup")
 		}
-		if FileAccess.FileExists("user://library.pck.backup") {
-			DirAccess.RemoveAbsolute("user://library.pck.backup")
+		if FileAccess.FileExists("user://preview.pck.backup") {
+			DirAccess.RemoveAbsolute("user://preview.pck.backup")
 		}
-		ProjectSettings.LoadResourcePack("user://library.pck", 0)
+		ProjectSettings.LoadResourcePack("user://preview.pck", 0)
 		SceneTree.Add(NewClient())
 		dl.AsNode().QueueFree()
 		return

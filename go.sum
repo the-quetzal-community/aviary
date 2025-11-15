@@ -66,7 +66,5 @@ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 graphics.gd v0.0.0-20250526063741-ffcae8f56f4c h1:QHXUDKyJ+58BFfdXeaKFTY91NoPBs5L9go60M8N3new=
 graphics.gd v0.0.0-20250526063741-ffcae8f56f4c/go.mod h1:uhAcIxEde3NsRlv6LtQVe5AeTk1PtbKS517BucLWd34=
-runtime.link v0.0.0-20250724024108-1bea2a27f700 h1:kD7sgxj9MV+ywKZYky5TeceNckb52/DGJGpry9jeWtQ=
-runtime.link v0.0.0-20250724024108-1bea2a27f700/go.mod h1:13rTs4Rs4/Z512Vh1Rkak+nJUERb9f4MpCZQyUrcTwM=
 runtime.link v0.0.0-20251110101815-59f3debe833d h1:v/wKYGR6HeGXF4qS6c8GUFCf47wVqIkrFWnIijOE2jY=
 runtime.link v0.0.0-20251110101815-59f3debe833d/go.mod h1:13rTs4Rs4/Z512Vh1Rkak+nJUERb9f4MpCZQyUrcTwM=
