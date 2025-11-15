@@ -62,6 +62,11 @@ func (crl *CommunityResourceLoader) RecognizePath(path string, atype string) boo
 	path_import := path + ".import"
 	path_remap := path + ".remap"
 	if entry, ok := crl.local[path]; ok && !entry.Missing() {
+		if cloud, ok := crl.cloud[path]; ok {
+			if entry.Hash != cloud.Hash {
+				crl.download(path)
+			}
+		}
 		return false
 	}
 	if entry, ok := crl.preview[path_import]; ok {

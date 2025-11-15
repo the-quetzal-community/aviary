@@ -105,7 +105,8 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		Callable.Defer(Callable.New(func() {
 			var image = Image.New()
 			image.LoadPngFromBuffer(buf)
-			mapButton := TextureButton.New()
+			mapButton := Object.Leak(TextureButton.New())
+			defer Object.Free(mapButton)
 			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(image).AsTexture2D())
 			mapButton.AsBaseButton().OnPressed(func() {
 				record, err := base64.RawURLEncoding.DecodeString(string(save))

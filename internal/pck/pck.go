@@ -148,7 +148,7 @@ func Append(pck io.ReadWriteSeeker, files map[string]File) error {
 	var added = false
 	zeros := make([]byte, 10*1024*1024) // 10 MB of zeros buffer
 	for path, file := range files {
-		if _, ok := index[path]; ok {
+		if exist, ok := index[path]; ok && exist.Hash == file.Hash {
 			continue
 		}
 		file.Seek = end
