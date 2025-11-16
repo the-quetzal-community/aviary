@@ -151,7 +151,7 @@ func (ui *CloudControl) Setup() {
 			}
 
 			ui.on_process <- func(cc *CloudControl) {
-				req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/library.pck", nil)
+				req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/preview.pck", nil)
 				if err != nil {
 					Engine.Raise(err)
 					return
@@ -170,15 +170,15 @@ func (ui *CloudControl) Setup() {
 					Engine.Raise(err)
 					return
 				}
-				if remote_time.Unix() > int64(FileAccess.GetModifiedTime("res://library.pck")) && remote_time.Unix() > int64(FileAccess.GetModifiedTime("user://library.pck")) {
-					if FileAccess.FileExists("res://library.pck") {
-						if err := DirAccess.RenameAbsolute("res://library.pck", "res://library.pck.backup"); err != nil {
+				if remote_time.Unix() > int64(FileAccess.GetModifiedTime("res://preview.pck")) && remote_time.Unix() > int64(FileAccess.GetModifiedTime("user://preview.pck")) {
+					if FileAccess.FileExists("res://preview.pck") {
+						if err := DirAccess.RenameAbsolute("res://preview.pck", "res://preview.pck.backup"); err != nil {
 							Engine.Raise(err)
 							return
 						}
 					}
-					if FileAccess.FileExists("user://library.pck") {
-						if err := DirAccess.RenameAbsolute("user://library.pck", "user://library.pck.backup"); err != nil {
+					if FileAccess.FileExists("user://preview.pck") {
+						if err := DirAccess.RenameAbsolute("user://preview.pck", "user://preview.pck.backup"); err != nil {
 							Engine.Raise(err)
 							return
 						}
