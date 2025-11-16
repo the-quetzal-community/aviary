@@ -86,7 +86,6 @@ const (
 )
 
 var categories = []string{
-	"terrain",
 	"foliage",
 	"mineral",
 	"shelter",

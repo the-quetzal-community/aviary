@@ -47,6 +47,7 @@ func main() {
 	classdb.Register[internal.FlightPlanner]()
 	classdb.Register[internal.AnimationSaving]()
 	classdb.Register[internal.ActionRenderer]()
+	classdb.Register[internal.MaterialSharingMeshInstance3D]()
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
 	if !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
 		startup.LoadingScene()
