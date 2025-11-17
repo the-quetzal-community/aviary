@@ -88,7 +88,12 @@ const (
 var categories = []string{
 	"foliage",
 	"mineral",
-	"shelter",
+	"housing",
+	"village",
+	"farming",
+	"factory",
+	"defense",
+	"obelisk",
 	"citizen",
 	"trinket",
 	"critter",

@@ -3,6 +3,7 @@ package internal
 import (
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/BaseMaterial3D"
+	"graphics.gd/classdb/Decal"
 	"graphics.gd/classdb/ImporterMeshInstance3D"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/MeshInstance3D"
@@ -84,4 +85,25 @@ func (ms *MaterialSharingMeshInstance3D) OnFree() {
 			delete(cacheAO, key)
 		}
 	}
+}
+
+type MaterialSharingDecal struct {
+	Decal.Extension[MaterialSharingDecal]
+	classdb.Tool
+
+	Material string
+}
+
+func NewMaterialSharingDecal(replace ImporterMeshInstance3D.Instance) *MaterialSharingDecal {
+	clone := new(MaterialSharingDecal)
+	replace.AsNode().ReplaceBy(clone.AsNode())
+	replace.AsNode().QueueFree()
+	return clone
+}
+
+func (decal *MaterialSharingDecal) Ready() {
+	mat := Object.To[BaseMaterial3D.Instance](Resource.Load[Material.Instance](decal.Material))
+	decal.AsDecal().SetTextureAlbedo(mat.AlbedoTexture())
+	decal.AsDecal().SetTextureNormal(mat.NormalTexture())
+	decal.AsDecal().SetTextureOrm(mat.RoughnessTexture())
 }

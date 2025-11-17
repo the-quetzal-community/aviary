@@ -40,6 +40,11 @@ type CommunityResourceLoader struct {
 
 func NewCommunityResourceLoader() *CommunityResourceLoader {
 	crl := &CommunityResourceLoader{}
+	defer ProjectSettings.LoadResourcePack("user://library.pck", 0)
+	if os.Getenv("AVIARY_DOWNLOAD") == "0" {
+		crl.load(nil)
+		return crl
+	}
 	cloud, err := httpseek.New("https://vpk.quetzal.community/library.pck")
 	if err != nil {
 		Engine.Raise(err)
@@ -47,7 +52,6 @@ func NewCommunityResourceLoader() *CommunityResourceLoader {
 		cloud.OnResourceModified(crl.load)
 	}
 	crl.load(cloud)
-	ProjectSettings.LoadResourcePack("user://library.pck", 0)
 	return crl
 }
 
@@ -63,7 +67,7 @@ func (crl *CommunityResourceLoader) RecognizePath(path string, atype string) boo
 	path_remap := path + ".remap"
 	if entry, ok := crl.local[path]; ok && !entry.Missing() {
 		if cloud, ok := crl.cloud[path]; ok {
-			if entry.Hash != cloud.Hash {
+			if entry.Hash != cloud.Hash && cloud.Size <= entry.Size {
 				crl.download(path)
 			}
 		}
