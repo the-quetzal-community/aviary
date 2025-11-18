@@ -30,6 +30,7 @@
 package internal
 
 import (
+	"fmt"
 	"math"
 
 	"graphics.gd/classdb/ArrayMesh"
@@ -107,6 +108,7 @@ func (tree *Tree) OnCreate() {
 }
 
 func (tree *Tree) OnSet(name string, value any) {
+	fmt.Println("Tree property changed:", name, value)
 	if !tree.recalculating {
 		Callable.Defer(Callable.New(tree.recalculate))
 		tree.recalculating = true

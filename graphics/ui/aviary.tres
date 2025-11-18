@@ -1,5 +1,6 @@
 [gd_resource type="Theme" load_steps=17 format=3 uid="uid://dtppp6q43eiuc"]
 
+[ext_resource type="StyleBox" uid="uid://cu6sfwokbnv21" path="res://ui/aviary_stylebox_secondary.tres" id="1_a2dju"]
 [ext_resource type="StyleBox" uid="uid://h4nwukf2mpep" path="res://ui/aviary_stylebox.tres" id="1_qhiib"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_rulru"]
@@ -32,9 +33,6 @@ bg_color = Color(1, 1, 1, 0.431373)
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ydl51"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_w3xdq"]
-bg_color = Color(1, 1, 1, 0.431373)
-
 [resource]
 Button/font_sizes/font_size = 32
 HBoxContainer/constants/separation = 20
@@ -64,5 +62,5 @@ TabContainer/styles/tab_disabled = ExtResource("1_qhiib")
 TabContainer/styles/tab_focus = SubResource("StyleBoxEmpty_ydl51")
 TabContainer/styles/tab_hovered = ExtResource("1_qhiib")
 TabContainer/styles/tab_selected = ExtResource("1_qhiib")
-TabContainer/styles/tab_unselected = SubResource("StyleBoxFlat_w3xdq")
+TabContainer/styles/tab_unselected = ExtResource("1_a2dju")
 TextEdit/font_sizes/font_size = 43

@@ -23,7 +23,6 @@ import (
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
-	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/Tween"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/Window"
@@ -50,7 +49,7 @@ type UI struct {
 	Editor TabContainer.Instance
 
 	ExpansionIndicator Button.Instance
-	EditorIndicator    TextureRect.Instance
+	EditorIndicator    *EditorIndicator
 
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
@@ -120,6 +119,7 @@ func (ui *UI) Setup() {
 	ui.Cloudy.clientReady.Done()
 	ui.CloudControl.client = ui.client
 	ui.CloudControl.Setup()
+	ui.EditorIndicator.client = ui.client
 }
 
 func (ui *UI) SetMode(mode Mode) {
@@ -355,10 +355,6 @@ func (ui *UI) closeDrawer() {
 		}
 	})
 	ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
-}
-
-func (ui *UI) generatePreview(res Resource.Instance, size Vector2i.XY) Texture2D.Instance {
-	return Texture2D.Instance{}
 }
 
 // onThemeSelected regenerates the palette picker.

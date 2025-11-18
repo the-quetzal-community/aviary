@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=24 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -14,6 +14,9 @@
 [ext_resource type="PackedScene" uid="uid://dqndk14imylnj" path="res://ui/cloudy.tscn" id="11_75vv8"]
 [ext_resource type="Texture2D" uid="uid://b5v5k7ro0nyfc" path="res://ui/editor.svg" id="11_ny7lf"]
 [ext_resource type="Texture2D" uid="uid://c6rwr8c88miha" path="res://ui/terrain.svg" id="14_8sq1u"]
+[ext_resource type="StyleBox" uid="uid://cu6sfwokbnv21" path="res://ui/aviary_stylebox_secondary.tres" id="14_nqww0"]
+[ext_resource type="Texture2D" uid="uid://fcr38fjatls4" path="res://ui/arrows.svg" id="15_ny7lf"]
+[ext_resource type="Texture2D" uid="uid://6odjaflojmi0" path="res://ui/foliage.svg" id="16_2x4ir"]
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
 load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
@@ -406,27 +409,80 @@ stretch_mode = 4
 visible = false
 layout_mode = 1
 
-[node name="EditorIndicator" type="TextureRect" parent="."]
+[node name="EditorIndicator" type="EditorIndicator" parent="."]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -209.00146
-offset_top = 2.5883825
-offset_right = 214.55847
-offset_bottom = 196.9512
+offset_left = -209.00049
+offset_top = 0.58838296
+offset_right = 214.55933
+offset_bottom = 194.9512
 grow_horizontal = 0
 pivot_offset = Vector2(208.68042, -3.5928783)
 texture = ExtResource("10_tj0f7")
 expand_mode = 3
 
-[node name="EditorIcon" type="TextureRect" parent="EditorIndicator"]
+[node name="EditorSelector" type="Panel" parent="EditorIndicator"]
+z_index = -1
 layout_mode = 0
-offset_left = 84.99568
-offset_top = 7.0530343
-offset_right = 205.61478
-offset_bottom = 105.54082
+offset_left = 80.194214
+offset_top = -379.6001
+offset_right = 209.32861
+offset_bottom = 0.41781616
+theme = ExtResource("1_hi2iw")
+theme_override_styles/panel = ExtResource("14_nqww0")
+
+[node name="EditorTypes" type="VBoxContainer" parent="EditorIndicator/EditorSelector"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 95.93523
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 2
+
+[node name="Terrain" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+layout_mode = 2
+texture_normal = ExtResource("14_8sq1u")
+
+[node name="Foliage" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+layout_mode = 2
+texture_normal = ExtResource("16_2x4ir")
+
+[node name="Control" type="Control" parent="EditorIndicator/EditorSelector/EditorTypes"]
+custom_minimum_size = Vector2(0, 20)
+layout_mode = 2
+
+[node name="Panel" type="Panel" parent="EditorIndicator/EditorSelector"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -0.014343262
+offset_top = -0.1322937
+offset_right = -0.014343262
+offset_bottom = 22.99997
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="EditorIcon" type="TextureButton" parent="EditorIndicator"]
+layout_mode = 0
+offset_left = 80.00005
+offset_top = 0.04991579
+offset_right = 208.00006
+offset_bottom = 100.04992
 pivot_offset = Vector2(59.656982, 53.900574)
-texture = ExtResource("14_8sq1u")
-expand_mode = 1
+texture_normal = ExtResource("14_8sq1u")
 stretch_mode = 4
+
+[node name="Arrows" type="TextureRect" parent="EditorIndicator"]
+layout_mode = 1
+offset_left = 125.946335
+offset_top = 86.07862
+offset_right = 163.39362
+offset_bottom = 123.525894
+texture = ExtResource("15_ny7lf")
+expand_mode = 1

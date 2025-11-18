@@ -22,6 +22,7 @@
 package internal
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 
@@ -39,7 +40,7 @@ import (
 
 // Rock that is procedurally generated.
 type Rock struct {
-	ArrayMesh.Extension[Tree] `gd:"AviaryRock"`
+	ArrayMesh.Extension[Rock] `gd:"AviaryRock"`
 
 	Seed int `gd:"seed" range:"0,1000,or_greater,or_less" default:"100"`
 
@@ -150,6 +151,7 @@ func (rock *Rock) scrape(positionIndex int, positions []Vector3.XYZ, normals []V
 }
 
 func (rock *Rock) OnSet(name string, value any) {
+	fmt.Println("Rock property changed:", name, "to", value)
 	if !rock.generating {
 		Callable.Defer(Callable.New(rock.generate))
 		rock.generating = true
@@ -266,6 +268,12 @@ func (rock *Rock) calculateNormals(vertices []Vector3.XYZ, indicies []Vector3i.X
 		normals[index.Y] = Vector3.Add(normals[index.Y], no)
 		normals[index.Z] = Vector3.Add(normals[index.Z], no)
 	}
+	for i := range normals {
+		len := Vector3.Length(normals[i])
+		if len > 0 {
+			normals[i] = Vector3.DivX(normals[i], len)
+		}
+	}
 	return normals
 }
 
@@ -351,9 +359,9 @@ func (rock *Rock) generate() {
 		var vertices = Packed.New(positions...)
 		var indicies = Packed.New[int32]()
 		for _, index := range cells {
+			indicies.Append(index.X)
 			indicies.Append(index.Z)
 			indicies.Append(index.Y)
-			indicies.Append(index.Z)
 		}
 		var norm = Packed.New(normals...)
 		var arrays = [Mesh.ArrayMax]any{
@@ -361,6 +369,7 @@ func (rock *Rock) generate() {
 			Mesh.ArrayIndex:  indicies,
 			Mesh.ArrayNormal: norm,
 		}
+		fmt.Println("Generated rock mesh with", len(positions), "vertices and", len(cells), "faces.")
 		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
 }
