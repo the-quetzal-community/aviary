@@ -131,10 +131,8 @@ func (tree *Tree) OnCreate() {
 		return Float.Abs(Angle.Cos(Angle.Radians(a + a*a)))
 	}
 	tree.segments = 6
-	if !tree.recalculating {
-		Callable.Defer(Callable.New(tree.recalculate))
-		tree.recalculating = true
-	}
+	tree.recalculating = true
+	tree.recalculate()
 }
 
 func (tree *Tree) OnSet(name string, value any) {
@@ -196,10 +194,15 @@ func (tree *Tree) recalculate() {
 		for _, normal := range tree.mesh.normals {
 			normals.Append(normal)
 		}
+		var uvs = Packed.New[Vector2.XY]()
+		for _, uv := range tree.mesh.uvs {
+			uvs.Append(uv)
+		}
 		var arrays = [Mesh.ArrayMax]any{
 			Mesh.ArrayVertex: vertices,
 			Mesh.ArrayIndex:  indicies,
 			Mesh.ArrayNormal: normals,
+			Mesh.ArrayTexUv:  uvs,
 		}
 		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
@@ -218,10 +221,15 @@ func (tree *Tree) recalculate() {
 		for _, normal := range tree.twig.normals {
 			normals.Append(normal)
 		}
+		var uvs = Packed.New[Vector2.XY]()
+		for _, uv := range tree.twig.uvs {
+			uvs.Append(uv)
+		}
 		var arrays = [Mesh.ArrayMax]any{
 			Mesh.ArrayVertex: vertices,
 			Mesh.ArrayIndex:  indicies,
 			Mesh.ArrayNormal: normals,
+			Mesh.ArrayTexUv:  uvs,
 		}
 		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
@@ -527,14 +535,14 @@ func (tree *Tree) createTwigs(branch *branch) {
 		tree.twig.normals = append(tree.twig.normals, normal2)
 		tree.twig.normals = append(tree.twig.normals, normal2)
 		tree.twig.normals = append(tree.twig.normals, normal2)
-		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(0, 1))
-		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 1))
-		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 0))
 		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(0, 0))
-		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(0, 1))
-		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 1))
 		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 0))
+		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 1))
+		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(0, 1))
 		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(0, 0))
+		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 0))
+		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(1, 1))
+		tree.twig.uvs = append(tree.twig.uvs, Vector2.New(0, 1))
 	} else {
 		tree.createTwigs(branch.child[0])
 		tree.createTwigs(branch.child[1])
