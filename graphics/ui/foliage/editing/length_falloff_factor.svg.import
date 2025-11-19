@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bo3j383gwn434"
-path="res://.godot/imported/forests.svg-0b27f84a5108dad850f9d0bdf5290af8.ctex"
+uid="uid://c201by3l0qgn7"
+path="res://.godot/imported/length_falloff_factor.svg-d705743888eb9fdefaa7ae9372a2b7d5.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/terrain/forests.svg"
-dest_files=["res://.godot/imported/forests.svg-0b27f84a5108dad850f9d0bdf5290af8.ctex"]
+source_file="res://ui/foliage/editing/length_falloff_factor.svg"
+dest_files=["res://.godot/imported/length_falloff_factor.svg-d705743888eb9fdefaa7ae9372a2b7d5.ctex"]
 
 [params]
 
@@ -37,7 +37,7 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=2
 svg/scale=1.0
 editor/scale_with_editor_scale=false
 editor/convert_colors_with_editor_theme=false

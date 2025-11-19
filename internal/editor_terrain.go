@@ -94,8 +94,12 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	default:
 	}
 }
-func (fe *TerrainEditor) AdjustSlider(mode Mode, editing string, value float64, commit bool) {
+func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
 
+}
+
+func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
+	return 0, 0, 1, 0.01
 }
 
 func (tr *TerrainEditor) Ready() {

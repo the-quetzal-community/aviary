@@ -118,6 +118,8 @@ type Change struct {
 	Record Record // to record.
 	Timing Timing // timing of the record.
 
+	Editor string // editor that is being used.
+
 	Remove bool // if true, removes the design/record from the entity.
 	Commit bool // if false, then this is a preview (not persisted).
 }
@@ -137,6 +139,8 @@ type Action struct {
 	Design Design // design to apply to the entity for the period of the action.
 	Record Record // to playback.
 
+	Editor string // editor that is being used.
+
 	Cancel bool // if true, clears any previous actions.
 	Repeat bool // if true, any subsequently queued, repeating actions will cycle in alternate directions.
 	Commit bool // if false, then this is a preview (not persisted).
@@ -149,6 +153,9 @@ type Sculpt struct {
 	Radius Float.X     // radius of the area to sculpt.
 	Amount Float.X     // amount to sculpt, ie. its strength.
 
+	Editor string // editor that is being used.
+	Slider string // slider that is being adjusted.
+
 	Commit bool // if false, then this is a preview.
 }
 
@@ -159,6 +166,7 @@ type LookAt struct {
 	Angles Euler.Radians // orientation of the author.
 	Bounds Vector3.XYZ   // size of the author.
 	Colour Color.RGBA    // colour of the author.
+	Editor string        // editor that is being used.
 	Timing Timing        // timing of the viewer.
 }
 

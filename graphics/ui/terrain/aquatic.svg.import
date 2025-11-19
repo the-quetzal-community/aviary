@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bdfsw5by3ee1p"
-path="res://.godot/imported/aquatic.svg-d122d1a9f60395e571ca0d9f354c0efa.ctex"
+path="res://.godot/imported/aquatic.svg-8934833eac79d44ddb37c4b425dc0360.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/aquatic.svg"
-dest_files=["res://.godot/imported/aquatic.svg-d122d1a9f60395e571ca0d9f354c0efa.ctex"]
+source_file="res://ui/terrain/aquatic.svg"
+dest_files=["res://.godot/imported/aquatic.svg-8934833eac79d44ddb37c4b425dc0360.ctex"]
 
 [params]
 

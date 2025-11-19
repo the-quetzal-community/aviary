@@ -50,35 +50,35 @@ import (
 type Tree struct {
 	ArrayMesh.Extension[Tree] `gd:"AviaryTree"`
 
-	Seed      Float.X `gd:"seed" default:"10" range:"0,1000,or_greater,or_less"`
+	Seed      int     `gd:"seed" default:"10" range:"0,1000,or_greater,or_less"`
 	Levels    int     `gd:"levels" default:"3" range:"1,7,or_greater"`
-	TwigScale Float.X `gd:"twig_scale" default:"2" range:"0,1,or_greater"`
+	TwigScale Float.X `gd:"twig_scale" default:"2" range:"0,5,or_greater"`
 
 	// Branching
 
-	InitalBranchLength  Float.X `gd:"initial_branch_length" default:"0.85" range:"0.1,1,or_greater"`
-	LengthFalloffFactor Float.X `gd:"length_falloff_factor" default:"0.85" range:"0.5,1,or_greater,or_less"`
-	LengthFalloffPower  Float.X `gd:"length_falloff_power" default:"1" range:"0.1,1.5,or_greater"`
+	InitalBranchLength  Float.X `gd:"initial_branch_length" default:"0.85" range:"0.1,5,or_greater"`
+	LengthFalloffFactor Float.X `gd:"length_falloff_factor" default:"0.85" range:"0.1,0.8,or_greater,or_less"`
+	LengthFalloffPower  Float.X `gd:"length_falloff_power" default:"1" range:"0.1,1.2,or_greater"`
 	ClumpMin            Float.X `gd:"clump_min" default:"0.8" range:"0,1"`
 	ClumpMax            Float.X `gd:"clump_max" default:"0.5" range:"0,1"`
 	BranchFactor        Float.X `gd:"branch_factor" default:"2" range:"2,4,or_greater"`
 	DropAmount          Float.X `gd:"drop_amount" range:"-1,1"`
-	GrowAmount          Float.X `gd:"grow_amount" range:"-0.5,1"`
+	GrowAmount          Float.X `gd:"grow_amount" range:"-0.5,1.5"`
 	SweepAmount         Float.X `gd:"sweep_amount" range:"-1,1"`
 
 	// Trunk
 
 	MaxRadius         Float.X       `gd:"max_radius" default:"0.25" range:"0.05,1,or_greater"`
-	ClimbRate         Float.X       `gd:"climb_rate" default:"1.5" range:"0.05,1,or_greater"`
-	TrunkKink         Float.X       `gd:"trunk_kink" range:"0,0.5,or_greater"`
+	ClimbRate         Float.X       `gd:"climb_rate" default:"1.5" range:"0.05,3,or_greater"`
+	TrunkKink         Float.X       `gd:"trunk_kink" range:"0,1,or_greater"`
 	TreeSteps         Float.X       `gd:"tree_steps" range:"0,35,or_greater"`
 	TaperRate         Float.X       `gd:"taper_rate" default:"0.95" range:"0.7,1,or_greater"`
 	RadiusFalloffRate Float.X       `gd:"radius_falloff_rate" default:"0.6" range:"0.5,0.8"`
 	TwistRate         Angle.Radians `gd:"twist_rate" default:"13" range:"0,10"`
-	TrunkLength       Float.X       `gd:"trunk_length" default:"2.5" range:"0.1,5"`
+	TrunkLength       Float.X       `gd:"trunk_length" default:"2.5" range:"0.1,10"`
 
 	// Material
-	VMultiplier Float.X `gd:"v_multiplier" default:"0.2"`
+	VMultiplier Float.X `gd:"v_multiplier" default:"0.2" range:"0.05,1,or_greater"`
 
 	// Internal
 
@@ -707,7 +707,7 @@ func (bra *branch) split(level int, steps Float.X, properties *Tree, l1, l2 Floa
 	var (
 		normal  = Vector3.Cross(dir, Vector3.New(dir.Z, dir.X, dir.Y))
 		tangent = Vector3.Cross(dir, normal)
-		r       = properties.random(Float.X(rLevel*10) + l1*5 + l2 + properties.Seed)
+		r       = properties.random(Float.X(rLevel*10) + l1*5 + l2 + Float.X(properties.Seed))
 		//r2       = properties.random(rLevel*10 + l1*5 + l2 + 1 + properties.Seed)
 		clumpmax = properties.ClumpMax
 		clumpmin = properties.ClumpMin

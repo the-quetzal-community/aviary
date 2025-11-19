@@ -36,7 +36,9 @@ func (ed *EditorIndicator) Ready() {
 				if ed.editorAnimating {
 					return
 				}
-				ed.client.StartEditing(Subject(i))
+				var subject Subject
+				subject.SetInt(i)
+				ed.client.StartEditing(subject)
 				ed.toggle()
 			})
 		}

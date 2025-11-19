@@ -1,6 +1,7 @@
 CC-BY-SA 4.0 https://creativecommons.org/licenses/by/sa/4.0/
 
 ui/colour.svg - Crossover1370
+ui/slider.svg - Quentin Quaadgras
 
 CC-BY-SA 3.0 https://creativecommons.org/licenses/by-sa/3.0/
 
@@ -52,3 +53,25 @@ ui/editor.svg  - Aybige
 ui/arrows.svg - Alice Design
 
 ui/wiseowl.svg - Brad (modified contrast, removed the lower half of the body)
+
+ui/foliage/editing/seed.svg - yus
+ui/foliage/editing/levels.svg - Quentin Quaadgras
+ui/foliage/editing/twig_scale.svg - Isaac haq, Radhika Studio & Quentin Quaadgras (combined, stem filled in)
+ui/foliage/editing/initial_branch_length.svg - Taewon Kang & Quentin Quaadgras (added arrow)
+ui/foliage/editing/length_falloff_factor.svg - Taewon Kang & Quentin Quaadgras (added arrow)
+ui/foliage/editing/length_falloff_power.svg - Taewon Kang & Quentin Quaadgras (added arrows)
+ui/foliage/editing/trunk_length.svg - Taewon Kang & Quentin Quaadgras (added arrow)
+ui/foliage/editing/clump_min.svg - Devi Wijayanti
+ui/foliage/editing/clump_max.svg - Alexander Skowalsky
+ui/foliage/editing/branch_factor.svg - Kim Sun Young
+ui/foliage/editing/drop_amount.svg - Alice Design
+ui/foliage/editing/grow_amount.svg - GreenHill
+ui/foliage/editing/sweep_amount.svg - San D
+ui/foliage/editing/max_radius.svg - Chintuza
+ui/foliage/editing/tree_steps.svg - Adrien Coquet
+ui/foliage/editing/trunk_kink.svg - Kirby Wu, Adrien Coquet & Quentin Quaadgras (combined)
+ui/foliage/editing/climb_rate.svg - Adrien Coquet & Quentin Quaadgras (added arrow)
+ui/foliage/editing/taper_rate.svg - Andrejs Kirma
+ui/foliage/editing/radius_falloff_rate.svg - Luis Prado
+ui/foliage/editing/twist_rate.svg - Cédric Villain, Adrien Coquet & Quentin Quaadgras (combined)
+ui/foliage/editing/v_multiplier.svg - Kim Love

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -12,8 +13,10 @@ import (
 	"graphics.gd/classdb/HSlider"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseMotion"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PropertyTweener"
+	"graphics.gd/classdb/Range"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TabContainer"
@@ -58,7 +61,7 @@ func (de *DesignExplorer) Ready() {
 
 // Refresh repopulates the tabbed designs depending on the active editor,
 // these designs may be cached so that subsequent refreshes are faster.
-func (ui *DesignExplorer) Refresh(author string, mode Mode) {
+func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	expansion, _ := ui.ExpansionIndicator.Instance()
 	preview_path := "res://preview/" + author
 	library_path := "res://library/" + author
@@ -90,9 +93,25 @@ func (ui *DesignExplorer) Refresh(author string, mode Mode) {
 	index := 0
 	for _, tab := range ui.editor.Tabs(mode) {
 		if strings.HasPrefix(tab, "editing/") {
-			slider := HSlider.New()
-			ui.AsNode().AddChild(slider.AsNode())
-			ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/foliage.svg"))
+			slider := HSlider.Advanced(HSlider.New())
+			slider_id := HSlider.Instance(slider).ID()
+			init, from, upto, step := ui.editor.SliderConfig(mode, tab)
+			slider.AsRange().SetMin(from)
+			slider.AsRange().SetMax(upto)
+			slider.AsRange().SetValue(init)
+			slider.AsRange().SetStep(step)
+			Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
+				slider, _ := slider_id.Instance()
+				ui.editor.SliderHandle(mode, tab, HSlider.Advanced(slider).AsRange().GetValue(), false)
+			})
+			ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
+
+			fmt.Println("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg")
+			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
+				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
+			} else {
+				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+			}
 			ui.AsTabContainer().SetTabTitle(index, "")
 			edits = true
 			index++

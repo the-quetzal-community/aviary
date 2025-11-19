@@ -225,5 +225,5 @@ func (ui *UI) scale(control Control.Instance, base_screen_width, base_screen_hei
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
 	ui.theme_index = idx
-	ui.Editor.Refresh(ui.themes[idx], ui.mode)
+	ui.Editor.Refresh(ui.client.Editing, ui.themes[idx], ui.mode)
 }

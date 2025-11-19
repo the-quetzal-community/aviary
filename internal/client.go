@@ -263,7 +263,7 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
-	defer world.StartEditing(Foliage)
+	defer world.StartEditing(Editing.Foliage)
 
 	defer world.clientReady.Done()
 

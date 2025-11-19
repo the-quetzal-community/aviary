@@ -1,12 +1,17 @@
 package internal
 
 import (
+	"reflect"
+	"strconv"
+	"strings"
+
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Object"
 )
 
 type FoliageEditor struct {
@@ -17,7 +22,7 @@ type FoliageEditor struct {
 }
 
 func (fe *FoliageEditor) Ready() {
-	fe.tree = NewTree()
+	fe.tree = Object.Leak(NewTree())
 	fe.Mesh.SetMesh(fe.tree.AsMesh())
 
 	leaflet := StandardMaterial3D.New()
@@ -30,18 +35,22 @@ func (fe *FoliageEditor) Ready() {
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, timbers.AsMaterial())
 }
 
+func (fe *FoliageEditor) ExitTree() {
+	Object.Free(fe.tree)
+}
+
 func (fe *FoliageEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		return []string{
 			"editing/seed",
-			"editing/tree_levels",
+			"editing/levels",
 			"editing/twig_scale",
 			"editing/initial_branch_length",
 			"editing/length_falloff_factor",
 			"editing/length_falloff_power",
-			"editing/twig_clump_min",
-			"editing/twig_clump_max",
+			"editing/clump_min",
+			"editing/clump_max",
 			"editing/branch_factor",
 			"editing/drop_amount",
 			"editing/grow_amount",
@@ -69,6 +78,42 @@ func (fe *FoliageEditor) Tabs(mode Mode) []string {
 func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
 
 }
-func (fe *FoliageEditor) AdjustSlider(mode Mode, editing string, value float64, commit bool) {
 
+func (fe *FoliageEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
+	_, prop, _ := strings.Cut(editing, "/")
+	rtype := reflect.TypeFor[Tree]()
+	for i := range rtype.NumField() {
+		field := rtype.Field(i)
+		if field.Tag.Get("gd") == prop {
+			init, _ = strconv.ParseFloat(field.Tag.Get("default"), 64)
+			ranges := strings.Split(field.Tag.Get("range"), ",")
+			from, _ = strconv.ParseFloat(ranges[0], 64)
+			upto, _ = strconv.ParseFloat(ranges[1], 64)
+			step := 0.001
+			if field.Type.Kind() == reflect.Int {
+				step = 1
+			}
+			return init, from, upto, step
+		}
+	}
+	return 0, 0, 1, 0.01
+}
+
+func (fe *FoliageEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
+	_, prop, _ := strings.Cut(editing, "/")
+	rtype := reflect.TypeFor[Tree]()
+	for i := range rtype.NumField() {
+		field := rtype.Field(i)
+		if field.Tag.Get("gd") == prop {
+			switch field.Type.Kind() {
+			case reflect.Int:
+				reflect.ValueOf(fe.tree).Elem().Field(i).SetInt(int64(value))
+			case reflect.Float32, reflect.Float64:
+				reflect.ValueOf(fe.tree).Elem().Field(i).SetFloat(value)
+			}
+			fe.tree.recalculating = true
+			fe.tree.recalculate()
+			return
+		}
+	}
 }

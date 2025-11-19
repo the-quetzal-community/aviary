@@ -4,16 +4,17 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Enum"
 	"graphics.gd/variant/Vector3"
 )
 
-type Subject int
+type Subject Enum.Int[struct {
+	Scenery Subject
+	Terrain Subject
+	Foliage Subject
+}]
 
-const (
-	Scenery Subject = iota
-	Terrain
-	Foliage
-)
+var Editing = Enum.Values[Subject]()
 
 // Mode represents whether the editor is currently in geometry or material mode.
 type Mode bool
@@ -31,14 +32,14 @@ func (world *Client) StartEditing(subject Subject) {
 	world.FocalPoint.Lens.AsNode3D().SetPosition(pos)
 	var editor Editor
 	switch subject {
-	case Scenery:
+	case Editing.Scenery:
 		editor = world.SceneryEditor
 		world.TerrainEditor.AsNode3D().SetVisible(true)
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/scenery.svg"))
-	case Terrain:
+	case Editing.Terrain:
 		editor = world.TerrainEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/terrain.svg"))
-	case Foliage:
+	case Editing.Foliage:
 		editor = world.FoliageEditor
 		world.FocalPoint.SetPosition(Vector3.New(0, 0, 0))
 		pos := world.FocalPoint.Lens.AsNode3D().Position()
@@ -47,8 +48,9 @@ func (world *Client) StartEditing(subject Subject) {
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/foliage.svg"))
 	}
 	editor.AsNode3D().SetVisible(true)
+	world.Editing = subject
 	world.ui.Editor.editor = editor
-	world.ui.Editor.Refresh(world.ui.themes[world.ui.theme_index], world.ui.mode)
+	world.ui.Editor.Refresh(subject, world.ui.themes[world.ui.theme_index], world.ui.mode)
 }
 
 type Editor interface {
@@ -57,5 +59,7 @@ type Editor interface {
 	Tabs(mode Mode) []string
 
 	SelectDesign(mode Mode, design string)
-	AdjustSlider(mode Mode, editing string, value float64, commit bool)
+
+	SliderConfig(mode Mode, editing string) (init, min, max, step float64)
+	SliderHandle(mode Mode, editing string, value float64, commit bool)
 }

@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://brxyb0kb06qv3"
-path="res://.godot/imported/deserts.svg-1cbc69a3e8c1c064b0107e1e8b28ce66.ctex"
+path="res://.godot/imported/deserts.svg-ebea749bda429115f57971371a95d43b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/deserts.svg"
-dest_files=["res://.godot/imported/deserts.svg-1cbc69a3e8c1c064b0107e1e8b28ce66.ctex"]
+source_file="res://ui/terrain/deserts.svg"
+dest_files=["res://.godot/imported/deserts.svg-ebea749bda429115f57971371a95d43b.ctex"]
 
 [params]
 

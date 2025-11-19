@@ -1,7 +1,16 @@
-[gd_resource type="Theme" load_steps=17 format=3 uid="uid://dtppp6q43eiuc"]
+[gd_resource type="Theme" load_steps=21 format=3 uid="uid://dtppp6q43eiuc"]
 
 [ext_resource type="StyleBox" uid="uid://cu6sfwokbnv21" path="res://ui/aviary_stylebox_secondary.tres" id="1_a2dju"]
 [ext_resource type="StyleBox" uid="uid://h4nwukf2mpep" path="res://ui/aviary_stylebox.tres" id="1_qhiib"]
+[ext_resource type="Texture2D" uid="uid://d4f4piljq04sb" path="res://ui/slider.png" id="1_yj2rr"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_4p41l"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_yj2rr"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y1or3"]
+content_margin_top = 5.0
+bg_color = Color(0.7149155, 0.7046573, 0.7258813, 0.6862745)
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_rulru"]
 
@@ -36,8 +45,16 @@ bg_color = Color(1, 1, 1, 0.431373)
 [resource]
 Button/font_sizes/font_size = 32
 HBoxContainer/constants/separation = 20
+HSlider/icons/grabber = ExtResource("1_yj2rr")
+HSlider/icons/grabber_disabled = ExtResource("1_yj2rr")
+HSlider/icons/grabber_highlight = ExtResource("1_yj2rr")
+HSlider/styles/grabber_area = SubResource("StyleBoxEmpty_4p41l")
+HSlider/styles/grabber_area_highlight = SubResource("StyleBoxEmpty_yj2rr")
+HSlider/styles/slider = SubResource("StyleBoxFlat_y1or3")
 Label/colors/font_color = Color(0.301961, 0.301961, 0.301961, 1)
 Label/font_sizes/font_size = 31
+MarginContainer/constants/margin_left = 10
+MarginContainer/constants/margin_right = 0
 OptionButton/font_sizes/font_size = 27
 OptionButton/icons/arrow = null
 OptionButton/styles/disabled = SubResource("StyleBoxEmpty_rulru")

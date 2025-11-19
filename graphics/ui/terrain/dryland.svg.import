@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dps0ka2oycvut"
-path="res://.godot/imported/dryland.svg-22971a1cb39c21d0144cfb06f0cebb57.ctex"
+path="res://.godot/imported/dryland.svg-9e630d6b8d38336dc0c576273bba0dee.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/dryland.svg"
-dest_files=["res://.godot/imported/dryland.svg-22971a1cb39c21d0144cfb06f0cebb57.ctex"]
+source_file="res://ui/terrain/dryland.svg"
+dest_files=["res://.godot/imported/dryland.svg-9e630d6b8d38336dc0c576273bba0dee.ctex"]
 
 [params]
 
