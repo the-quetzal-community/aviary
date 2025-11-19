@@ -82,7 +82,11 @@ type Client struct {
 	mouseOver chan Vector3.XYZ
 
 	PreviewRenderer *PreviewRenderer
-	TerrainRenderer *TerrainRenderer
+
+	Editing       Subject
+	SceneryEditor *SceneryEditor
+	TerrainEditor *TerrainEditor
+	FoliageEditor *FoliageEditor
 
 	signalling signalling.API
 
@@ -127,6 +131,8 @@ type Client struct {
 	queue chan func()
 
 	member bool // true when we have been assigned an author ID
+
+	ui *UI
 }
 
 func NewClient() *Client {
@@ -257,7 +263,7 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
-	fmt.Println("Client Ready")
+	defer world.StartEditing(Foliage)
 
 	defer world.clientReady.Done()
 
@@ -295,19 +301,20 @@ func (world *Client) Ready() {
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
 	world.PreviewRenderer.client = world
-	world.TerrainRenderer.texture = make(chan Path.ToResource, 1)
-	world.TerrainRenderer.client = world
-	world.TerrainRenderer.tile.client = world
+	world.TerrainEditor.texture = make(chan Path.ToResource, 1)
+	world.TerrainEditor.client = world
+	world.TerrainEditor.tile.client = world
 	world.PreviewRenderer.mouseOver = world.mouseOver
-	world.PreviewRenderer.terrain = world.TerrainRenderer
-	world.TerrainRenderer.mouseOver = world.mouseOver
+	world.PreviewRenderer.terrain = world.TerrainEditor
+	world.TerrainEditor.mouseOver = world.mouseOver
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
 	if ok {
 		editor.preview = world.PreviewRenderer.preview
-		editor.texture = world.TerrainRenderer.texture
+		editor.texture = world.TerrainEditor.texture
 		editor.client = world
+		world.ui = editor
 		world.AsNode().AddChild(editor.AsNode())
 		editor.Setup()
 	}
@@ -397,7 +404,7 @@ func (world musicalImpl) Member(req musical.Member) error {
 func (world musicalImpl) Upload(file musical.Upload) error { return nil }
 func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 	world.queue <- func() {
-		world.TerrainRenderer.Sculpt(brush)
+		world.TerrainEditor.Sculpt(brush)
 	}
 	return nil
 }
@@ -449,7 +456,7 @@ func (world musicalImpl) Import(uri musical.Import) error {
 func (world musicalImpl) Change(con musical.Change) error {
 	world.queue <- func() {
 		world.entity_ids[con.Entity.Author] = max(world.entity_ids[con.Entity.Author], con.Entity.Number)
-		container := world.TerrainRenderer.AsNode()
+		container := world.TerrainEditor.AsNode()
 
 		exists, ok := world.entity_to_object[con.Entity].Instance()
 		if ok {
@@ -561,9 +568,9 @@ func (world *Client) Process(dt Float.X) {
 		}
 	}
 
-	if world.TerrainRenderer.PaintActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
+	if world.TerrainEditor.PaintActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
 		if time.Since(world.last_PaintAt) > time.Second/5 {
-			world.TerrainRenderer.Paint()
+			world.TerrainEditor.Paint()
 			world.last_PaintAt = time.Now()
 		}
 	}
@@ -621,9 +628,15 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 			if !Input.IsKeyPressed(Input.KeyShift) {
 				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
+					//pos = Vector3.Add(pos, Vector3.New(0, 0, -0.4))
+					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
 					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
 				}
 				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
+					//pos = Vector3.Add(pos, Vector3.New(0, 0, 0.4))
+					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
 					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
 				}
 			}
@@ -658,9 +671,9 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
-				if world.TerrainRenderer.PaintActive {
-					world.TerrainRenderer.shader.SetShaderParameter("paint_active", false)
-					world.TerrainRenderer.PaintActive = false
+				if world.TerrainEditor.PaintActive {
+					world.TerrainEditor.shader.SetShaderParameter("paint_active", false)
+					world.TerrainEditor.PaintActive = false
 					break
 				}
 				if world.PreviewRenderer.Enabled() {

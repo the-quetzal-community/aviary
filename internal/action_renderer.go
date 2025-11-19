@@ -67,7 +67,7 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 	parent := Object.To[Node3D.Instance](ar.AsNode().GetParent())
 	for ar.client.time.Now()-action.Timing >= musical.Timing(action.Period) {
 		pos := action.Target
-		pos.Y = ar.client.TerrainRenderer.tile.HeightAt(pos)
+		pos.Y = ar.client.TerrainEditor.tile.HeightAt(pos)
 		parent.SetPosition(pos)
 		ar.Initial = action.Target
 		ar.current++
@@ -84,9 +84,9 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 	dir := Vector3.Sub(action.Target, ar.Initial)
 	dir.Y = 0
 	pos := Vector3.Lerp(ar.Initial, action.Target, Float.X(ar.client.time.Now()-action.Timing)/Float.X(action.Period))
-	pos.Y = ar.client.TerrainRenderer.tile.HeightAt(pos)
+	pos.Y = ar.client.TerrainEditor.tile.HeightAt(pos)
 	parent.SetPosition(pos)
-	ar.OrientModel(parent, pos, dir, ar.client.TerrainRenderer.tile.NormalAt(pos), delta)
+	ar.OrientModel(parent, pos, dir, ar.client.TerrainEditor.tile.NormalAt(pos), delta)
 }
 
 // OrientModel aligns the model's up direction with the terrain normal while preserving the facing direction based on movement.

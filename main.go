@@ -33,13 +33,17 @@ func init() {
 }
 
 func main() {
-	classdb.Register[internal.Tree]()
+	classdb.Register[internal.Tree](internal.NewTree)
 	classdb.Register[internal.Rock]()
 	classdb.Register[internal.TerrainTile]()
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
-	classdb.Register[internal.TerrainRenderer]()
+
+	classdb.Register[internal.SceneryEditor]()
+	classdb.Register[internal.TerrainEditor]()
+	classdb.Register[internal.FoliageEditor]()
+
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()

@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=25 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -15,6 +15,7 @@
 [ext_resource type="Texture2D" uid="uid://b5v5k7ro0nyfc" path="res://ui/editor.svg" id="11_ny7lf"]
 [ext_resource type="Texture2D" uid="uid://c6rwr8c88miha" path="res://ui/terrain.svg" id="14_8sq1u"]
 [ext_resource type="StyleBox" uid="uid://cu6sfwokbnv21" path="res://ui/aviary_stylebox_secondary.tres" id="14_nqww0"]
+[ext_resource type="Texture2D" uid="uid://036fls0ceuva" path="res://ui/scenery.svg" id="15_407as"]
 [ext_resource type="Texture2D" uid="uid://fcr38fjatls4" path="res://ui/arrows.svg" id="15_ny7lf"]
 [ext_resource type="Texture2D" uid="uid://6odjaflojmi0" path="res://ui/foliage.svg" id="16_2x4ir"]
 
@@ -427,9 +428,9 @@ expand_mode = 3
 z_index = -1
 layout_mode = 0
 offset_left = 80.194214
-offset_top = -379.6001
+offset_top = -509.0197
 offset_right = 209.32861
-offset_bottom = 0.41781616
+offset_bottom = 0.41778564
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
@@ -442,6 +443,10 @@ offset_top = 95.93523
 grow_horizontal = 2
 grow_vertical = 2
 alignment = 2
+
+[node name="Senery" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+layout_mode = 2
+texture_normal = ExtResource("15_407as")
 
 [node name="Terrain" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
 layout_mode = 2
@@ -480,9 +485,9 @@ stretch_mode = 4
 
 [node name="Arrows" type="TextureRect" parent="EditorIndicator"]
 layout_mode = 1
-offset_left = 125.946335
-offset_top = 86.07862
-offset_right = 163.39362
-offset_bottom = 123.525894
+offset_left = 122.946335
+offset_top = 86.07677
+offset_right = 160.39362
+offset_bottom = 123.52404
 texture = ExtResource("15_ny7lf")
 expand_mode = 1

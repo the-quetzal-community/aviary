@@ -24,23 +24,19 @@ type EditorIndicator struct {
 	editorSelectorOpened bool
 	editorAnimating      bool
 
-	free_list []Object.Instance
-
 	client *Client
 }
 
 func (ed *EditorIndicator) Ready() {
 	ed.EditorIcon.AsBaseButton().OnPressed(ed.toggle)
-	for _, child := range ed.EditorSelector.EditorTypes.AsNode().GetChildren() {
+	for i, child := range ed.EditorSelector.EditorTypes.AsNode().GetChildren() {
 		button, ok := Object.As[TextureButton.Instance](child)
 		if ok {
-			normal := Object.Leak(button.AsTextureButton().TextureNormal())
-			ed.free_list = append(ed.free_list, normal.AsObject())
 			button.AsBaseButton().OnPressed(func() {
 				if ed.editorAnimating {
 					return
 				}
-				ed.EditorIcon.AsTextureButton().SetTextureNormal(normal)
+				ed.client.StartEditing(Subject(i))
 				ed.toggle()
 			})
 		}
@@ -65,11 +61,4 @@ func (ed *EditorIndicator) toggle() {
 			ed.editorAnimating = false
 		})
 	}
-}
-
-func (ed *EditorIndicator) ExitTree() {
-	for _, obj := range ed.free_list {
-		Object.Free(obj)
-	}
-	ed.free_list = nil
 }

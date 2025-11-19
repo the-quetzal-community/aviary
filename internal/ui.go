@@ -76,14 +76,6 @@ type UI struct {
 	mode Mode
 }
 
-// Mode represents whether the editor is currently in geometry or material mode.
-type Mode bool
-
-const (
-	ModeGeometry Mode = false // add/remove/move/scale/rotate components.
-	ModeMaterial Mode = true  // add colours, paint textures & set materials
-)
-
 var categories = []string{
 	"foliage",
 	"mineral",

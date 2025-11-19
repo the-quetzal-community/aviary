@@ -93,6 +93,32 @@ type Tree struct {
 	mesh, twig buffer
 }
 
+func NewTree() *Tree {
+	return &Tree{
+		Seed:                10,
+		Levels:              3,
+		TwigScale:           2,
+		InitalBranchLength:  0.85,
+		LengthFalloffFactor: 0.85,
+		LengthFalloffPower:  1,
+		ClumpMin:            0.8,
+		ClumpMax:            0.5,
+		BranchFactor:        2,
+		DropAmount:          0,
+		GrowAmount:          0,
+		SweepAmount:         0,
+		MaxRadius:           0.25,
+		ClimbRate:           1.5,
+		TrunkKink:           0,
+		TreeSteps:           0,
+		TaperRate:           0.95,
+		RadiusFalloffRate:   0.6,
+		TwistRate:           10,
+		TrunkLength:         2.5,
+		VMultiplier:         0.2,
+	}
+}
+
 type buffer struct {
 	verts   []Vector3.XYZ
 	faces   []Vector3i.XYZ
@@ -105,6 +131,10 @@ func (tree *Tree) OnCreate() {
 		return Float.Abs(Angle.Cos(Angle.Radians(a + a*a)))
 	}
 	tree.segments = 6
+	if !tree.recalculating {
+		Callable.Defer(Callable.New(tree.recalculate))
+		tree.recalculating = true
+	}
 }
 
 func (tree *Tree) OnSet(name string, value any) {
@@ -123,6 +153,7 @@ func (tree *Tree) recalculate() {
 	if !tree.recalculating {
 		return
 	}
+	tree.Levels = max(tree.Levels, 1)
 	tree.recalculating = false
 
 	tree.mesh = buffer{}
