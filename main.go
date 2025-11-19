@@ -54,6 +54,8 @@ func main() {
 	classdb.Register[internal.EditorIndicator]()
 	classdb.Register[internal.MaterialSharingMeshInstance3D]()
 	classdb.Register[internal.MaterialSharingDecal]()
+	classdb.Register[internal.DesignExplorer]()
+
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
 	if !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
 		startup.LoadingScene()

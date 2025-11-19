@@ -47,10 +47,15 @@ func (world *Client) StartEditing(subject Subject) {
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/foliage.svg"))
 	}
 	editor.AsNode3D().SetVisible(true)
+	world.ui.Editor.editor = editor
+	world.ui.Editor.Refresh(world.ui.themes[world.ui.theme_index], world.ui.mode)
 }
 
 type Editor interface {
 	Node3D.Any
 
-	Tabs() []string
+	Tabs(mode Mode) []string
+
+	SelectDesign(mode Mode, design string)
+	AdjustSlider(mode Mode, editing string, value float64, commit bool)
 }

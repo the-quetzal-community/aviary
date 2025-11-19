@@ -1,29 +1,18 @@
 package internal
 
 import (
-	"slices"
 	"strings"
-	"sync/atomic"
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
-	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
-	"graphics.gd/classdb/InputEventMouseMotion"
-	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OS"
-	"graphics.gd/classdb/PropertyTweener"
-	"graphics.gd/classdb/Resource"
-	"graphics.gd/classdb/SceneTree"
-	"graphics.gd/classdb/TabContainer"
-	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
-	"graphics.gd/classdb/Tween"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/Window"
 	"graphics.gd/variant/Callable"
@@ -31,7 +20,6 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Signal"
-	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
 )
@@ -46,7 +34,7 @@ type UI struct {
 	preview chan Path.ToResource
 	texture chan Path.ToResource
 
-	Editor TabContainer.Instance
+	Editor *DesignExplorer
 
 	ExpansionIndicator Button.Instance
 	EditorIndicator    *EditorIndicator
@@ -59,51 +47,14 @@ type UI struct {
 
 	Cloudy *FlightPlanner
 
-	themes         []string
-	theme_index    int
-	gridContainers []*GridFlowContainer
-
-	drawExpanded  atomic.Bool
-	drawExpansion Float.X
-
-	locked bool
-	queued func()
+	themes      []string
+	theme_index int
 
 	client *Client
 
 	lastDisplay Vector2i.XY
 
 	mode Mode
-}
-
-var categories = []string{
-	"foliage",
-	"mineral",
-	"housing",
-	"village",
-	"farming",
-	"factory",
-	"defense",
-	"obelisk",
-	"citizen",
-	"trinket",
-	"critter",
-	"special",
-	// "pathway"
-	// "fencing"
-	// "vehicle"
-	// "polygon"
-}
-
-var terrain_categories = []string{
-	"aquatic",
-	"deserts",
-	"dryland",
-	"forests",
-	"glacial",
-	"manmade",
-	"organic",
-	"volcano",
 }
 
 func (ui *UI) Setup() {
@@ -151,16 +102,10 @@ func (ui *UI) Input(event InputEvent.Instance) {
 	}
 }
 
-func (ui *UI) UnhandledInput(event InputEvent.Instance) {
-	if ui.drawExpanded.Load() && Object.Is[InputEventMouseMotion.Instance](event) {
-		height := DisplayServer.WindowGetSize(0).Y
-		if ui.Editor.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
-			ui.closeDrawer()
-		}
-	}
-}
-
 func (ui *UI) Ready() {
+	ui.Editor.ExpansionIndicator = ui.ExpansionIndicator.ID()
+	ui.Editor.client = ui.client
+
 	ui.ModeGeometry.AsBaseButton().OnPressed(func() {
 		ui.SetMode(ModeGeometry)
 	})
@@ -187,12 +132,10 @@ func (ui *UI) Ready() {
 		count++
 	}
 	ui.ThemeSelector.LoadThemes(ui.themes)
-	ui.onThemeSelected(0)
 	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
-	ui.Editor.GetTabBar().AsControl().SetMouseFilter(Control.MouseFilterStop)
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
-	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.openDrawer)
+	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		if !ui.client.isOnline() {
 			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Secret)
@@ -279,196 +222,8 @@ func (ui *UI) scale(control Control.Instance, base_screen_width, base_screen_hei
 	control.SetScale(scale)
 }
 
-func (ui *UI) Close() {
-	ui.closeDrawer()
-}
-
-func (ui *UI) openDrawer() {
-	if ui.locked {
-		ui.queued = ui.openDrawer
-		return
-	}
-	if !ui.drawExpanded.CompareAndSwap(false, true) {
-		return
-	}
-	ui.locked = true
-	for _, container := range ui.gridContainers {
-		container.scroll_lock = false
-	}
-	ui.client.scroll_lock = true
-	window_size := DisplayServer.WindowGetSize(0)
-	scale_factor := ui.Editor.AsControl().Scale().Y
-	current_eff_height := ui.Editor.AsControl().Size().Y * scale_factor
-	var amount Float.X = -(Float.X(window_size.Y) - current_eff_height) * 0.8
-	move := Vector2.New(ui.Editor.AsControl().Position().X, ui.Editor.AsControl().Position().Y+amount)
-	grow := Vector2.New(ui.Editor.AsControl().Size().X, ui.Editor.AsControl().Size().Y-(amount/scale_factor))
-	tween := SceneTree.Get(ui.Editor.AsNode()).CreateTween()
-	PropertyTweener.Make(tween, ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
-	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
-	tween.OnFinished(func() {
-		ui.locked = false
-		if ui.queued != nil {
-			queued := ui.queued
-			ui.queued = nil
-			queued()
-		}
-	})
-	ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
-	// Remove ui.drawExpansion = amount (no longer needed)
-}
-
-func (ui *UI) closeDrawer() {
-	if ui.locked {
-		ui.queued = ui.closeDrawer
-		return
-	}
-	if !ui.drawExpanded.CompareAndSwap(true, false) {
-		return
-	}
-	ui.locked = true
-	for _, container := range ui.gridContainers {
-		container.scroll_lock = true
-	}
-	ui.client.scroll_lock = false
-	window_size := DisplayServer.WindowGetSize(0)
-	scale_factor := ui.Editor.AsControl().Scale().Y
-	const base_logical_height = 360.0 // Your base collapsed logical height (adjust to 370.0 if that's intended)
-	grow := Vector2.New(ui.Editor.AsControl().Size().X, base_logical_height)
-	move := Vector2.New(ui.Editor.AsControl().Position().X, Float.X(window_size.Y)-(base_logical_height*scale_factor))
-	tween := SceneTree.Get(ui.Editor.AsNode()).CreateTween()
-	PropertyTweener.Make(tween, ui.Editor.AsControl().AsObject(), "size", grow, 0.1).SetEase(Tween.EaseOut)
-	PropertyTweener.Make(SceneTree.Get(ui.Editor.AsNode()).CreateTween(), ui.Editor.AsControl().AsObject(), "position", move, 0.1).SetEase(Tween.EaseOut)
-	tween.OnFinished(func() {
-		ui.locked = false
-		if ui.queued != nil {
-			queued := ui.queued
-			ui.queued = nil
-			queued()
-		}
-	})
-	ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
-}
-
 // onThemeSelected regenerates the palette picker.
 func (ui *UI) onThemeSelected(idx int) {
 	ui.theme_index = idx
-
-	preview_path := "res://preview/" + ui.themes[idx]
-	if ui.mode == ModeMaterial {
-		preview_path += "/terrain"
-	}
-	library_path := "res://library/" + ui.themes[idx]
-	if ui.mode == ModeMaterial {
-		library_path += "/terrain"
-	}
-	for _, node := range ui.Editor.AsNode().GetChildren() {
-		container, ok := Object.As[*GridFlowContainer](Node.Instance(node))
-		if ok {
-			container.AsObject()[0].Free()
-		}
-	}
-	if ui.Editor.AsNode().GetChildCount() == 0 {
-		ui.Editor.AsCanvasItem().SetVisible(false)
-		ui.ExpansionIndicator.AsCanvasItem().SetVisible(false)
-	}
-	themes := DirAccess.Open(preview_path)
-	if themes == DirAccess.Nil {
-		return
-	}
-	defer func() {
-		if ui.Editor.AsNode().GetChildCount() > 0 {
-			ui.Editor.AsCanvasItem().SetVisible(true)
-			ui.ExpansionIndicator.AsCanvasItem().SetVisible(true)
-		}
-	}()
-	categories := categories
-	if ui.mode == ModeMaterial {
-		categories = terrain_categories
-	}
-	ui.gridContainers = ui.gridContainers[:0]
-	var glb = ".glb"
-	var png = ".png"
-	var i int
-	for name := range themes.Iter() {
-		if slices.Contains(categories, name) {
-			gridflow := new(GridFlowContainer)
-			gridflow.AsControl().SetMouseFilter(Control.MouseFilterStop)
-			gridflow.scroll_lock = true
-			gridflow.AsNode().SetName(name)
-			ui.Editor.AsNode().AddChild(gridflow.AsNode())
-			gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
-			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
-			ui.gridContainers = append(ui.gridContainers, gridflow)
-			elements := gridflow.Scrollable.GridContainer
-			var path = "res://preview/" + ui.themes[idx] + "/"
-			if ui.mode == ModeMaterial {
-				path += "terrain/"
-			}
-			path += name
-			resources := DirAccess.Open(path)
-			if resources == DirAccess.Nil {
-				continue
-			}
-			var ext = glb
-			if ui.mode == ModeMaterial {
-				ext = png
-			}
-			for resource := range resources.Iter() {
-				resource = strings.TrimSuffix(resource, ".import")
-				if !String.HasSuffix(resource, ".png") {
-					continue
-				}
-				var path = preview_path + "/" + name + "/" + resource
-				switch ext {
-				case glb:
-					preview := Resource.Load[Texture2D.Instance](path)
-					if preview == Texture2D.Nil {
-						continue
-					}
-					resource := library_path + "/" + name + "/" + strings.TrimSuffix(string(resource), ".png")
-					if tscn := library_path + "/" + name + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
-						resource = tscn
-					}
-					ImageButton := TextureButton.New()
-					ImageButton.SetTextureNormal(preview)
-					ImageButton.SetIgnoreTextureSize(true)
-					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
-					ImageButton.AsBaseButton().OnPressed(func() {
-						select {
-						case ui.preview <- Path.ToResource(String.New(resource)):
-							ui.closeDrawer()
-						default:
-						}
-					})
-					elements.AsNode().AddChild(ImageButton.AsNode())
-				case png:
-					texture := Resource.Load[Texture2D.Instance](path)
-					resource := library_path + "/" + name + "/" + resource
-					ImageButton := TextureButton.New()
-					ImageButton.SetTextureNormal(texture)
-					ImageButton.SetIgnoreTextureSize(true)
-					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
-					ImageButton.AsBaseButton().OnPressed(func() {
-						select {
-						case ui.texture <- Path.ToResource(String.New(resource)):
-							ui.closeDrawer()
-						default:
-						}
-					})
-					elements.AsNode().AddChild(ImageButton.AsNode())
-				}
-			}
-			texture := Resource.Load[Texture2D.Instance]("res://ui/" + name + ".svg")
-			gridflow.Update()
-			ui.Editor.SetTabIcon(i, texture)
-			ui.Editor.SetTabTitle(i, "")
-			i++
-		}
-	}
-	ui.Editor.AsCanvasItem().SetVisible(i > 0)
-	ui.ExpansionIndicator.AsCanvasItem().SetVisible(i > 0)
+	ui.Editor.Refresh(ui.themes[idx], ui.mode)
 }

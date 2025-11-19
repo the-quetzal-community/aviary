@@ -28,6 +28,7 @@ import (
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
+	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/internal/musical"
@@ -65,8 +66,36 @@ type TerrainEditor struct {
 	client *Client
 }
 
-func (fe *TerrainEditor) Tabs() []string {
-	return []string{"Planting", "Settings"}
+func (fe *TerrainEditor) Tabs(mode Mode) []string {
+	switch mode {
+	case ModeGeometry:
+		return []string{
+			"editing/radius",
+		}
+	case ModeMaterial:
+		return []string{
+			"terrain/aquatic",
+			"terrain/deserts",
+			"terrain/dryland",
+			"terrain/forests",
+			"terrain/glacial",
+			"terrain/manmade",
+			"terrain/organic",
+			"terrain/volcano",
+		}
+	default:
+		return nil
+	}
+}
+
+func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
+	select {
+	case fe.texture <- Path.ToResource(String.New(design)):
+	default:
+	}
+}
+func (fe *TerrainEditor) AdjustSlider(mode Mode, editing string, value float64, commit bool) {
+
 }
 
 func (tr *TerrainEditor) Ready() {

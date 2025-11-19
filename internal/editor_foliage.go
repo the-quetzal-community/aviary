@@ -30,6 +30,45 @@ func (fe *FoliageEditor) Ready() {
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, timbers.AsMaterial())
 }
 
-func (fe *FoliageEditor) Tabs() []string {
-	return []string{"Planting", "Settings"}
+func (fe *FoliageEditor) Tabs(mode Mode) []string {
+	switch mode {
+	case ModeGeometry:
+		return []string{
+			"editing/seed",
+			"editing/tree_levels",
+			"editing/twig_scale",
+			"editing/initial_branch_length",
+			"editing/length_falloff_factor",
+			"editing/length_falloff_power",
+			"editing/twig_clump_min",
+			"editing/twig_clump_max",
+			"editing/branch_factor",
+			"editing/drop_amount",
+			"editing/grow_amount",
+			"editing/sweep_amount",
+			"editing/max_radius",
+			"editing/climb_rate",
+			"editing/trunk_kink",
+			"editing/tree_steps",
+			"editing/taper_rate",
+			"editing/radius_falloff_rate",
+			"editing/twist_rate",
+			"editing/trunk_length",
+			"editing/v_multiplier",
+		}
+	case ModeMaterial:
+		return []string{
+			"foliage/leaflet",
+			"foliage/timbers",
+		}
+	default:
+		return nil
+	}
+}
+
+func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
+
+}
+func (fe *FoliageEditor) AdjustSlider(mode Mode, editing string, value float64, commit bool) {
+
 }
