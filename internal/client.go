@@ -181,6 +181,7 @@ func NewClient() *Client {
 
 var UserState struct {
 	Aviary signalling.User
+	Editor Subject
 	Device string // public device name
 	Secret string // secret to be linked with a Quetzal Community Account.
 	WorkID musical.WorkID
@@ -220,6 +221,9 @@ func (world *Client) loadUserState() {
 		if err := json.Unmarshal(buf, &UserState); err != nil {
 			Engine.Raise(fmt.Errorf("failed to unmarshal user state: %w", err))
 		}
+	}
+	if UserState.Editor == (Subject{}) {
+		UserState.Editor = Editing.Scenery
 	}
 }
 
@@ -264,7 +268,7 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
-	defer world.StartEditing(Editing.Foliage)
+	defer world.StartEditing(UserState.Editor)
 
 	defer world.clientReady.Done()
 
