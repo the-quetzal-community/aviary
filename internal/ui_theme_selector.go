@@ -3,6 +3,7 @@ package internal
 import (
 	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Control"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
@@ -29,12 +30,14 @@ func (selector *ThemeSelector) LoadThemes(themes []string) {
 		if theme == "" {
 			continue
 		}
-		var button = TextureButton.New()
-		button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + theme + "/icon.png"))
-		button.SetIgnoreTextureSize(true)
-		button.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-		button.AsControl().SetCustomMinimumSize(Vector2.New(64, 64))
-		selector.Themes.AsNode().AddChild(button.AsNode())
+		if FileAccess.FileExists("res://library/" + theme + "/icon.png.import") {
+			var button = TextureButton.New()
+			button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + theme + "/icon.png"))
+			button.SetIgnoreTextureSize(true)
+			button.SetStretchMode(TextureButton.StretchKeepAspectCentered)
+			button.AsControl().SetCustomMinimumSize(Vector2.New(64, 64))
+			selector.Themes.AsNode().AddChild(button.AsNode())
+		}
 	}
 	start := selector.Pointer.AsControl().Position()
 	selector.AsControl().SetPosition(Vector2.Sub(selector.AsControl().Position(), Vector2.New(selector.Themes.AsControl().Size().X/2, 0)))

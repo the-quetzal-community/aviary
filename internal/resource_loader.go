@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"graphics.gd/classdb/Engine"
@@ -40,6 +41,9 @@ type CommunityResourceLoader struct {
 
 func NewCommunityResourceLoader() *CommunityResourceLoader {
 	crl := &CommunityResourceLoader{}
+	if runtime.GOOS == "js" {
+		return crl
+	}
 	defer ProjectSettings.LoadResourcePack("user://library.pck", 0)
 	if os.Getenv("AVIARY_DOWNLOAD") == "0" {
 		crl.load(nil)

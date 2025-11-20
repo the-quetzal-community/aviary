@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"runtime"
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Node"
@@ -39,11 +40,9 @@ func main() {
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
-
 	classdb.Register[internal.SceneryEditor]()
 	classdb.Register[internal.TerrainEditor]()
 	classdb.Register[internal.FoliageEditor]()
-
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()
@@ -55,15 +54,13 @@ func main() {
 	classdb.Register[internal.MaterialSharingMeshInstance3D]()
 	classdb.Register[internal.MaterialSharingDecal]()
 	classdb.Register[internal.DesignExplorer]()
-
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
-	if !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
-		startup.LoadingScene()
+	startup.LoadingScene()
+	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
 		SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
 		startup.Scene()
 		return
 	}
-	startup.LoadingScene()
 	ResourceLoader.AddResourceFormatLoader(internal.NewCommunityResourceLoader().AsResourceFormatLoader(), true)
 	SceneTree.Add(internal.NewClient())
 	startup.Scene()
