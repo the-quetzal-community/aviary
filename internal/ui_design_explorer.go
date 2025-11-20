@@ -133,7 +133,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				ui.editor.SliderHandle(mode, tab, HSlider.Advanced(slider).AsRange().GetValue(), false)
 			})
 			ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
-			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
+			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg.import") {
 				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
 				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
