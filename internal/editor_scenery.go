@@ -12,6 +12,9 @@ type SceneryEditor struct {
 	preview chan Path.ToResource
 }
 
+func (fe *SceneryEditor) EnableEditor() {}
+func (fe *SceneryEditor) ChangeEditor() {}
+
 func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:

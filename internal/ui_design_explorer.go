@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -11,6 +10,7 @@ import (
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HSlider"
+	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
@@ -51,12 +51,34 @@ type DesignExplorer struct {
 	drawExpansion Float.X
 	locked        bool
 	queued        func()
+
+	last_slider_state sliderState
+}
+
+type sliderState struct {
+	pending bool
+
+	mode Mode
+	tab  string
+	val  float64
 }
 
 // Ready implements [Node.Interface.Ready].
 func (de *DesignExplorer) Ready() {
 	de.AsTabContainer().GetTabBar().AsControl().
 		SetMouseFilter(Control.MouseFilterStop)
+}
+
+func (ui *DesignExplorer) Process(delta Float.X) {
+	if ui.last_slider_state.pending && !Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
+		ui.last_slider_state.pending = false
+		ui.editor.SliderHandle(
+			ui.last_slider_state.mode,
+			ui.last_slider_state.tab,
+			ui.last_slider_state.val,
+			true,
+		)
+	}
 }
 
 // Refresh repopulates the tabbed designs depending on the active editor,
@@ -102,11 +124,15 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			slider.AsRange().SetStep(step)
 			Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
 				slider, _ := slider_id.Instance()
+				ui.last_slider_state = sliderState{
+					pending: true,
+					mode:    mode,
+					tab:     tab,
+					val:     HSlider.Advanced(slider).AsRange().GetValue(),
+				}
 				ui.editor.SliderHandle(mode, tab, HSlider.Advanced(slider).AsRange().GetValue(), false)
 			})
 			ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
-
-			fmt.Println("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg")
 			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
 				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {

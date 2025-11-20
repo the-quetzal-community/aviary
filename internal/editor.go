@@ -25,6 +25,9 @@ const (
 )
 
 func (world *Client) StartEditing(subject Subject) {
+	if world.ui.Editor.editor != nil {
+		world.ui.Editor.editor.ChangeEditor()
+	}
 	world.TerrainEditor.AsNode3D().SetVisible(false)
 	world.FoliageEditor.AsNode3D().SetVisible(false)
 	pos := world.FocalPoint.Lens.AsNode3D().Position()
@@ -50,6 +53,7 @@ func (world *Client) StartEditing(subject Subject) {
 	editor.AsNode3D().SetVisible(true)
 	world.Editing = subject
 	world.ui.Editor.editor = editor
+	editor.EnableEditor()
 	world.ui.Editor.Refresh(subject, world.ui.themes[world.ui.theme_index], world.ui.mode)
 }
 
@@ -57,6 +61,9 @@ type Editor interface {
 	Node3D.Any
 
 	Tabs(mode Mode) []string
+
+	EnableEditor()
+	ChangeEditor()
 
 	SelectDesign(mode Mode, design string)
 

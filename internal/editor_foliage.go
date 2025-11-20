@@ -4,14 +4,18 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"graphics.gd/classdb/BaseMaterial3D"
+	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 type FoliageEditor struct {
@@ -19,7 +23,14 @@ type FoliageEditor struct {
 
 	Mesh MeshInstance3D.Instance
 	tree *Tree
+
+	client *Client
+
+	last_slider_sculpt time.Time
 }
+
+func (fe *FoliageEditor) EnableEditor() {}
+func (fe *FoliageEditor) ChangeEditor() {}
 
 func (fe *FoliageEditor) Ready() {
 	fe.tree = Object.Leak(NewTree())
@@ -37,6 +48,30 @@ func (fe *FoliageEditor) Ready() {
 
 func (fe *FoliageEditor) ExitTree() {
 	Object.Free(fe.tree)
+}
+
+func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) {
+	if brush.Editor != "foliage" {
+		return
+	}
+	editing := brush.Slider
+	value := float64(brush.Amount)
+	_, prop, _ := strings.Cut(editing, "/")
+	rtype := reflect.TypeFor[Tree]()
+	for i := range rtype.NumField() {
+		field := rtype.Field(i)
+		if field.Tag.Get("gd") == prop {
+			switch field.Type.Kind() {
+			case reflect.Int:
+				reflect.ValueOf(fe.tree).Elem().Field(i).SetInt(int64(value))
+			case reflect.Float32, reflect.Float64:
+				reflect.ValueOf(fe.tree).Elem().Field(i).SetFloat(value)
+			}
+			fe.tree.recalculating = true
+			fe.tree.recalculate()
+			return
+		}
+	}
 }
 
 func (fe *FoliageEditor) Tabs(mode Mode) []string {
@@ -100,20 +135,17 @@ func (fe *FoliageEditor) SliderConfig(mode Mode, editing string) (init, from, up
 }
 
 func (fe *FoliageEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
-	_, prop, _ := strings.Cut(editing, "/")
-	rtype := reflect.TypeFor[Tree]()
-	for i := range rtype.NumField() {
-		field := rtype.Field(i)
-		if field.Tag.Get("gd") == prop {
-			switch field.Type.Kind() {
-			case reflect.Int:
-				reflect.ValueOf(fe.tree).Elem().Field(i).SetInt(int64(value))
-			case reflect.Float32, reflect.Float64:
-				reflect.ValueOf(fe.tree).Elem().Field(i).SetFloat(value)
-			}
-			fe.tree.recalculating = true
-			fe.tree.recalculate()
-			return
-		}
+	if !commit && time.Since(fe.last_slider_sculpt) < time.Second/10 {
+		return
+	}
+	fe.last_slider_sculpt = time.Now()
+	if err := fe.client.space.Sculpt(musical.Sculpt{
+		Author: fe.client.id,
+		Editor: "foliage",
+		Slider: editing,
+		Amount: Float.X(value),
+		Commit: commit,
+	}); err != nil {
+		Engine.Raise(err)
 	}
 }

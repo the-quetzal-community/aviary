@@ -304,6 +304,8 @@ func (world *Client) Ready() {
 	world.TerrainEditor.texture = make(chan Path.ToResource, 1)
 	world.TerrainEditor.client = world
 	world.TerrainEditor.tile.client = world
+	world.FoliageEditor.client = world
+	world.SceneryEditor.preview = world.PreviewRenderer.preview
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.terrain = world.TerrainEditor
 	world.TerrainEditor.mouseOver = world.mouseOver
@@ -405,6 +407,7 @@ func (world musicalImpl) Upload(file musical.Upload) error { return nil }
 func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 	world.queue <- func() {
 		world.TerrainEditor.Sculpt(brush)
+		world.FoliageEditor.Sculpt(brush)
 	}
 	return nil
 }

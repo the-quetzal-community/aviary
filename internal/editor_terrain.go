@@ -12,7 +12,6 @@ import (
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
-	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
@@ -66,6 +65,21 @@ type TerrainEditor struct {
 	client *Client
 }
 
+func (fe *TerrainEditor) EnableEditor() {
+	fe.shader.SetShaderParameter("brush_active", true)
+	fe.shader_buried.SetShaderParameter("brush_active", true)
+}
+
+func (fe *TerrainEditor) ChangeEditor() {
+	fe.shader.SetShaderParameter("height", 0.0)
+	fe.shader.SetShaderParameter("brush_active", false)
+	fe.shader.SetShaderParameter("paint_active", false)
+	fe.shader_buried.SetShaderParameter("height", 0.0)
+	fe.shader_buried.SetShaderParameter("brush_active", false)
+	fe.BrushActive = false
+	fe.PaintActive = false
+}
+
 func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
@@ -91,15 +105,20 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	select {
 	case fe.texture <- Path.ToResource(String.New(design)):
+		fe.EnableEditor()
 	default:
 	}
 }
 func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
-
+	switch editing {
+	case "editing/radius":
+		fe.BrushRadius = Float.X(value)
+		fe.shader.SetShaderParameter("radius", fe.BrushRadius)
+	}
 }
 
 func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
-	return 0, 0, 1, 0.01
+	return float64(fe.BrushRadius), 0, 10, 0.01
 }
 
 func (tr *TerrainEditor) Ready() {
@@ -171,41 +190,41 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			vr.BrushTarget = event.BrushTarget
 			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			vr.shader_buried.SetShaderParameter("uplift", event.BrushTarget)
-			if vr.client.PreviewRenderer.Enabled() || (!Input.IsKeyPressed(Input.KeyShift) && !vr.PaintActive) {
+			if vr.client.Editing != Editing.Terrain {
 				vr.BrushActive = false
 				break
 			}
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
-				vr.client.space.Sculpt(musical.Sculpt{
-					Author: vr.client.id,
-					Target: event.BrushTarget,
-					Radius: vr.BrushRadius,
-					Amount: event.BrushDeltaV,
-					Commit: true,
-				})
-			} else if !Input.IsKeyPressed(Input.KeyShift) {
-
-			} else {
+			} else if !vr.PaintActive && vr.client.ui.mode != ModeMaterial {
 				vr.BrushTarget = event.BrushTarget
 				vr.BrushDeltaV = event.BrushDeltaV
 				if event.BrushDeltaV != 0 {
 					vr.BrushActive = true
 				}
+			} else {
+				vr.BrushDeltaV = 0
 			}
 			continue
 		default:
 		}
 		break
 	}
-	if vr.BrushActive {
+	if vr.BrushActive && !vr.PaintActive && vr.client.ui.mode == ModeGeometry {
 		vr.BrushAmount += dt * vr.BrushDeltaV
+		vr.shader.SetShaderParameter("height", vr.BrushAmount)
+		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
+	} else {
+		vr.BrushAmount = 0.0
 		vr.shader.SetShaderParameter("height", vr.BrushAmount)
 		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
 	}
 }
 
 func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) {
+	if brush.Editor != "" {
+		return
+	}
 	if brush.Author == vr.client.id {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
@@ -227,22 +246,7 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 		return
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
-		if Input.IsKeyPressed(Input.KeyShift) {
-			if event.ButtonIndex() == Input.MouseButtonWheelDown {
-				tr.BrushRadius -= 0.5
-				if tr.BrushRadius == 0 {
-					tr.BrushRadius = 0.5
-				}
-				tr.shader.SetShaderParameter("radius", tr.BrushRadius)
-				tr.shader_buried.SetShaderParameter("radius", tr.BrushRadius)
-			}
-			if event.ButtonIndex() == Input.MouseButtonWheelUp {
-				tr.BrushRadius += 0.5
-				tr.shader.SetShaderParameter("radius", tr.BrushRadius)
-				tr.shader_buried.SetShaderParameter("radius", tr.BrushRadius)
-			}
-		}
-		if !tr.PaintActive && (tr.BrushActive && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased()) {
+		if !tr.PaintActive && (tr.BrushActive && tr.BrushAmount > 0 && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased()) {
 			tr.client.space.Sculpt(musical.Sculpt{
 				Author: tr.client.id,
 				Target: tr.BrushTarget,
@@ -253,24 +257,8 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 			tr.BrushAmount = 0.0
 			tr.BrushActive = false
 		}
-		if event.ButtonIndex() == Input.MouseButtonLeft && tr.PaintActive {
-			if event.AsInputEvent().IsReleased() {
-				tr.PaintActive = false
-				tr.shader.SetShaderParameter("paint_active", false)
-			}
-		}
-	}
-	if event, ok := Object.As[InputEventKey.Instance](event); ok {
-		if event.Keycode() == Input.KeyShift && event.AsInputEvent().IsPressed() {
-			tr.shader.SetShaderParameter("brush_active", true)
-			tr.shader_buried.SetShaderParameter("brush_active", true)
-		}
-		if event.Keycode() == Input.KeyShift && event.AsInputEvent().IsReleased() {
-			tr.shader.SetShaderParameter("height", 0.0)
-			tr.shader.SetShaderParameter("brush_active", false)
-			tr.shader_buried.SetShaderParameter("height", 0.0)
-			tr.shader_buried.SetShaderParameter("brush_active", false)
-			tr.BrushActive = false
+		if event.ButtonIndex() == Input.MouseButtonRight && tr.PaintActive {
+			tr.ChangeEditor()
 		}
 	}
 }
@@ -743,7 +731,7 @@ func (tile *TerrainTile) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
 }
 
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {
-	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && Input.IsKeyPressed(Input.KeyShift) {
+	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && tile.client.Editing == Editing.Terrain {
 		if event.ButtonIndex() == Input.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				select {
