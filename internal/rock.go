@@ -28,6 +28,7 @@ import (
 
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/FastNoiseLite"
+	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
@@ -53,6 +54,23 @@ type Rock struct {
 
 	random     func() float32
 	generating bool
+}
+
+func NewRock() *Rock {
+	return &Rock{
+		Seed:           100,
+		NoiseScale:     2,
+		NoiseStrength:  0.2,
+		ScrapeCount:    7,
+		ScrapeMinDist:  0.8,
+		ScrapeStrength: 0.2,
+		ScrapeRadius:   0.3,
+	}
+}
+
+func (rock *Rock) OnCreate() {
+	rock.generating = true
+	rock.generate()
 }
 
 func (rock *Rock) getNeighbours(positions []Vector3.XYZ, cells []Vector3i.XYZ) []map[uint32]struct{} {
@@ -280,6 +298,11 @@ func (rock *Rock) calculateNormals(vertices []Vector3.XYZ, indicies []Vector3i.X
 func (rock *Rock) generate() {
 	if !rock.generating {
 		return
+	}
+	var mat Material.Instance
+	if rock.AsMesh().GetSurfaceCount() > 0 {
+		mat = rock.AsMesh().SurfaceGetMaterial(0)
+		defer rock.AsMesh().SurfaceSetMaterial(0, mat)
 	}
 	rock.generating = false
 	rock.random = rand.New(rand.NewSource(int64(rock.Seed))).Float32

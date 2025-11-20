@@ -136,7 +136,7 @@ func (tr *TerrainEditor) Ready() {
 	tr.shader.SetShaderParameter("radius", 2.0)
 	tr.shader.SetShaderParameter("height", 0.0)
 
-	rock := Resource.Load[Texture2D.Instance]("res://terrain/rock.jpg")
+	rock := Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")
 	buried := Resource.Load[Shader.Instance]("res://shader/buried.gdshader")
 	tr.shader_buried = ShaderMaterial.New()
 	tr.shader_buried.SetShader(buried)

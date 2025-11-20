@@ -12,6 +12,7 @@ type Subject Enum.Int[struct {
 	Scenery Subject
 	Terrain Subject
 	Foliage Subject
+	Mineral Subject
 }]
 
 var Editing = Enum.Values[Subject]()
@@ -30,6 +31,7 @@ func (world *Client) StartEditing(subject Subject) {
 	}
 	world.TerrainEditor.AsNode3D().SetVisible(false)
 	world.FoliageEditor.AsNode3D().SetVisible(false)
+	world.MineralEditor.AsNode3D().SetVisible(false)
 	pos := world.FocalPoint.Lens.AsNode3D().Position()
 	pos.Y = 0
 	world.FocalPoint.Lens.AsNode3D().SetPosition(pos)
@@ -49,6 +51,9 @@ func (world *Client) StartEditing(subject Subject) {
 		pos.Y = 4
 		world.FocalPoint.Lens.AsNode3D().SetPosition(pos)
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/foliage.svg"))
+	case Editing.Mineral:
+		editor = world.MineralEditor
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/mineral.svg"))
 	}
 	editor.AsNode3D().SetVisible(true)
 	world.Editing = subject

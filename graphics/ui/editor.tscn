@@ -1,4 +1,4 @@
-[gd_scene load_steps=25 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=26 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -18,6 +18,7 @@
 [ext_resource type="Texture2D" uid="uid://036fls0ceuva" path="res://ui/scenery.svg" id="15_407as"]
 [ext_resource type="Texture2D" uid="uid://fcr38fjatls4" path="res://ui/arrows.svg" id="15_ny7lf"]
 [ext_resource type="Texture2D" uid="uid://6odjaflojmi0" path="res://ui/foliage.svg" id="16_2x4ir"]
+[ext_resource type="Texture2D" uid="uid://34ipn4hu4h2h" path="res://ui/mineral.svg" id="18_l3ljj"]
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
 load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
@@ -429,9 +430,9 @@ expand_mode = 3
 z_index = -1
 layout_mode = 0
 offset_left = 80.194214
-offset_top = -509.0197
+offset_top = -584.82214
 offset_right = 209.32861
-offset_bottom = 0.41778564
+offset_bottom = 0.41784668
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
@@ -456,6 +457,10 @@ texture_normal = ExtResource("14_8sq1u")
 [node name="Foliage" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
 layout_mode = 2
 texture_normal = ExtResource("16_2x4ir")
+
+[node name="Mineral" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+layout_mode = 2
+texture_normal = ExtResource("18_l3ljj")
 
 [node name="Control" type="Control" parent="EditorIndicator/EditorSelector/EditorTypes"]
 custom_minimum_size = Vector2(0, 20)

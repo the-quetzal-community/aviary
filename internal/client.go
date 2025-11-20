@@ -87,6 +87,7 @@ type Client struct {
 	SceneryEditor *SceneryEditor
 	TerrainEditor *TerrainEditor
 	FoliageEditor *FoliageEditor
+	MineralEditor *MineralEditor
 
 	signalling signalling.API
 
@@ -305,6 +306,7 @@ func (world *Client) Ready() {
 	world.TerrainEditor.client = world
 	world.TerrainEditor.tile.client = world
 	world.FoliageEditor.client = world
+	world.MineralEditor.client = world
 	world.SceneryEditor.preview = world.PreviewRenderer.preview
 	world.PreviewRenderer.mouseOver = world.mouseOver
 	world.PreviewRenderer.terrain = world.TerrainEditor
@@ -408,6 +410,7 @@ func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 	world.queue <- func() {
 		world.TerrainEditor.Sculpt(brush)
 		world.FoliageEditor.Sculpt(brush)
+		world.MineralEditor.Sculpt(brush)
 	}
 	return nil
 }
