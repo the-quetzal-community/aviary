@@ -77,15 +77,6 @@ type UsersSpace3D interface {
 	LookAt(LookAt) error
 }
 
-type structOrchestrator uint16
-
-const (
-	structOrchestratorRecord structOrchestrator = 1 << iota
-	structOrchestratorNumber
-	structOrchestratorAuthor
-	structOrchestratorAssign
-)
-
 type Member struct {
 	Record WorkID // expected identifier for the user/scene.
 	Number uint64 // a number of instructions observed for the scene.
@@ -119,6 +110,11 @@ type Change struct {
 	Timing Timing // timing of the record.
 
 	Editor string // editor that is being used.
+
+	// Mirror the entity, the difference between this and the Offset is
+	// used to determine the axis that is being mirrored on and angles
+	// will be inverted accordingly.
+	Mirror Vector3.XYZ
 
 	Remove bool // if true, removes the design/record from the entity.
 	Commit bool // if false, then this is a preview (not persisted).
@@ -245,18 +241,6 @@ func encode(v encodable) (buf []byte, err error) {
 		}
 	}
 	return buf, nil
-}
-
-func decodeT[T encodable](r io.Reader) (T, error) {
-	v, err := decode(r)
-	if err != nil {
-		return [1]T{}[0], err
-	}
-	asserted, ok := reflect.TypeAssert[T](reflect.ValueOf(v))
-	if !ok {
-		return [1]T{}[0], errors.New("decoded type does not match expected type")
-	}
-	return asserted, nil
 }
 
 func decode(r io.Reader) (encodable, error) {

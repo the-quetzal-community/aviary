@@ -14,7 +14,8 @@ import (
 type VehicleEditor struct {
 	Node3D.Extension[VehicleEditor]
 
-	Preview Node3D.Instance
+	Preview       Node3D.Instance
+	MirrorPreview Node3D.Instance
 
 	current string
 }
@@ -62,10 +63,24 @@ func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 			if editor.Preview.AsNode().GetChildCount() > 0 {
 				Node.Instance(editor.Preview.AsNode().GetChild(0)).QueueFree()
 			}
+			if editor.MirrorPreview.AsNode().GetChildCount() > 0 {
+				Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
+			}
 			return
 		}
 		if hover := MousePicker(editor.AsNode3D()); hover.Collider != Object.Nil {
-			editor.Preview.AsNode3D().SetGlobalPosition(hover.Position)
+			pos := hover.Position
+			if pos.X < 0.2 {
+				pos.X = 0
+			}
+			editor.Preview.AsNode3D().SetGlobalPosition(pos)
+			if pos.X > 0 {
+				pos.X = -pos.X
+				editor.MirrorPreview.AsNode3D().SetGlobalPosition(pos)
+				editor.MirrorPreview.AsNode3D().SetVisible(true)
+			} else {
+				editor.MirrorPreview.AsNode3D().SetVisible(false)
+			}
 		}
 	}
 }
@@ -79,11 +94,21 @@ func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 		if editor.Preview.AsNode().GetChildCount() > 0 {
 			Node.Instance(editor.Preview.AsNode().GetChild(0)).QueueFree()
 		}
+		if editor.MirrorPreview.AsNode().GetChildCount() > 0 {
+			Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
+		}
 		node := Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
 		remove_collisions(node.AsNode())
 		node.SetScale(Vector3.MulX(node.AsNode3D().Scale(), 0.3))
 		editor.Preview.AsNode().AddChild(node.AsNode())
 		editor.current = design
+
+		node = Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
+		remove_collisions(node.AsNode())
+		scale := Vector3.MulX(node.AsNode3D().Scale(), 0.3)
+		scale.X = -scale.X
+		node.SetScale(scale)
+		editor.MirrorPreview.AsNode().AddChild(node.AsNode())
 	}
 }
 
