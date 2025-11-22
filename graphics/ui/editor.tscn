@@ -1,4 +1,4 @@
-[gd_scene load_steps=26 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=28 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -13,12 +13,14 @@
 [ext_resource type="Texture2D" uid="uid://8njh8i6ykrsx" path="res://ui/colour.svg" id="11_8sq1u"]
 [ext_resource type="PackedScene" uid="uid://dqndk14imylnj" path="res://ui/cloudy.tscn" id="11_75vv8"]
 [ext_resource type="Texture2D" uid="uid://b5v5k7ro0nyfc" path="res://ui/editor.svg" id="11_ny7lf"]
+[ext_resource type="Texture2D" uid="uid://bfbvnf1xnytr0" path="res://ui/dressing.svg" id="13_n8yra"]
 [ext_resource type="Texture2D" uid="uid://c6rwr8c88miha" path="res://ui/terrain.svg" id="14_8sq1u"]
 [ext_resource type="StyleBox" uid="uid://cu6sfwokbnv21" path="res://ui/aviary_stylebox_secondary.tres" id="14_nqww0"]
 [ext_resource type="Texture2D" uid="uid://036fls0ceuva" path="res://ui/scenery.svg" id="15_407as"]
 [ext_resource type="Texture2D" uid="uid://fcr38fjatls4" path="res://ui/arrows.svg" id="15_ny7lf"]
 [ext_resource type="Texture2D" uid="uid://6odjaflojmi0" path="res://ui/foliage.svg" id="16_2x4ir"]
 [ext_resource type="Texture2D" uid="uid://34ipn4hu4h2h" path="res://ui/mineral.svg" id="18_l3ljj"]
+[ext_resource type="Texture2D" uid="uid://d3nq482anjp6c" path="res://ui/vehicle.svg" id="20_sb7vj"]
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
 load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
@@ -408,6 +410,23 @@ texture_normal = ExtResource("11_8sq1u")
 ignore_texture_size = true
 stretch_mode = 4
 
+[node name="MarginDressing" type="MarginContainer" parent="CloudControl"]
+layout_mode = 1
+offset_left = 39.914505
+offset_top = 137.02493
+offset_right = 82.914505
+offset_bottom = 177.02493
+theme_override_constants/margin_left = 5
+theme_override_constants/margin_right = 10
+
+[node name="ModeDressing" type="TextureButton" parent="CloudControl/MarginDressing"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(28, 32)
+layout_mode = 2
+texture_normal = ExtResource("13_n8yra")
+ignore_texture_size = true
+stretch_mode = 4
+
 [node name="Cloudy" parent="." instance=ExtResource("11_75vv8")]
 visible = false
 layout_mode = 1
@@ -430,7 +449,7 @@ expand_mode = 3
 z_index = -1
 layout_mode = 0
 offset_left = 80.194214
-offset_top = -584.82214
+offset_top = -667.9364
 offset_right = 209.32861
 offset_bottom = 0.41784668
 theme = ExtResource("1_hi2iw")
@@ -461,6 +480,10 @@ texture_normal = ExtResource("16_2x4ir")
 [node name="Mineral" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
 layout_mode = 2
 texture_normal = ExtResource("18_l3ljj")
+
+[node name="Vehicle" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+layout_mode = 2
+texture_normal = ExtResource("20_sb7vj")
 
 [node name="Control" type="Control" parent="EditorIndicator/EditorSelector/EditorTypes"]
 custom_minimum_size = Vector2(0, 20)

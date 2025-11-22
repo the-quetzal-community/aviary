@@ -17,8 +17,8 @@ import (
 	"the.quetzal.community/aviary/internal/musical"
 )
 
-type MineralEditor struct {
-	Node3D.Extension[MineralEditor]
+type BoulderEditor struct {
+	Node3D.Extension[BoulderEditor]
 
 	Mesh MeshInstance3D.Instance
 	rock *Rock
@@ -28,14 +28,15 @@ type MineralEditor struct {
 	last_slider_sculpt time.Time
 }
 
-func (fe *MineralEditor) EnableEditor() {
+func (fe *BoulderEditor) Name() string { return "boulder" }
+func (fe *BoulderEditor) EnableEditor() {
 
 }
-func (fe *MineralEditor) ChangeEditor() {
+func (fe *BoulderEditor) ChangeEditor() {
 
 }
 
-func (fe *MineralEditor) Ready() {
+func (fe *BoulderEditor) Ready() {
 	fe.rock = Object.Leak(NewRock())
 	fe.Mesh.SetMesh(fe.rock.AsMesh())
 
@@ -45,12 +46,12 @@ func (fe *MineralEditor) Ready() {
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, standard.AsMaterial())
 }
 
-func (fe *MineralEditor) ExitTree() {
+func (fe *BoulderEditor) ExitTree() {
 	Object.Free(fe.rock)
 }
 
-func (fe *MineralEditor) Sculpt(brush musical.Sculpt) {
-	if brush.Editor != "mineral" {
+func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) {
+	if brush.Editor != "boulder" && brush.Editor != "mineral" {
 		return
 	}
 	editing := brush.Slider
@@ -90,7 +91,7 @@ func (fe *MineralEditor) Sculpt(brush musical.Sculpt) {
 	}
 }
 
-func (fe *MineralEditor) Tabs(mode Mode) []string {
+func (fe *BoulderEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		return []string{
@@ -114,11 +115,11 @@ func (fe *MineralEditor) Tabs(mode Mode) []string {
 	}
 }
 
-func (fe *MineralEditor) SelectDesign(mode Mode, design string) {
+func (fe *BoulderEditor) SelectDesign(mode Mode, design string) {
 
 }
 
-func (fe *MineralEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
+func (fe *BoulderEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
 	_, prop, _ := strings.Cut(editing, "/")
 	rtype := reflect.TypeFor[Rock]()
 	for i := range rtype.NumField() {
@@ -135,10 +136,10 @@ func (fe *MineralEditor) SliderConfig(mode Mode, editing string) (init, from, up
 			return init, from, upto, step
 		}
 	}
-	return 1, 0, 10, 0.01
+	return 1, 0, 5, 0.01
 }
 
-func (fe *MineralEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
+func (fe *BoulderEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
 	if !commit && time.Since(fe.last_slider_sculpt) < time.Second/10 {
 		return
 	}

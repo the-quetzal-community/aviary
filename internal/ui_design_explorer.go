@@ -27,6 +27,7 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/String"
 	"graphics.gd/variant/Vector2"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 // DesignExplorer is the large panel at the bottom of the screen in Aviary.
@@ -43,6 +44,7 @@ type DesignExplorer struct {
 	editor Editor
 	tabbed []*GridFlowContainer // current tabbed containers
 	cached map[Node3D.ID]map[string][]*GridFlowContainer
+	slider map[string]map[string]HSlider.ID
 
 	author string
 
@@ -65,8 +67,28 @@ type sliderState struct {
 
 // Ready implements [Node.Interface.Ready].
 func (de *DesignExplorer) Ready() {
+	de.slider = make(map[string]map[string]HSlider.ID)
 	de.AsTabContainer().GetTabBar().AsControl().
 		SetMouseFilter(Control.MouseFilterStop)
+}
+
+func (ui *DesignExplorer) Sculpt(brush musical.Sculpt) {
+	if brush.Slider == "" {
+		return
+	}
+	cache, ok := ui.slider[brush.Editor]
+	if !ok {
+		return
+	}
+	slider_id, ok := cache[brush.Slider]
+	if !ok {
+		return
+	}
+	slider, ok := slider_id.Instance()
+	if !ok {
+		return
+	}
+	slider.AsRange().SetValueNoSignal(Float.X(brush.Amount))
 }
 
 func (ui *DesignExplorer) Process(delta Float.X) {
@@ -132,6 +154,10 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				}
 				ui.editor.SliderHandle(mode, tab, HSlider.Advanced(slider).AsRange().GetValue(), false)
 			})
+			if _, ok := ui.slider[ui.editor.Name()]; !ok {
+				ui.slider[ui.editor.Name()] = make(map[string]HSlider.ID)
+			}
+			ui.slider[ui.editor.Name()][tab] = slider_id
 			ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
 			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg.import") {
 				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))

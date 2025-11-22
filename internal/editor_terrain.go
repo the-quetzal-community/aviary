@@ -65,6 +65,8 @@ type TerrainEditor struct {
 	client *Client
 }
 
+func (fe *TerrainEditor) Name() string { return "terrain" }
+
 func (fe *TerrainEditor) EnableEditor() {
 	fe.shader.SetShaderParameter("brush_active", true)
 	fe.shader_buried.SetShaderParameter("brush_active", true)

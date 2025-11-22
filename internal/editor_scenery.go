@@ -12,6 +12,8 @@ type SceneryEditor struct {
 	preview chan Path.ToResource
 }
 
+func (fe *SceneryEditor) Name() string { return "scenery" }
+
 func (fe *SceneryEditor) EnableEditor() {}
 func (fe *SceneryEditor) ChangeEditor() {}
 
@@ -19,21 +21,34 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		return []string{
+			// natural
 			"foliage",
 			"mineral",
+
+			// village
 			"housing",
 			"village",
 			"farming",
 			"factory",
 			"defense",
 			"obelisk",
-			"citizen",
-			"trinket",
-			"critter",
-			"special",
-			"pathway",
+			"utility",
+
 			"fencing",
-			"vehicle",
+		}
+	case ModeDressing:
+		return []string{
+			// vehicle
+			"citizen",
+			"critter",
+			"swimmer",
+			"scooter",
+			"bicycle",
+			"roadway",
+			"railway",
+			"seaship",
+			"airship",
+			"rockets",
 		}
 	case ModeMaterial:
 		return []string{

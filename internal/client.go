@@ -83,11 +83,14 @@ type Client struct {
 
 	PreviewRenderer *PreviewRenderer
 
-	Editing       Subject
+	Editing Subject
+
+	VehicleEditor *VehicleEditor
+	ShelterEditor *ShelterEditor
 	SceneryEditor *SceneryEditor
 	TerrainEditor *TerrainEditor
 	FoliageEditor *FoliageEditor
-	MineralEditor *MineralEditor
+	MineralEditor *BoulderEditor
 
 	signalling signalling.API
 
@@ -415,6 +418,7 @@ func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 		world.TerrainEditor.Sculpt(brush)
 		world.FoliageEditor.Sculpt(brush)
 		world.MineralEditor.Sculpt(brush)
+		world.ui.Editor.Sculpt(brush)
 	}
 	return nil
 }

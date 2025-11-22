@@ -40,10 +40,16 @@ func main() {
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.PreviewRenderer]()
+
 	classdb.Register[internal.SceneryEditor]()
 	classdb.Register[internal.TerrainEditor]()
 	classdb.Register[internal.FoliageEditor]()
-	classdb.Register[internal.MineralEditor]()
+	classdb.Register[internal.BoulderEditor]()
+	classdb.Register[internal.VehicleEditor]()
+	classdb.Register[internal.CitizenEditor]()
+	classdb.Register[internal.CritterEditor]()
+	classdb.Register[internal.ShelterEditor]()
+
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ThemeSelector]()
 	classdb.Register[internal.CloudControl]()

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
@@ -13,25 +14,34 @@ type Subject Enum.Int[struct {
 	Terrain Subject
 	Foliage Subject
 	Mineral Subject
+	Vehicle Subject
 }]
 
 var Editing = Enum.Values[Subject]()
 
 // Mode represents whether the editor is currently in geometry or material mode.
-type Mode bool
+type Mode int
 
 const (
-	ModeGeometry Mode = false // add/remove/move/scale/rotate components.
-	ModeMaterial Mode = true  // add colours, paint textures & set materials
+	ModeGeometry Mode = iota // add/remove/move/scale/rotate components.
+	ModeDressing             // add props, details & decorations
+	ModeMaterial             // add colours, paint textures & set materials
 )
 
 func (world *Client) StartEditing(subject Subject) {
 	if world.ui.Editor.editor != nil {
 		world.ui.Editor.editor.ChangeEditor()
 	}
-	world.TerrainEditor.AsNode3D().SetVisible(false)
-	world.FoliageEditor.AsNode3D().SetVisible(false)
-	world.MineralEditor.AsNode3D().SetVisible(false)
+	var editors = []Editor{
+		world.SceneryEditor,
+		world.TerrainEditor,
+		world.FoliageEditor,
+		world.MineralEditor,
+	}
+	for _, editor := range editors {
+		editor.AsNode3D().SetVisible(false)
+		editor.AsNode3D().AsNode().SetProcessMode(Node.ProcessModeDisabled)
+	}
 	pos := world.FocalPoint.Lens.AsNode3D().Position()
 	pos.Y = 0
 	world.FocalPoint.Lens.AsNode3D().SetPosition(pos)
@@ -54,8 +64,12 @@ func (world *Client) StartEditing(subject Subject) {
 	case Editing.Mineral:
 		editor = world.MineralEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/mineral.svg"))
+	case Editing.Vehicle:
+		editor = world.VehicleEditor
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/vehicle.svg"))
 	}
 	editor.AsNode3D().SetVisible(true)
+	editor.AsNode3D().AsNode().SetProcessMode(Node.ProcessModeInherit)
 	world.Editing = subject
 	world.ui.Editor.editor = editor
 	editor.EnableEditor()
@@ -67,6 +81,7 @@ func (world *Client) StartEditing(subject Subject) {
 type Editor interface {
 	Node3D.Any
 
+	Name() string
 	Tabs(mode Mode) []string
 
 	EnableEditor()
@@ -76,4 +91,32 @@ type Editor interface {
 
 	SliderConfig(mode Mode, editing string) (init, min, max, step float64)
 	SliderHandle(mode Mode, editing string, value float64, commit bool)
+}
+
+/*
+	type ExampleEditor struct {
+		Node3D.Extension[ExampleEditor]
+	}
+
+	func (*ExampleEditor) Name() string            { return "example" }
+	func (*ExampleEditor) Tabs(mode Mode) []string { return nil }
+
+	func (*ExampleEditor) EnableEditor() {}
+	func (*ExampleEditor) ChangeEditor() {}
+
+	func (*ExampleEditor) SelectDesign(mode Mode, design string) {}
+
+	func (*ExampleEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
+		return 0, 0, 1, 0.01
+	}
+	func (*ExampleEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {}
+*/
+
+var TextureTabs = []string{
+	"timbers",
+	"fabrics",
+	"cobbles",
+	"cements",
+	"painted",
+	"glasses",
 }

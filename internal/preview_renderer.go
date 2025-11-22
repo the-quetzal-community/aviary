@@ -78,12 +78,12 @@ func (pr *PreviewRenderer) Place() {
 	}
 }
 
-func (pr *PreviewRenderer) remove_collisions(node Node.Instance) {
+func remove_collisions(node Node.Instance) {
 	if body, ok := Object.As[CollisionObject3D.Instance](node); ok {
 		body.SetCollisionLayer(0)
 	}
 	for _, child := range node.GetChildren() {
-		pr.remove_collisions(child)
+		remove_collisions(child)
 	}
 }
 
@@ -97,7 +97,7 @@ func (pr *PreviewRenderer) Process(dt Float.X) {
 				if pr.AsNode().GetChildCount() > 0 {
 					Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
 				}
-				pr.remove_collisions(instance.AsNode())
+				remove_collisions(instance.AsNode())
 				instance.AsNode3D().SetScale(Vector3.MulX(instance.AsNode3D().Scale(), 0.1))
 				pr.AsNode().AddChild(instance.AsNode())
 			}

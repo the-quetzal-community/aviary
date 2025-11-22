@@ -22,7 +22,6 @@
 package internal
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
 
@@ -45,8 +44,8 @@ type Rock struct {
 
 	Seed int `gd:"seed" range:"0,1000,or_greater,or_less" default:"100"`
 
-	NoiseScale     Float.X `gd:"noise_scale" range:"0.5,5,or_greater,or_less" default:"2"`
-	NoiseStrength  Float.X `gd:"noise_strength" range:"0,0.5,or_greater,or_less" default:"0.2"`
+	NoiseScale     Float.X `gd:"noise_scale" range:"0.5,10,or_greater,or_less" default:"2"`
+	NoiseStrength  Float.X `gd:"noise_strength" range:"0,10,or_greater,or_less" default:"0.2"`
 	ScrapeCount    int     `gd:"scrape_count" range:"0,15,or_greater" default:"7"`
 	ScrapeMinDist  Float.X `gd:"scrape_min_dist" range:"0.1,1,or_greater" default:"0.8"`
 	ScrapeStrength Float.X `gd:"scrape_strength" range:"0.1,0.6,or_greater" default:"0.2"`
@@ -120,7 +119,7 @@ func (rock *Rock) scrape(positionIndex int, positions []Vector3.XYZ, normals []V
 		n  = normals[positionIndex]
 		r0 = centerPosition
 	)
-	Vector3.Add(r0, Vector3.MulX(n, -strength))
+	r0 = Vector3.Add(r0, Vector3.MulX(n, -strength))
 	var (
 		stack []int
 	)
@@ -169,7 +168,6 @@ func (rock *Rock) scrape(positionIndex int, positions []Vector3.XYZ, normals []V
 }
 
 func (rock *Rock) OnSet(name string, value any) {
-	fmt.Println("Rock property changed:", name, "to", value)
 	if !rock.generating {
 		Callable.Defer(Callable.New(rock.generate))
 		rock.generating = true
@@ -392,7 +390,6 @@ func (rock *Rock) generate() {
 			Mesh.ArrayIndex:  indicies,
 			Mesh.ArrayNormal: norm,
 		}
-		fmt.Println("Generated rock mesh with", len(positions), "vertices and", len(cells), "faces.")
 		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 	}
 }

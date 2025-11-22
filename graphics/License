@@ -49,7 +49,10 @@ ui/restart.svg - Luke Peek
 ui/updates.svg - Tahsin Tahil
 ui/reverse.svg - Nursila
 
+ui/vehicle.svg - insdesign86
 ui/scenery.svg - Bernd Lakenbrink
+ui/cockpit.svg - Amethyst Studio
+ui/dressing.svg - shashank singh
 
 ui/editor.svg  - Aybige
 ui/arrows.svg - Alice Design
@@ -77,3 +80,14 @@ ui/foliage/editing/taper_rate.svg - Andrejs Kirma
 ui/foliage/editing/radius_falloff_rate.svg - Luis Prado
 ui/foliage/editing/twist_rate.svg - Cédric Villain, Adrien Coquet & Quentin Quaadgras (combined)
 ui/foliage/editing/v_multiplier.svg - Kim Love
+
+ui/foliage/editing/seed.svg - yus
+ui/mineral/editing/noise_scale.svg - PEBIAN
+ui/mineral/editing/noise_strength.svg - Gregor Cresnar
+ui/mineral/editing/scrape_count.svg - Rizsign
+ui/mineral/editing/scrape_min_dist.svg - Dániel Z. Aczél
+ui/mineral/editing/scrape_strength.svg - Marcus DeClarke
+ui/mineral/editing/scrape_radius.svg - Chintuza
+ui/mineral/editing/width.svg - Adrien Coquet & Quentin Quaadgras (adjusted visible arrows)
+ui/mineral/editing/depth.svg - Adrien Coquet & Quentin Quaadgras (adjusted visible arrows)
+ui/mineral/editing/height.svg - Adrien Coquet & Quentin Quaadgras (adjusted visible arrows)

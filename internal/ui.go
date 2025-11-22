@@ -41,6 +41,7 @@ type UI struct {
 
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
+	ModeDressing TextureButton.Instance `gd:"%ModeDressing"`
 
 	CloudControl  *CloudControl
 	ThemeSelector *ThemeSelector
@@ -70,23 +71,33 @@ func (ui *UI) SetMode(mode Mode) {
 		return
 	}
 	const half = 4
+	switch ui.mode {
+	case ModeGeometry:
+		ui.ModeGeometry.AsControl().SetSize(Vector2.New(24, 24))
+		pos := ui.ModeGeometry.AsControl().Position()
+		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	case ModeMaterial:
+		ui.ModeMaterial.AsControl().SetSize(Vector2.New(24, 24))
+		pos := ui.ModeMaterial.AsControl().Position()
+		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	case ModeDressing:
+		ui.ModeDressing.AsControl().SetSize(Vector2.New(24, 24))
+		pos := ui.ModeDressing.AsControl().Position()
+		ui.ModeDressing.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	}
 	switch mode {
 	case ModeGeometry:
 		pos := ui.ModeGeometry.AsControl().Position()
 		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
 		ui.ModeGeometry.AsControl().SetSize(Vector2.New(32, 32))
-
-		ui.ModeMaterial.AsControl().SetSize(Vector2.New(24, 24))
-		pos = ui.ModeMaterial.AsControl().Position()
-		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
 	case ModeMaterial:
 		pos := ui.ModeMaterial.AsControl().Position()
 		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
 		ui.ModeMaterial.AsControl().SetSize(Vector2.New(32, 32))
-
-		ui.ModeGeometry.AsControl().SetSize(Vector2.New(24, 24))
-		pos = ui.ModeGeometry.AsControl().Position()
-		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	case ModeDressing:
+		pos := ui.ModeDressing.AsControl().Position()
+		ui.ModeDressing.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
+		ui.ModeDressing.AsControl().SetSize(Vector2.New(36, 36))
 	}
 	ui.mode = mode
 	ui.onThemeSelected(ui.theme_index)
@@ -96,7 +107,14 @@ func (ui *UI) Input(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() {
 			if event.Keycode() == Input.KeyTab {
-				ui.SetMode(!ui.mode) // toggle between [ModeGeometry] and [ModeMaterial]
+				switch ui.mode {
+				case ModeGeometry:
+					ui.SetMode(ModeMaterial)
+				case ModeMaterial:
+					ui.SetMode(ModeDressing)
+				case ModeDressing:
+					ui.SetMode(ModeGeometry)
+				}
 			}
 		}
 	}
@@ -111,6 +129,9 @@ func (ui *UI) Ready() {
 	})
 	ui.ModeMaterial.AsBaseButton().OnPressed(func() {
 		ui.SetMode(ModeMaterial)
+	})
+	ui.ModeDressing.AsBaseButton().OnPressed(func() {
+		ui.SetMode(ModeDressing)
 	})
 	Callable.Defer(Callable.New(func() {
 		pos := ui.ModeGeometry.AsControl().Position()
