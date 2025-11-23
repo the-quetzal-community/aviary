@@ -39,8 +39,6 @@ type TerrainEditor struct {
 
 	tile *TerrainTile
 
-	mouseOver chan Vector3.XYZ
-
 	shader        ShaderMaterial.Instance
 	shader_buried ShaderMaterial.Instance
 
@@ -188,7 +186,6 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			vr.shader.SetShaderParameter("paint_active", true)
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
-			vr.mouseOver <- event.BrushTarget
 			vr.BrushTarget = event.BrushTarget
 			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			vr.shader_buried.SetShaderParameter("uplift", event.BrushTarget)
@@ -244,7 +241,7 @@ func (tr *TerrainEditor) OnCreate() {
 }
 
 func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
-	if tr.client.PreviewRenderer.Enabled() {
+	if tr.client.Editing != Editing.Terrain {
 		return
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {

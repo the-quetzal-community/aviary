@@ -28,6 +28,7 @@ import (
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
+	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/OS"
@@ -80,8 +81,6 @@ type Client struct {
 	}
 
 	mouseOver chan Vector3.XYZ
-
-	PreviewRenderer *PreviewRenderer
 
 	Editing Subject
 
@@ -307,22 +306,16 @@ func (world *Client) Ready() {
 	}
 	world.updates = make(chan []byte, 20)
 	world.mouseOver = make(chan Vector3.XYZ, 100)
-	world.PreviewRenderer.preview = make(chan Path.ToResource, 1)
-	world.PreviewRenderer.client = world
 	world.TerrainEditor.texture = make(chan Path.ToResource, 1)
 	world.TerrainEditor.client = world
 	world.TerrainEditor.tile.client = world
 	world.FoliageEditor.client = world
 	world.MineralEditor.client = world
-	world.SceneryEditor.preview = world.PreviewRenderer.preview
-	world.PreviewRenderer.mouseOver = world.mouseOver
-	world.PreviewRenderer.terrain = world.TerrainEditor
-	world.TerrainEditor.mouseOver = world.mouseOver
+	world.SceneryEditor.client = world
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
 	if ok {
-		editor.preview = world.PreviewRenderer.preview
 		editor.texture = world.TerrainEditor.texture
 		editor.client = world
 		world.ui = editor
@@ -637,6 +630,13 @@ func (world *Client) Process(dt Float.X) {
 }
 
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
+	if mouse, ok := Object.As[InputEventMouseMotion.Instance](event); ok {
+		if Input.IsMouseButtonPressed(Input.MouseButtonMiddle) {
+			relative := mouse.Relative()
+			world.FocalPoint.AsNode3D().Rotate(Vector3.New(0, 1, 0), -Angle.Radians(relative.X*0.005))
+			world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(relative.Y*0.005))
+		}
+	}
 	// Tilt the camera up and down with R and F.
 	if !world.scroll_lock {
 		if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
@@ -656,10 +656,6 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
-				if world.PreviewRenderer.Enabled() {
-					world.PreviewRenderer.Place()
-					break
-				}
 				cam := Viewport.Get(world.AsNode()).GetCamera3d()
 				space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
 				mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
@@ -688,10 +684,6 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				if world.TerrainEditor.PaintActive {
 					world.TerrainEditor.shader.SetShaderParameter("paint_active", false)
 					world.TerrainEditor.PaintActive = false
-					break
-				}
-				if world.PreviewRenderer.Enabled() {
-					world.PreviewRenderer.Discard()
 					break
 				}
 				if world.selection != 0 {

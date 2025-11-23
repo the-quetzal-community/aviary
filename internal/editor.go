@@ -37,6 +37,7 @@ func (world *Client) StartEditing(subject Subject) {
 		world.TerrainEditor,
 		world.FoliageEditor,
 		world.MineralEditor,
+		world.VehicleEditor,
 	}
 	for _, editor := range editors {
 		editor.AsNode3D().SetVisible(false)

@@ -2,136 +2,45 @@ package internal
 
 import (
 	"graphics.gd/classdb/CollisionObject3D"
-	"graphics.gd/classdb/Input"
-	"graphics.gd/classdb/InputEvent"
-	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Resource"
-	"graphics.gd/classdb/Texture2D"
-	"graphics.gd/variant/Angle"
-	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
-	"graphics.gd/variant/Path"
-	"graphics.gd/variant/Vector3"
-	"the.quetzal.community/aviary/internal/musical"
 )
 
-// PreviewRenderer is responsible for rendering items when the user
-// is planning where to place it. As such, these items will follow
-// the cursor and will be submitted to the Vulture API on click.
 type PreviewRenderer struct {
-	Node3D.Extension[PreviewRenderer]
+	Node3D.Instance
 
-	mouseOver chan Vector3.XYZ
-
-	preview chan Path.ToResource // resource name
-
-	terrain *TerrainEditor
-
-	current string
-
-	client *Client
+	design string
 }
 
-func (pr *PreviewRenderer) Enabled() bool {
-	return pr.AsNode().GetChildCount() > 0
+func (preview *PreviewRenderer) Design() string {
+	return preview.design
 }
 
-func (pr *PreviewRenderer) Discard() {
-	if pr.AsNode().GetChildCount() > 0 {
-		Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
+func (preview *PreviewRenderer) SetDesign(design string) {
+	preview.design = design
+	instance := Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
+	preview.remove_collisions(instance.AsNode())
+	if preview.AsNode().GetChildCount() > 0 {
+		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
 	}
+	preview.AsNode().AddChild(instance.AsNode())
 }
 
-func (pr *PreviewRenderer) Place() {
-	if pr.AsNode().GetChildCount() > 0 {
-		if !Input.IsKeyPressed(Input.KeyShift) {
-			Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
-		}
-
-		design, ok := pr.client.loaded[pr.current]
-		if !ok {
-			pr.client.design_ids[pr.client.id]++
-			design = musical.Design{
-				Author: pr.client.id,
-				Number: pr.client.design_ids[pr.client.id],
-			}
-			pr.client.space.Import(musical.Import{
-				Design: design,
-				Import: pr.current,
-			})
-		}
-		pr.client.entity_ids[pr.client.id]++
-		pr.client.space.Change(musical.Change{
-			Author: pr.client.id,
-			Entity: musical.Entity{
-				Author: pr.client.id,
-				Number: pr.client.entity_ids[pr.client.id],
-			},
-			Design: design,
-			Offset: pr.AsNode3D().Position(),
-			Angles: pr.AsNode3D().Rotation(),
-			Commit: true,
-		})
+func (preview *PreviewRenderer) Remove() {
+	if preview.AsNode().GetChildCount() > 0 {
+		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
 	}
+	preview.design = ""
 }
 
-func remove_collisions(node Node.Instance) {
+func (preview *PreviewRenderer) remove_collisions(node Node.Instance) {
 	if body, ok := Object.As[CollisionObject3D.Instance](node); ok {
 		body.SetCollisionLayer(0)
 	}
 	for _, child := range node.GetChildren() {
-		remove_collisions(child)
+		preview.remove_collisions(child)
 	}
-}
-
-func (pr *PreviewRenderer) Process(dt Float.X) {
-	for {
-		select {
-		case resource := <-pr.preview:
-			scene := Resource.Load[PackedScene.Instance](resource)
-			instance, ok := Object.As[Node3D.Instance](scene.Instantiate())
-			if ok {
-				if pr.AsNode().GetChildCount() > 0 {
-					Node.Instance(pr.AsNode().GetChild(0)).QueueFree()
-				}
-				remove_collisions(instance.AsNode())
-				instance.AsNode3D().SetScale(Vector3.MulX(instance.AsNode3D().Scale(), 0.1))
-				pr.AsNode().AddChild(instance.AsNode())
-			}
-			pr.current = resource.String()
-		case pos := <-pr.mouseOver:
-			pr.AsNode3D().SetPosition(pos)
-			continue
-		default:
-
-		}
-		break
-	}
-	pos := pr.AsNode3D().Position()
-	pos.Y = (pr.terrain.tile.HeightAt(pos))
-	pr.AsNode3D().SetPosition(pos)
-}
-
-func (pr *PreviewRenderer) Input(event InputEvent.Instance) {
-	if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
-		if Input.IsKeyPressed(Input.KeyShift) {
-			if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
-				pr.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, -Angle.Pi/64)
-			}
-			if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
-				pr.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, Angle.Pi/64)
-			}
-		}
-	}
-}
-
-func (pr *PreviewRenderer) Ready() {
-
-}
-
-func (pr *PreviewRenderer) GenerateTexture2D(scene PackedScene.Instance) Texture2D.Instance {
-	return Texture2D.Instance{}
 }

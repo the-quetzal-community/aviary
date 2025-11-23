@@ -39,7 +39,6 @@ func main() {
 	classdb.Register[internal.TerrainTile]()
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
-	classdb.Register[internal.PreviewRenderer]()
 
 	classdb.Register[internal.SceneryEditor]()
 	classdb.Register[internal.TerrainEditor]()

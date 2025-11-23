@@ -14,16 +14,16 @@ import (
 type VehicleEditor struct {
 	Node3D.Extension[VehicleEditor]
 
-	Preview       Node3D.Instance
-	MirrorPreview Node3D.Instance
-
-	current string
+	Preview       PreviewRenderer
+	MirrorPreview PreviewRenderer
 }
 
 func (editor *VehicleEditor) Ready() {
 	base := Resource.Load[PackedScene.Is[Node.Instance]]("res://base.obj")
 	instance := base.Instantiate()
 	editor.AsNode().AddChild(instance)
+	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.4))
+	editor.MirrorPreview.AsNode3D().SetScale(Vector3.MulX(editor.MirrorPreview.AsNode3D().Scale(), 0.4))
 }
 
 func (*VehicleEditor) Name() string { return "vehicle" }
@@ -57,15 +57,10 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
-	if editor.current != "" {
+	if editor.Preview.Design() != "" {
 		if Input.IsMouseButtonPressed(Input.MouseButtonRight) {
-			editor.current = ""
-			if editor.Preview.AsNode().GetChildCount() > 0 {
-				Node.Instance(editor.Preview.AsNode().GetChild(0)).QueueFree()
-			}
-			if editor.MirrorPreview.AsNode().GetChildCount() > 0 {
-				Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
-			}
+			editor.Preview.Remove()
+			editor.MirrorPreview.Remove()
 			return
 		}
 		if hover := MousePicker(editor.AsNode3D()); hover.Collider != Object.Nil {
@@ -97,18 +92,11 @@ func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 		if editor.MirrorPreview.AsNode().GetChildCount() > 0 {
 			Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
 		}
-		node := Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
-		remove_collisions(node.AsNode())
-		node.SetScale(Vector3.MulX(node.AsNode3D().Scale(), 0.3))
-		editor.Preview.AsNode().AddChild(node.AsNode())
-		editor.current = design
-
-		node = Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
-		remove_collisions(node.AsNode())
-		scale := Vector3.MulX(node.AsNode3D().Scale(), 0.3)
+		editor.Preview.SetDesign(design)
+		editor.MirrorPreview.SetDesign(design)
+		scale := editor.MirrorPreview.AsNode3D().Scale()
 		scale.X = -scale.X
-		node.SetScale(scale)
-		editor.MirrorPreview.AsNode().AddChild(node.AsNode())
+		editor.MirrorPreview.SetScale(scale)
 	}
 }
 
