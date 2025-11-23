@@ -70,11 +70,11 @@ func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 		}
 		if hover := MousePicker(editor.AsNode3D()); hover.Collider != Object.Nil {
 			pos := hover.Position
-			if pos.X < 0.2 {
+			if pos.X < 0.2 && pos.X > -0.2 {
 				pos.X = 0
 			}
 			editor.Preview.AsNode3D().SetGlobalPosition(pos)
-			if pos.X > 0 {
+			if pos.X != 0 {
 				pos.X = -pos.X
 				editor.MirrorPreview.AsNode3D().SetGlobalPosition(pos)
 				editor.MirrorPreview.AsNode3D().SetVisible(true)
