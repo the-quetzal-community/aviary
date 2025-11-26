@@ -146,26 +146,21 @@ func Append(pck io.ReadWriteSeeker, files map[string]File) error {
 		return xray.New(err)
 	}
 	var added = false
-	zeros := make([]byte, 10*1024*1024) // 10 MB of zeros buffer
 	for path, file := range files {
 		if exist, ok := index[path]; ok && exist.Hash == file.Hash {
 			continue
 		}
 		file.Seek = end
 		file.Flag |= FlagMissing
-		if file.Size > int64(len(zeros)) {
-			zeros = make([]byte, file.Size)
-		}
-		if _, err := pck.Write(zeros[:file.Size]); err != nil {
-			return xray.New(err)
-		}
 		end += file.Size
 		index[path] = file
 		added = true
 	}
-
 	if !added {
 		return nil
+	}
+	if _, err := pck.Seek(end, io.SeekStart); err != nil {
+		return xray.New(err)
 	}
 	dir_offset := end
 	if err := binary.Write(pck, binary.LittleEndian, uint32(len(index))); err != nil {
