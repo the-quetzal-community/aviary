@@ -22,8 +22,8 @@ func (editor *VehicleEditor) Ready() {
 	base := Resource.Load[PackedScene.Is[Node.Instance]]("res://base.obj")
 	instance := base.Instantiate()
 	editor.AsNode().AddChild(instance)
-	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.4))
-	editor.MirrorPreview.AsNode3D().SetScale(Vector3.MulX(editor.MirrorPreview.AsNode3D().Scale(), 0.4))
+	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.3))
+	editor.MirrorPreview.AsNode3D().SetScale(Vector3.MulX(editor.MirrorPreview.AsNode3D().Scale(), 0.3))
 }
 
 func (*VehicleEditor) Name() string { return "vehicle" }
