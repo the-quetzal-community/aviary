@@ -4,7 +4,6 @@
 /graphics/*.so
 /graphics/*.tscn
 /graphics/library.gdextension
-graphics/export_presets.cfg
 graphics/library
 graphics/save.vult
 graphics/save_old.vult
