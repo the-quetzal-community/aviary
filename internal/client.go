@@ -100,19 +100,11 @@ type Client struct {
 
 	saving atomic.Bool
 
-	id         musical.Author
-	record     musical.WorkID
-	space      musical.UsersSpace3D
-	entity_ids map[musical.Author]uint16
-	design_ids map[musical.Author]uint16
+	id     musical.Author
+	record musical.WorkID
+	space  musical.UsersSpace3D
 
-	design_to_entity map[musical.Design][]Node3D.ID
-	entity_to_object map[musical.Entity]Node3D.ID
-	object_to_entity map[Node3D.ID]musical.Entity
-
-	packed_scenes map[musical.Design]PackedScene.ID
-	textures      map[musical.Design]Texture2D.ID
-	loaded        map[string]musical.Design
+	SharedResources
 
 	clients chan musical.Networking
 
@@ -141,19 +133,22 @@ type Client struct {
 
 func NewClient() *Client {
 	var client = &Client{
-		clientReady:      sync.WaitGroup{},
-		entity_to_object: make(map[musical.Entity]Node3D.ID),
-		object_to_entity: make(map[Node3D.ID]musical.Entity),
-		packed_scenes:    make(map[musical.Design]PackedScene.ID),
-		textures:         make(map[musical.Design]Texture2D.ID),
-		loaded:           make(map[string]musical.Design),
-		clients:          make(chan musical.Networking),
-		authors:          make(map[musical.Author]Node3D.ID),
-		design_ids:       make(map[musical.Author]uint16),
-		entity_ids:       make(map[musical.Author]uint16),
-		design_to_entity: make(map[musical.Design][]Node3D.ID),
-		load_last_save:   true,
-		queue:            make(chan func(), 1000),
+		clientReady: sync.WaitGroup{},
+		SharedResources: SharedResources{
+			design_ids:       make(map[musical.Author]uint16),
+			entity_ids:       make(map[musical.Author]uint16),
+			design_to_entity: make(map[musical.Design][]Node3D.ID),
+			entity_to_object: make(map[musical.Entity]Node3D.ID),
+			object_to_entity: make(map[Node3D.ID]musical.Entity),
+			packed_scenes:    make(map[musical.Design]PackedScene.ID),
+			textures:         make(map[musical.Design]Texture2D.ID),
+			loaded:           make(map[string]musical.Design),
+		},
+		clients: make(chan musical.Networking),
+		authors: make(map[musical.Author]Node3D.ID),
+
+		load_last_save: true,
+		queue:          make(chan func(), 1000),
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
@@ -317,6 +312,7 @@ func (world *Client) Ready() {
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.TerrainEditor.texture = make(chan Path.ToResource, 1)
 	world.TerrainEditor.client = world
+	world.VehicleEditor.client = world
 	world.TerrainEditor.tile.client = world
 	world.FoliageEditor.client = world
 	world.MineralEditor.client = world
@@ -473,13 +469,16 @@ func (world musicalImpl) Import(uri musical.Import) error {
 }
 func (world musicalImpl) Change(con musical.Change) error {
 	world.queue <- func() {
+		world.entity_ids[con.Entity.Author] = max(world.entity_ids[con.Entity.Author], con.Entity.Number)
+
 		editor, ok := world.editors[con.Editor]
 		if !ok {
 			editor = world.TerrainEditor
+		} else {
+			editor.Change(con)
+			return
 		}
-		editor.Change(con)
 
-		world.entity_ids[con.Entity.Author] = max(world.entity_ids[con.Entity.Author], con.Entity.Number)
 		container := world.TerrainEditor.AsNode()
 
 		exists, ok := world.entity_to_object[con.Entity].Instance()
@@ -690,6 +689,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()
 				ray_from, ray_to := cam.ProjectRayOrigin(mpos_2d), cam.ProjectPosition(mpos_2d, 1000)
 				var query = PhysicsRayQueryParameters3D.Create(ray_from, ray_to, nil)
+				query.SetCollisionMask(int(^uint32(1 << 1)))
 				var intersect = space_state.IntersectRay(query)
 
 				if world.selection != 0 {
@@ -768,7 +768,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				}
 			}()
 		}
-		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() {
+		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() && world.Editing == Editing.Scenery {
 			node, ok := world.selection.Instance()
 			if ok {
 				if entity, ok := world.object_to_entity[Node3D.ID(node.ID())]; ok {

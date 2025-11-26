@@ -41,18 +41,6 @@ func (editor *SceneryEditor) Input(event InputEvent.Instance) {
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
 			if editor.Preview.Design() != "" {
-				design, ok := editor.client.loaded[editor.Preview.Design()]
-				if !ok {
-					editor.client.design_ids[editor.client.id]++
-					design = musical.Design{
-						Author: editor.client.id,
-						Number: editor.client.design_ids[editor.client.id],
-					}
-					editor.client.space.Import(musical.Import{
-						Design: design,
-						Import: editor.Preview.Design(),
-					})
-				}
 				editor.client.entity_ids[editor.client.id]++
 				editor.client.space.Change(musical.Change{
 					Author: editor.client.id,
@@ -60,7 +48,7 @@ func (editor *SceneryEditor) Input(event InputEvent.Instance) {
 						Author: editor.client.id,
 						Number: editor.client.entity_ids[editor.client.id],
 					},
-					Design: design,
+					Design: editor.client.MusicalDesign(editor.Preview.Design()),
 					Offset: editor.Preview.AsNode3D().Position(),
 					Angles: editor.Preview.AsNode3D().Rotation(),
 					Commit: true,

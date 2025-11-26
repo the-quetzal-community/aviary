@@ -1,7 +1,12 @@
 package internal
 
 import (
+	"slices"
+
 	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
@@ -16,11 +21,25 @@ type VehicleEditor struct {
 	Node3D.Extension[VehicleEditor]
 	musical.Stubbed
 
+	Objects Node3D.Instance
+
 	Preview       PreviewRenderer
 	MirrorPreview PreviewRenderer
+
+	client *Client
+
+	design_to_entity map[musical.Design][]Node3D.ID
+	entity_to_object map[musical.Entity]Node3D.ID
+	entity_to_mirror map[musical.Entity]Node3D.ID
+	object_to_entity map[Node3D.ID]musical.Entity
 }
 
 func (editor *VehicleEditor) Ready() {
+	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
+	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)
+	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
+	editor.entity_to_mirror = make(map[musical.Entity]Node3D.ID)
+
 	base := Resource.Load[PackedScene.Is[Node.Instance]]("res://base.obj")
 	instance := base.Instantiate()
 	editor.AsNode().AddChild(instance)
@@ -56,6 +75,115 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 	default:
 		return TextureTabs
 	}
+}
+
+func (editor *VehicleEditor) Input(event InputEvent.Instance) {
+	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
+		editor.client.entity_ids[editor.client.id]++
+		var mirror Vector3.XYZ
+		if editor.MirrorPreview.Visible() {
+			mirror = Vector3.Sub(editor.MirrorPreview.AsNode3D().Position(), editor.Preview.AsNode3D().Position())
+		}
+		editor.client.space.Change(musical.Change{
+			Author: editor.client.id,
+			Entity: musical.Entity{
+				Author: editor.client.id,
+				Number: editor.client.entity_ids[editor.client.id],
+			},
+			Design: editor.client.MusicalDesign(editor.Preview.Design()),
+			Offset: editor.Preview.AsNode3D().Position(),
+			Angles: editor.Preview.AsNode3D().Rotation(),
+			Editor: "vehicle",
+			Mirror: mirror,
+			Commit: true,
+		})
+		if !Input.IsKeyPressed(Input.KeyShift) {
+			editor.Preview.Remove()
+			editor.MirrorPreview.Remove()
+		}
+	}
+	if event, ok := Object.As[InputEventKey.Instance](event); ok {
+		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() {
+			node, ok := editor.client.selection.Instance()
+			if ok {
+				if entity, ok := editor.object_to_entity[Node3D.ID(node.ID())]; ok {
+					editor.client.space.Change(musical.Change{
+						Author: editor.client.id,
+						Entity: entity,
+						Editor: "vehicle",
+						Remove: true,
+						Commit: true,
+					})
+				}
+			}
+		}
+	}
+}
+
+func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Change) {
+	node, ok := editor.entity_to_mirror[change.Entity].Instance()
+	switch {
+	case !ok && change.Mirror != (Vector3.XYZ{}):
+		scene, ok := editor.client.packed_scenes[change.Design].Instance()
+		if ok {
+			node = Object.To[Node3D.Instance](scene.Instantiate())
+		} else {
+			node = Node3D.New()
+		}
+		switch {
+		case change.Mirror.X != 0:
+			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(-0.3, 0.3, 0.3)))
+		case change.Mirror.Y != 0:
+			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, -0.3, 0.3)))
+		case change.Mirror.Z != 0:
+			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, -0.3)))
+		}
+		editor.entity_to_mirror[change.Entity] = node.ID()
+		editor.Objects.AsNode().AddChild(node.AsNode())
+	case ok && change.Mirror == (Vector3.XYZ{}):
+		node.AsNode().QueueFree()
+		delete(editor.entity_to_mirror, change.Entity)
+		return
+	case !ok && change.Mirror == (Vector3.XYZ{}):
+		return
+	}
+	node.AsNode3D().SetPosition(Vector3.Add(parent.Position(), change.Mirror))
+}
+
+func (editor *VehicleEditor) Change(change musical.Change) error {
+	container := editor.Objects.AsNode()
+	exists, ok := editor.entity_to_object[change.Entity].Instance()
+	if ok {
+		defer editor.remirror(exists, change)
+		if change.Remove {
+			idx := slices.Index(editor.design_to_entity[change.Design], exists.ID())
+			if idx >= 0 {
+				editor.design_to_entity[change.Design] = slices.Delete(editor.design_to_entity[change.Design], idx, idx)
+			}
+			exists.AsNode().QueueFree()
+			return nil
+		}
+		exists.SetPosition(change.Offset)
+		exists.SetRotation(change.Angles)
+		exists.SetScale(Vector3.New(0.3, 0.3, 0.3))
+		return nil
+	}
+	var node Node3D.Instance
+	scene, ok := editor.client.packed_scenes[change.Design].Instance()
+	if ok {
+		node = Object.To[Node3D.Instance](scene.Instantiate())
+	} else {
+		node = Node3D.New()
+	}
+	node.SetPosition(change.Offset)
+	node.SetRotation(change.Angles)
+	node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, 0.3)))
+	editor.entity_to_object[change.Entity] = node.ID()
+	editor.object_to_entity[node.ID()] = change.Entity
+	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
+	editor.remirror(node, change)
+	container.AddChild(node.AsNode())
+	return nil
 }
 
 func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {

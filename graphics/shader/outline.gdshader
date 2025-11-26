@@ -7,6 +7,7 @@ uniform sampler2D texture_albedo : source_color, filter_linear_mipmap, repeat_en
 
 void vertex() {
 	VERTEX *= outline_width;
+	VERTEX.y -= 0.001;
 }
 
 void fragment() {
