@@ -98,6 +98,15 @@ func (ui *CloudControl) Setup() {
 				debug.PrintStack()
 			}
 		}()
+		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community")
+		if err != nil {
+			Engine.Raise(err)
+			return
+		}
+		version = "v" + manager.CurrentlyInstalledVersion()
+		ui.on_process <- func(cc *CloudControl) {
+			ui.JoinCode.Versioning.Version.SetText(version)
+		}
 		user, err := ui.client.signalling.LookupUser(context.Background())
 		if err != nil {
 			Engine.Raise(err)
@@ -121,16 +130,6 @@ func (ui *CloudControl) Setup() {
 			cc.client.saveUserState()
 			cc.set_online_status_indicator(true)
 		}
-		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community")
-		if err != nil {
-			Engine.Raise(err)
-			return
-		}
-		version = "v" + manager.CurrentlyInstalledVersion()
-		ui.on_process <- func(cc *CloudControl) {
-			ui.JoinCode.Versioning.Version.SetText(version)
-		}
-
 		if time.Now().After(user.TogetherUntil) {
 			return
 		}
