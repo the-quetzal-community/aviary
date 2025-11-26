@@ -20,6 +20,7 @@ import (
 
 type FoliageEditor struct {
 	Node3D.Extension[FoliageEditor]
+	musical.Stubbed
 
 	Mesh MeshInstance3D.Instance
 	tree *Tree
@@ -51,10 +52,7 @@ func (fe *FoliageEditor) ExitTree() {
 	Object.Free(fe.tree)
 }
 
-func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) {
-	if brush.Editor != "foliage" {
-		return
-	}
+func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
 	editing := brush.Slider
 	value := float64(brush.Amount)
 	_, prop, _ := strings.Cut(editing, "/")
@@ -70,9 +68,10 @@ func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) {
 			}
 			fe.tree.recalculating = true
 			fe.tree.recalculate()
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 func (fe *FoliageEditor) Tabs(mode Mode) []string {

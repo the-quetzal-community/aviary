@@ -1,9 +1,13 @@
 package internal
 
-import "graphics.gd/classdb/Node3D"
+import (
+	"graphics.gd/classdb/Node3D"
+	"the.quetzal.community/aviary/internal/musical"
+)
 
 type CritterEditor struct {
 	Node3D.Extension[CritterEditor]
+	musical.Stubbed
 }
 
 func (*CritterEditor) Name() string { return "critter" }

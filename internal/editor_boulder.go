@@ -19,6 +19,7 @@ import (
 
 type BoulderEditor struct {
 	Node3D.Extension[BoulderEditor]
+	musical.Stubbed
 
 	Mesh MeshInstance3D.Instance
 	rock *Rock
@@ -50,10 +51,7 @@ func (fe *BoulderEditor) ExitTree() {
 	Object.Free(fe.rock)
 }
 
-func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) {
-	if brush.Editor != "boulder" && brush.Editor != "mineral" {
-		return
-	}
+func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
 	editing := brush.Slider
 	value := float64(brush.Amount)
 	switch editing {
@@ -61,17 +59,17 @@ func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) {
 		scale := fe.Mesh.AsNode3D().Scale()
 		scale.X = Float.X(value)
 		fe.Mesh.AsNode3D().SetScale(scale)
-		return
+		return nil
 	case "editing/height":
 		scale := fe.Mesh.AsNode3D().Scale()
 		scale.Y = Float.X(value)
 		fe.Mesh.AsNode3D().SetScale(scale)
-		return
+		return nil
 	case "editing/depth":
 		scale := fe.Mesh.AsNode3D().Scale()
 		scale.Z = Float.X(value)
 		fe.Mesh.AsNode3D().SetScale(scale)
-		return
+		return nil
 	}
 	_, prop, _ := strings.Cut(editing, "/")
 	rtype := reflect.TypeFor[Rock]()
@@ -86,9 +84,10 @@ func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) {
 			}
 			fe.rock.generating = true
 			fe.rock.generate()
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 func (fe *BoulderEditor) Tabs(mode Mode) []string {

@@ -83,6 +83,7 @@ type Client struct {
 	mouseOver chan Vector3.XYZ
 
 	Editing Subject
+	editors map[string]Editor
 
 	VehicleEditor *VehicleEditor
 	ShelterEditor *ShelterEditor
@@ -270,8 +271,16 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
+	world.editors = map[string]Editor{
+		"terrain": world.TerrainEditor,
+		"scenery": world.SceneryEditor,
+		"shelter": world.ShelterEditor,
+		"foliage": world.FoliageEditor,
+		"mineral": world.MineralEditor,
+		"boulder": world.MineralEditor,
+		"vehicle": world.VehicleEditor,
+	}
 	defer world.StartEditing(UserState.Editor)
-
 	defer world.clientReady.Done()
 
 	if !world.joining && world.load_last_save && UserState.WorkID != (musical.WorkID{}) {
@@ -408,9 +417,11 @@ func (world musicalImpl) Member(req musical.Member) error {
 func (world musicalImpl) Upload(file musical.Upload) error { return nil }
 func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 	world.queue <- func() {
-		world.TerrainEditor.Sculpt(brush)
-		world.FoliageEditor.Sculpt(brush)
-		world.MineralEditor.Sculpt(brush)
+		editor, ok := world.editors[brush.Editor]
+		if !ok {
+			editor = world.TerrainEditor
+		}
+		editor.Sculpt(brush)
 		world.ui.Editor.Sculpt(brush)
 	}
 	return nil
@@ -462,6 +473,12 @@ func (world musicalImpl) Import(uri musical.Import) error {
 }
 func (world musicalImpl) Change(con musical.Change) error {
 	world.queue <- func() {
+		editor, ok := world.editors[con.Editor]
+		if !ok {
+			editor = world.TerrainEditor
+		}
+		editor.Change(con)
+
 		world.entity_ids[con.Entity.Author] = max(world.entity_ids[con.Entity.Author], con.Entity.Number)
 		container := world.TerrainEditor.AsNode()
 
@@ -508,6 +525,12 @@ func (world musicalImpl) Change(con musical.Change) error {
 
 func (world musicalImpl) Action(action musical.Action) error {
 	world.queue <- func() {
+		editor, ok := world.editors[action.Editor]
+		if !ok {
+			editor = world.TerrainEditor
+		}
+		editor.Action(action)
+
 		object, ok := world.entity_to_object[action.Entity].Instance()
 		if ok {
 			if !object.AsNode().HasNode("ActionRenderer") {
@@ -526,6 +549,12 @@ func (world musicalImpl) Action(action musical.Action) error {
 
 func (world musicalImpl) LookAt(view musical.LookAt) error {
 	world.queue <- func() {
+		editor, ok := world.editors[view.Editor]
+		if !ok {
+			editor = world.TerrainEditor
+		}
+		editor.LookAt(view)
+
 		if world.joining && view.Author == 0 {
 			world.time.Follow(view.Timing)
 		}

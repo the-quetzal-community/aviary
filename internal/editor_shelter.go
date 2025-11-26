@@ -1,9 +1,13 @@
 package internal
 
-import "graphics.gd/classdb/Node3D"
+import (
+	"graphics.gd/classdb/Node3D"
+	"the.quetzal.community/aviary/internal/musical"
+)
 
 type ShelterEditor struct {
 	Node3D.Extension[ShelterEditor]
+	musical.Stubbed
 }
 
 func (*ShelterEditor) Name() string { return "shelter" }

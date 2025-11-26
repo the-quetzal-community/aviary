@@ -36,6 +36,7 @@ import (
 // TerrainEditor is responsible for rendering and managing the terrain in the 3D environment.
 type TerrainEditor struct {
 	Node3D.Extension[TerrainEditor] `gd:"TerrainEditor"`
+	musical.Stubbed
 
 	tile *TerrainTile
 
@@ -220,15 +221,16 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 	}
 }
 
-func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) {
+func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	if brush.Editor != "" {
-		return
+		return nil
 	}
 	if brush.Author == vr.client.id {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 	}
 	vr.tile.Sculpt(brush)
+	return nil
 }
 
 type terrainBrushEvent struct {

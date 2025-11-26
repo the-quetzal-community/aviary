@@ -15,6 +15,7 @@ import (
 
 type SceneryEditor struct {
 	Node3D.Extension[SceneryEditor]
+	musical.Stubbed
 
 	Preview PreviewRenderer
 

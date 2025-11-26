@@ -7,6 +7,7 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Enum"
 	"graphics.gd/variant/Vector3"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 type Subject Enum.Int[struct {
@@ -81,6 +82,8 @@ func (world *Client) StartEditing(subject Subject) {
 
 type Editor interface {
 	Node3D.Any
+
+	musical.UsersSpace3D
 
 	Name() string
 	Tabs(mode Mode) []string

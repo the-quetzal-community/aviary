@@ -9,10 +9,12 @@ import (
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector3"
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 type VehicleEditor struct {
 	Node3D.Extension[VehicleEditor]
+	musical.Stubbed
 
 	Preview       PreviewRenderer
 	MirrorPreview PreviewRenderer
