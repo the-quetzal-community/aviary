@@ -230,9 +230,12 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					elements.AsNode().AddChild(ImageButton.AsNode())
 				}
 			}
-			texture := Resource.Load[Texture2D.Instance]("res://ui/" + tab + ".svg")
 			gridflow.Update()
-			ui.AsTabContainer().SetTabIcon(index, texture)
+			if FileAccess.FileExists("res://ui/" + tab + ".svg.import") {
+				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
+			} else {
+				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+			}
 			ui.AsTabContainer().SetTabTitle(index, "")
 			index++
 		}

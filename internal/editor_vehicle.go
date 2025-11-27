@@ -45,6 +45,9 @@ func (editor *VehicleEditor) Ready() {
 	editor.AsNode().AddChild(instance)
 	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.3))
 	editor.MirrorPreview.AsNode3D().SetScale(Vector3.MulX(editor.MirrorPreview.AsNode3D().Scale(), 0.3))
+	scale := editor.MirrorPreview.AsNode3D().Scale()
+	scale.X = -scale.X
+	editor.MirrorPreview.SetScale(scale)
 }
 
 func (*VehicleEditor) Name() string { return "vehicle" }
@@ -56,21 +59,22 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 			"polygon",
 			"chassis",
 			"cockpit",
-			"spinner",
 			"spoiler",
 			"sailing",
 			"gliding",
+			"sliding",
+			"details",
 		}
 	case ModeDressing:
 		return []string{
-			"citizen",
-			"critter",
 			"cannons",
 			"aerials",
 			"mirrors",
 			"exhaust",
 			"engines",
 			"torches",
+			"spinner",
+			"walkers",
 		}
 	default:
 		return TextureTabs
@@ -215,7 +219,7 @@ func (*VehicleEditor) ChangeEditor() {}
 
 func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 	switch mode {
-	case ModeGeometry:
+	case ModeGeometry, ModeDressing:
 		if editor.Preview.AsNode().GetChildCount() > 0 {
 			Node.Instance(editor.Preview.AsNode().GetChild(0)).QueueFree()
 		}
@@ -224,9 +228,6 @@ func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 		}
 		editor.Preview.SetDesign(design)
 		editor.MirrorPreview.SetDesign(design)
-		scale := editor.MirrorPreview.AsNode3D().Scale()
-		scale.X = -scale.X
-		editor.MirrorPreview.SetScale(scale)
 	}
 }
 
