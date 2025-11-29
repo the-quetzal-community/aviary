@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/ImageTexture"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextEdit"
@@ -92,6 +94,10 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		if _, ok := fl.processed[string(save)+".png"]; ok {
 			continue
 		}
+		stat, err := os.Stat(OS.GetUserDataDir() + "/snaps/" + string(save) + ".png")
+		if err == nil && stat.Size() > 0 {
+			continue
+		}
 		snap, err := fl.client.signalling.LookupSnap(ctx, save)
 		if err != nil {
 			Engine.Raise(err)
@@ -105,8 +111,8 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		Callable.Defer(Callable.New(func() {
 			var image = Image.New()
 			image.LoadPngFromBuffer(buf)
+			image.SavePng("user://snaps/" + string(save) + ".png")
 			mapButton := Object.Leak(TextureButton.New())
-			defer Object.Free(mapButton)
 			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(image).AsTexture2D())
 			mapButton.AsBaseButton().OnPressed(func() {
 				record, err := base64.RawURLEncoding.DecodeString(string(save))
@@ -123,7 +129,14 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 			mapButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
 			mapButton.SetIgnoreTextureSize(true)
 			mapButton.SetStretchMode(TextureButton.StretchKeepAspect)
-			fl.Maps.AsNode().AddChild(mapButton.AsNode())
+			select {
+			case fl.on_process <- func() {
+				fl.Maps.AsNode().AddChild(mapButton.AsNode())
+				Object.Free(mapButton)
+			}:
+			default:
+				Object.Free(mapButton)
+			}
 		}))
 	}
 }
