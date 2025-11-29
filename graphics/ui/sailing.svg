@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="100"
+   version="1.1"
+   viewBox="0 0 96 75"
+   id="svg1"
+   sodipodi:docname="sailing.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="pt"
+     inkscape:zoom="1.4760854"
+     inkscape:cx="175.4641"
+     inkscape:cy="183.25498"
+     inkscape:window-width="1920"
+     inkscape:window-height="1043"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <path
+     d="M 77.584694,57.583384 55.433865,59.314467 V 6.9809529 c 0,-1.3085814 -1.989671,-1.3085814 -1.989671,0 V 59.469189 l -35.772695,2.793723 4.379782,4.05817 H 72.499266 Z M 35.435624,36.778589 C 40.975781,31.916359 45.765365,26.123942 49.092466,19.439472 V 58.677839 L 12.367245,50.656071 c 7.933644,-3.109074 16.100035,-7.756722 23.069051,-13.87681 z m 37.122766,-6.78268 c 4.105469,6.192876 6.861385,12.723155 9.638897,21.063774 L 60.28863,57.5963 c 4.329329,-13.987806 2.516236,-29.838944 -3.326635,-44.825692 7.009377,6.227584 11.865486,11.600448 15.595527,17.226113 z"
+     fill="#4c4c4c"
+     fill-rule="evenodd"
+     id="path1"
+     style="stroke-width:0.0672685" />
+</svg>

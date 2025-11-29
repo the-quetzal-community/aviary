@@ -140,6 +140,7 @@ func NewClient() *Client {
 			design_to_entity: make(map[musical.Design][]Node3D.ID),
 			entity_to_object: make(map[musical.Entity]Node3D.ID),
 			object_to_entity: make(map[Node3D.ID]musical.Entity),
+			design_to_string: make(map[musical.Design]string),
 			packed_scenes:    make(map[musical.Design]PackedScene.ID),
 			textures:         make(map[musical.Design]Texture2D.ID),
 			loaded:           make(map[string]musical.Design),
@@ -436,6 +437,7 @@ func (world musicalImpl) Import(uri musical.Import) error {
 			world.textures[uri.Design] = Object.To[Texture2D.Instance](res).ID()
 		}
 		world.loaded[uri.Import] = uri.Design
+		world.design_to_string[uri.Design] = uri.Import
 
 		redesigns := world.design_to_entity[uri.Design]
 		for i, id := range redesigns {

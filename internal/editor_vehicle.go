@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"path"
 	"slices"
 
 	"graphics.gd/classdb/Input"
@@ -11,8 +12,12 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/variant/Angle"
+	"graphics.gd/variant/Basis"
+	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
+	"graphics.gd/variant/Transform3D"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/internal/musical"
 )
@@ -22,6 +27,7 @@ type VehicleEditor struct {
 	musical.Stubbed
 
 	Objects Node3D.Instance
+	Spinner Node3D.Instance
 
 	Preview       PreviewRenderer
 	MirrorPreview PreviewRenderer
@@ -63,7 +69,7 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 			"sailing",
 			"gliding",
 			"sliding",
-			"details",
+			"rockets",
 		}
 	case ModeDressing:
 		return []string{
@@ -71,7 +77,7 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 			"aerials",
 			"mirrors",
 			"exhaust",
-			"engines",
+			"details",
 			"torches",
 			"spinner",
 			"walkers",
@@ -143,7 +149,11 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, -0.3)))
 		}
 		editor.entity_to_mirror[change.Entity] = node.ID()
-		editor.Objects.AsNode().AddChild(node.AsNode())
+		if path.Base(path.Dir(editor.client.design_to_string[change.Design])) == "spinner" {
+			editor.Spinner.AsNode().AddChild(node.AsNode())
+		} else {
+			editor.Objects.AsNode().AddChild(node.AsNode())
+		}
 	case ok && change.Mirror == (Vector3.XYZ{}):
 		node.AsNode().QueueFree()
 		delete(editor.entity_to_mirror, change.Entity)
@@ -152,6 +162,7 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 		return
 	}
 	node.AsNode3D().SetPosition(Vector3.Add(parent.Position(), change.Mirror))
+	node.AsNode3D().SetRotation(Euler.Radians{X: change.Angles.X, Y: -change.Angles.Y, Z: -change.Angles.Z})
 }
 
 func (editor *VehicleEditor) Change(change musical.Change) error {
@@ -186,12 +197,27 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 	editor.object_to_entity[node.ID()] = change.Entity
 	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
 	editor.remirror(node, change)
-	container.AddChild(node.AsNode())
+	if path.Base(path.Dir(editor.client.design_to_string[change.Design])) == "spinner" {
+		editor.Spinner.AsNode().AddChild(node.AsNode())
+	} else {
+		container.AddChild(node.AsNode())
+	}
 	return nil
+}
+
+func (editor *VehicleEditor) Process(delta Float.X) {
+	if editor.Preview.Design() != "" {
+		return
+	}
+	for i := range editor.Spinner.AsNode().GetChildCount() {
+		child := Object.To[Node3D.Instance](editor.Spinner.AsNode().GetChild(i))
+		child.RotateObjectLocal(Vector3.New(0, 1, 0), 5*Angle.Radians(delta))
+	}
 }
 
 func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 	if editor.Preview.Design() != "" {
+
 		if Input.IsMouseButtonPressed(Input.MouseButtonRight) {
 			editor.Preview.Remove()
 			editor.MirrorPreview.Remove()
@@ -210,6 +236,36 @@ func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 			} else {
 				editor.MirrorPreview.AsNode3D().SetVisible(false)
 			}
+			if editor.client.ui.mode == ModeDressing {
+				scale := editor.Preview.AsNode3D().Scale() // Capture existing scale
+
+				up := Vector3.Normalized(hover.Normal) // Ensure unit length
+
+				// Original preview basis construction
+				forward := Vector3.XYZ{0, 0, 1} // Adjust based on your needs
+				if Float.Abs(Vector3.Dot(up, forward)) > 0.99 {
+					forward = Vector3.XYZ{1, 0, 0}
+				}
+				right := Vector3.Normalized(Vector3.Cross(up, forward))
+				new_forward := Vector3.Normalized(Vector3.Cross(right, up))
+				basis := Basis.XYZ{right, up, new_forward}
+				editor.Preview.AsNode3D().SetGlobalTransform(Transform3D.BasisOrigin{basis, editor.Preview.AsNode3D().GlobalPosition()})
+
+				// Mirrored preview basis construction
+				up_mirror := Vector3.Normalized(Vector3.XYZ{-up.X, up.Y, up.Z})
+				forward_mirror := Vector3.XYZ{-forward.X, forward.Y, forward.Z}
+				if Float.Abs(Vector3.Dot(up_mirror, forward_mirror)) > 0.99 {
+					forward_mirror = Vector3.XYZ{-1, 0, 0} // Mirrored arbitrary fallback
+				}
+				right_mirror := Vector3.Normalized(Vector3.Cross(up_mirror, forward_mirror))
+				new_forward_mirror := Vector3.Normalized(Vector3.Cross(right_mirror, up_mirror))
+				basis_mirror := Basis.XYZ{right_mirror, up_mirror, new_forward_mirror}
+				editor.MirrorPreview.AsNode3D().SetGlobalTransform(Transform3D.BasisOrigin{basis_mirror, editor.MirrorPreview.AsNode3D().GlobalPosition()})
+
+				editor.Preview.AsNode3D().SetScale(scale)       // Restore scale
+				scale.X = -scale.X                              // Mirror scale on X axis
+				editor.MirrorPreview.AsNode3D().SetScale(scale) // Restore scale
+			}
 		}
 	}
 }
@@ -227,6 +283,7 @@ func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 			Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
 		}
 		editor.Preview.SetDesign(design)
+		editor.Preview.SetRotation(Euler.Radians{})
 		editor.MirrorPreview.SetDesign(design)
 	}
 }

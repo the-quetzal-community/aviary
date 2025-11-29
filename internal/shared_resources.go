@@ -17,9 +17,10 @@ type SharedResources struct {
 	entity_to_object map[musical.Entity]Node3D.ID
 	object_to_entity map[Node3D.ID]musical.Entity
 
-	packed_scenes map[musical.Design]PackedScene.ID
-	textures      map[musical.Design]Texture2D.ID
-	loaded        map[string]musical.Design
+	packed_scenes    map[musical.Design]PackedScene.ID
+	textures         map[musical.Design]Texture2D.ID
+	design_to_string map[musical.Design]string
+	loaded           map[string]musical.Design
 }
 
 func (client *Client) MusicalDesign(resource string) musical.Design {
