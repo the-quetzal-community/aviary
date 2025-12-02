@@ -15,6 +15,7 @@ type Subject Enum.Int[struct {
 	Terrain Subject
 	Foliage Subject
 	Mineral Subject
+	Shelter Subject
 	Vehicle Subject
 }]
 
@@ -38,6 +39,7 @@ func (world *Client) StartEditing(subject Subject) {
 		world.TerrainEditor,
 		world.FoliageEditor,
 		world.MineralEditor,
+		world.ShelterEditor,
 		world.VehicleEditor,
 	}
 	for _, editor := range editors {
@@ -66,6 +68,9 @@ func (world *Client) StartEditing(subject Subject) {
 	case Editing.Mineral:
 		editor = world.MineralEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/mineral.svg"))
+	case Editing.Shelter:
+		editor = world.ShelterEditor
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/shelter.svg"))
 	case Editing.Vehicle:
 		editor = world.VehicleEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/vehicle.svg"))

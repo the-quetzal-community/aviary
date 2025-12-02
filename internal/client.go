@@ -29,12 +29,14 @@ import (
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/InputEventMouseMotion"
+	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
 	"graphics.gd/classdb/PropertyTweener"
+	"graphics.gd/classdb/QuadMesh"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
@@ -47,6 +49,7 @@ import (
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
+	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
 	"runtime.link/api/rest"
@@ -76,7 +79,11 @@ type Client struct {
 		Lens struct {
 			Node3D.Instance
 
-			Camera Camera3D.Instance
+			Camera struct {
+				Camera3D.Instance
+
+				Cover MeshInstance3D.Instance // QuadMesh cover.
+			}
 		}
 	}
 
@@ -318,6 +325,7 @@ func (world *Client) Ready() {
 	world.FoliageEditor.client = world
 	world.MineralEditor.client = world
 	world.SceneryEditor.client = world
+	world.ShelterEditor.client = world
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
@@ -331,9 +339,12 @@ func (world *Client) Ready() {
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
 	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
 
-	world.Light.AsNode3D().SetRotation(Euler.Radians{X: Angle.InRadians(-17), Y: Angle.InRadians(30), Z: 0})
+	world.Light.AsNode3D().SetRotation(Euler.Radians{X: Angle.InRadians(-17), Y: Angle.InRadians(30), Z: Angle.InRadians(11)})
 	world.Light.AsLight3D().SetLightEnergy(1)
 	world.Light.AsLight3D().SetShadowEnabled(true)
+	world.Light.AsLight3D().SetShadowBias(0.017)
+	world.Light.AsLight3D().SetShadowNormalBias(2.0)
+	world.Light.AsLight3D().SetShadowBlur(1.0)
 	world.Light.SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal)
 
 	env := Environment.New()
@@ -348,6 +359,12 @@ func (world *Client) Ready() {
 
 	world.AsNode().AddChild(worldenv.AsNode())
 	RenderingServer.SetDebugGenerateWireframes(true)
+
+	cover := QuadMesh.New()
+	cover.AsPlaneMesh().SetSize(Vector2.New(2, 2))
+	world.FocalPoint.Lens.Camera.Cover.AsNode3D().RotateObjectLocal(Vector3.New(0, 1, 0), Angle.Pi)
+	world.FocalPoint.Lens.Camera.Cover.AsGeometryInstance3D().SetExtraCullMargin(16384)
+	world.FocalPoint.Lens.Camera.Cover.SetMesh(cover.AsMesh())
 
 	fmt.Println("Client setup complete")
 }

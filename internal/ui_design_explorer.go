@@ -189,7 +189,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			for resource := range resources.Iter() {
 				resource = strings.TrimSuffix(resource, ".import")
-				if !String.HasSuffix(resource, ".png") {
+				if !String.HasSuffix(resource, ".png") || String.HasSuffix(resource, "_cut.glb.png") {
 					continue
 				}
 				var path = preview_path + "/" + tab + "/" + resource

@@ -77,3 +77,5 @@ texture={
 [rendering]
 
 textures/vram_compression/import_etc2_astc=true
+lights_and_shadows/directional_shadow/size=8192
+lights_and_shadows/directional_shadow/16_bits=false
