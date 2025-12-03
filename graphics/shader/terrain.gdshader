@@ -27,6 +27,8 @@ uniform bool selection_active;
 
 uniform sampler2D paint_texture : source_color, filter_linear_mipmap, repeat_enable;
 
+uniform float blend_sharpness : hint_range(1.0, 10.0, 0.1) = 4.0;
+
 varying vec3 world;
 varying flat vec4 texture;
 varying vec4 weights;
@@ -55,6 +57,9 @@ bool in_brush(vec2 uv) {
 void fragment() {
     vec2 base_uv = UV;
 
+    vec4 blended = pow(weights, vec4(blend_sharpness));
+    blended /= (blended.x + blended.y + blended.z + blended.w);
+
     // texture has top-left, top-right, bottom-left, bottom-right
     // samples of the terrain around the vertex, we will interpolate
     // between these samples to get the final albedo
@@ -63,7 +68,7 @@ void fragment() {
     vec4 colorBL = texture(texture_albedo, vec3(base_uv, texture.b));
     vec4 colorBR = texture(texture_albedo, vec3(base_uv, texture.a));
 
-    vec4 albedo_tex = colorTL * weights.x + colorTR * weights.y + colorBL * weights.z + colorBR * weights.w;
+    vec4 albedo_tex = colorTL * blended.x + colorTR * blended.y + colorBL * blended.z + colorBR * blended.w;
 
     // Sample normals from the four layers, unpack to [-1,1], interpolate, and renormalize
     vec3 normalTL = texture(texture_normal, vec3(base_uv, texture.r)).rgb * 2.0 - 1.0;
@@ -71,7 +76,7 @@ void fragment() {
     vec3 normalBL = texture(texture_normal, vec3(base_uv, texture.b)).rgb * 2.0 - 1.0;
     vec3 normalBR = texture(texture_normal, vec3(base_uv, texture.a)).rgb * 2.0 - 1.0;
 
-    vec3 normal_tex = normalize(normalTL * weights.x + normalTR * weights.y + normalBL * weights.z + normalBR * weights.w);
+    vec3 normal_tex = normalize(normalTL * blended.x + normalTR * blended.y + normalBL * blended.z + normalBR * blended.w);
     normal_tex.y = normal_tex.y; // Flip Y for Godot's coordinate system
     NORMAL_MAP = normal_tex;
 
