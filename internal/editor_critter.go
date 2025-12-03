@@ -10,6 +10,9 @@ type CritterEditor struct {
 	musical.Stubbed
 }
 
+func (*CritterEditor) Views() []string          { return nil }
+func (*CritterEditor) SwitchToView(view string) {}
+
 func (*CritterEditor) Name() string { return "critter" }
 func (*CritterEditor) Tabs(mode Mode) []string {
 	switch mode {

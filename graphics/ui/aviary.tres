@@ -1,8 +1,20 @@
-[gd_resource type="Theme" load_steps=21 format=3 uid="uid://dtppp6q43eiuc"]
+[gd_resource type="Theme" load_steps=27 format=3 uid="uid://dtppp6q43eiuc"]
 
 [ext_resource type="StyleBox" uid="uid://cu6sfwokbnv21" path="res://ui/aviary_stylebox_secondary.tres" id="1_a2dju"]
 [ext_resource type="StyleBox" uid="uid://h4nwukf2mpep" path="res://ui/aviary_stylebox.tres" id="1_qhiib"]
 [ext_resource type="Texture2D" uid="uid://d4f4piljq04sb" path="res://ui/slider.png" id="1_yj2rr"]
+
+[sub_resource type="SystemFont" id="SystemFont_yj2rr"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_y1or3"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_g6dpk"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_x8gey"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_f8b4l"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ca6sl"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_4p41l"]
 
@@ -43,7 +55,14 @@ bg_color = Color(1, 1, 1, 0.431373)
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ydl51"]
 
 [resource]
-Button/font_sizes/font_size = 32
+Button/colors/font_color = Color(1, 1, 1, 1)
+Button/font_sizes/font_size = 72
+Button/fonts/font = SubResource("SystemFont_yj2rr")
+Button/styles/disabled = SubResource("StyleBoxEmpty_y1or3")
+Button/styles/focus = SubResource("StyleBoxEmpty_g6dpk")
+Button/styles/hover = SubResource("StyleBoxEmpty_x8gey")
+Button/styles/normal = SubResource("StyleBoxEmpty_f8b4l")
+Button/styles/pressed = SubResource("StyleBoxEmpty_ca6sl")
 HBoxContainer/constants/separation = 20
 HSlider/icons/grabber = ExtResource("1_yj2rr")
 HSlider/icons/grabber_disabled = ExtResource("1_yj2rr")

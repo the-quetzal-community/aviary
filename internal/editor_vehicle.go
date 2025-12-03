@@ -40,6 +40,9 @@ type VehicleEditor struct {
 	object_to_entity map[Node3D.ID]musical.Entity
 }
 
+func (*VehicleEditor) Views() []string          { return nil }
+func (*VehicleEditor) SwitchToView(view string) {}
+
 func (editor *VehicleEditor) Ready() {
 	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
 	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)

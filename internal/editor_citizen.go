@@ -10,6 +10,9 @@ type CitizenEditor struct {
 	musical.Stubbed
 }
 
+func (*CitizenEditor) Views() []string          { return nil }
+func (*CitizenEditor) SwitchToView(view string) {}
+
 func (*CitizenEditor) Name() string { return "citizen" }
 func (*CitizenEditor) Tabs(mode Mode) []string {
 	switch mode {

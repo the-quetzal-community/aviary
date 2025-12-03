@@ -3,6 +3,8 @@ package internal
 import (
 	"path"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"graphics.gd/classdb/Input"
@@ -33,6 +35,9 @@ type ShelterEditor struct {
 	Preview PreviewRenderer
 
 	current_level Plane.NormalD
+	levels        int
+
+	grid_shader ShaderMaterial.ID
 
 	client *Client
 
@@ -53,6 +58,45 @@ func (editor *ShelterEditor) Ready() {
 
 	editor.current_level = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
 	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.2))
+}
+
+func (editor *ShelterEditor) Views() []string {
+	var views = []string{
+		"explore",
+		"unicode/G",
+	}
+	for i := 1; i <= editor.levels; i++ {
+		views = append(views, "unicode/"+strconv.Itoa(i))
+	}
+	return append(views, "unicode/+")
+}
+
+func (editor *ShelterEditor) SwitchToView(view string) {
+	switch view {
+	case "explore":
+	case "unicode/G":
+		shader, _ := editor.grid_shader.Instance()
+		shader.SetShaderParameter("center_offset", Vector3.New(0, 0, 0))
+		editor.current_level = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
+		pos := editor.client.FocalPoint.Position()
+		pos.Y = 0
+		editor.client.FocalPoint.SetPosition(pos)
+	case "unicode/+":
+		editor.levels++
+		editor.client.ui.ViewSelector.Refresh(editor.levels+1, editor.Views())
+	default:
+		if level_str, ok := strings.CutPrefix(view, "unicode/"); ok {
+			level, err := strconv.Atoi(level_str)
+			if err == nil {
+				editor.current_level = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}, D: Float.X(level)}
+				shader, _ := editor.grid_shader.Instance()
+				shader.SetShaderParameter("center_offset", Vector3.New(0, float64(level), 0))
+				pos := editor.client.FocalPoint.Position()
+				pos.Y = Float.X(level)
+				editor.client.FocalPoint.SetPosition(pos)
+			}
+		}
+	}
 }
 
 func (*ShelterEditor) Name() string { return "shelter" }
@@ -90,6 +134,7 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 func (editor *ShelterEditor) EnableEditor() {
 	shader := ShaderMaterial.New()
 	shader.SetShader(Resource.Load[Shader.Instance]("res://shader/grid.gdshader"))
+	editor.grid_shader = shader.ID()
 	editor.client.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, shader.AsMaterial())
 }
 func (editor *ShelterEditor) ChangeEditor() {

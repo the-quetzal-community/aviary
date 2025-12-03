@@ -30,6 +30,9 @@ type FoliageEditor struct {
 	last_slider_sculpt time.Time
 }
 
+func (*FoliageEditor) Views() []string          { return nil }
+func (*FoliageEditor) SwitchToView(view string) {}
+
 func (fe *FoliageEditor) Name() string  { return "foliage" }
 func (fe *FoliageEditor) EnableEditor() {}
 func (fe *FoliageEditor) ChangeEditor() {}

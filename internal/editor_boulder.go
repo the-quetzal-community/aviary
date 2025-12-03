@@ -37,6 +37,9 @@ func (fe *BoulderEditor) ChangeEditor() {
 
 }
 
+func (fe *BoulderEditor) Views() []string       { return nil }
+func (*BoulderEditor) SwitchToView(view string) {}
+
 func (fe *BoulderEditor) Ready() {
 	fe.rock = Object.Leak(NewRock())
 	fe.Mesh.SetMesh(fe.rock.AsMesh())

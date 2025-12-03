@@ -81,6 +81,9 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.PaintActive = false
 }
 
+func (*TerrainEditor) Views() []string          { return nil }
+func (*TerrainEditor) SwitchToView(view string) {}
+
 func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:

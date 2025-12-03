@@ -43,8 +43,8 @@ type UI struct {
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
 	ModeDressing TextureButton.Instance `gd:"%ModeDressing"`
 
-	CloudControl  *CloudControl
-	ThemeSelector *ThemeSelector
+	CloudControl *CloudControl
+	ViewSelector *ViewSelector
 
 	Cloudy *FlightPlanner
 
@@ -152,7 +152,6 @@ func (ui *UI) Ready() {
 		ui.themes = append(ui.themes, name)
 		count++
 	}
-	ui.ThemeSelector.LoadThemes(ui.themes)
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer)
@@ -171,6 +170,9 @@ func (ui *UI) Ready() {
 	})
 	ui.scaling()
 	ui.AsControl().OnResized(ui.scaling)
+	ui.ViewSelector.ViewSelected.Call(func(view string) {
+		ui.Editor.editor.SwitchToView(view)
+	})
 }
 
 func (ui *UI) scaling() {
@@ -205,16 +207,16 @@ func (ui *UI) scaling() {
 
 	// scale root UI elements based on display size
 	ui.scale(ui.CloudControl.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	ui.scale(ui.ThemeSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	ui.scale(ui.ViewSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 
-	// ThemeSelector needs to be centered to the top center
-	theme_pos := ui.ThemeSelector.AsControl().Position()
-	theme_scale := ui.ThemeSelector.AsControl().Scale()
-	theme_size := ui.ThemeSelector.AsControl().Size()
-	theme_pos.X = (Float.X(display.X)/2 - (theme_size.X * theme_scale.X * Float.X(len(ui.themes))))
-	ui.ThemeSelector.AsControl().SetPosition(theme_pos)
+	// ViewSelector needs to be centered to the top center
+	theme_pos := ui.ViewSelector.AsControl().Position()
+	theme_scale := ui.ViewSelector.AsControl().Scale()
+	theme_size := ui.ViewSelector.AsControl().Size()
+	theme_pos.X = (Float.X(display.X)/2 - (theme_size.X * theme_scale.X * Float.X(len(ui.ViewSelector.views))))
+	ui.ViewSelector.AsControl().SetPosition(theme_pos)
 
 	// Update last display for next resize
 	ui.lastDisplay = display

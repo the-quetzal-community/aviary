@@ -22,6 +22,9 @@ type SceneryEditor struct {
 	client *Client
 }
 
+func (*SceneryEditor) Views() []string          { return nil }
+func (*SceneryEditor) SwitchToView(view string) {}
+
 func (editor *SceneryEditor) Ready() {
 	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.1))
 }

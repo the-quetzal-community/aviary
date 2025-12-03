@@ -50,7 +50,7 @@ func main() {
 	classdb.Register[internal.ShelterEditor]()
 
 	classdb.Register[internal.GridFlowContainer]()
-	classdb.Register[internal.ThemeSelector]()
+	classdb.Register[internal.ViewSelector]()
 	classdb.Register[internal.CloudControl]()
 	classdb.Register[internal.LibraryDownloader]()
 	classdb.Register[internal.FlightPlanner]()

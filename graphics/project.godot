@@ -22,6 +22,10 @@ config/icon="uid://c0x02yjix1yk"
 
 window/stretch/aspect="ignore"
 
+[gui]
+
+theme/custom="uid://dtppp6q43eiuc"
+
 [importer_defaults]
 
 scene={

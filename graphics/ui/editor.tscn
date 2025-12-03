@@ -168,7 +168,7 @@ visible = false
 layout_mode = 2
 texture_normal = ExtResource("3_c55ig")
 
-[node name="ThemeSelector" type="ThemeSelector" parent="."]
+[node name="ViewSelector" type="ViewSelector" parent="."]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -179,7 +179,7 @@ offset_bottom = 40.0
 grow_horizontal = 2
 pivot_offset = Vector2(20, 0.09)
 
-[node name="Pointer" type="TextureRect" parent="ThemeSelector"]
+[node name="Pointer" type="TextureRect" parent="ViewSelector"]
 layout_mode = 0
 offset_left = 27.0004
 offset_top = -0.396642
@@ -189,12 +189,12 @@ grow_horizontal = 2
 texture = ExtResource("10_tj0f7")
 expand_mode = 1
 
-[node name="Themes" type="HBoxContainer" parent="ThemeSelector"]
+[node name="Views" type="HBoxContainer" parent="ViewSelector"]
 layout_mode = 0
-offset_left = -0.00683594
-offset_top = 11.0
-offset_right = 131.993
-offset_bottom = 75.0
+offset_left = -0.0087890625
+offset_top = 13.999997
+offset_right = -0.0087890625
+offset_bottom = 13.999997
 
 [node name="CloudControl" type="CloudControl" parent="."]
 layout_mode = 0

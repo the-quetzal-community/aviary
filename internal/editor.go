@@ -80,6 +80,7 @@ func (world *Client) StartEditing(subject Subject) {
 	world.Editing = subject
 	world.ui.Editor.editor = editor
 	editor.EnableEditor()
+	world.ui.ViewSelector.Refresh(0, editor.Views())
 	world.ui.Editor.Refresh(subject, "", world.ui.mode)
 	UserState.Editor = subject
 	world.saveUserState()
@@ -92,9 +93,12 @@ type Editor interface {
 
 	Name() string
 	Tabs(mode Mode) []string
+	Views() []string
 
-	EnableEditor()
-	ChangeEditor()
+	EnableEditor() // called when changing to this editor.
+	ChangeEditor() // called when changind to another editor.
+
+	SwitchToView(view string)
 
 	SelectDesign(mode Mode, design string)
 
@@ -109,9 +113,12 @@ type Editor interface {
 
 	func (*ExampleEditor) Name() string            { return "example" }
 	func (*ExampleEditor) Tabs(mode Mode) []string { return nil }
+	func (*ExampleEditor) Views() []string         { return nil }
 
 	func (*ExampleEditor) EnableEditor() {}
 	func (*ExampleEditor) ChangeEditor() {}
+
+	func (*ExampleEditor) SwitchToView(view string) {}
 
 	func (*ExampleEditor) SelectDesign(mode Mode, design string) {}
 
