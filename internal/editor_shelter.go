@@ -146,7 +146,7 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 			"doorway",
 			"windows",
 			"surface",
-			"roofing",
+			"rooftop",
 			"columns",
 			"ladders",
 			"chimney",
@@ -158,10 +158,10 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 			"bathing",
 			"storage",
 			"benches",
-			"seating",
 			"candles",
 			"lesiure",
 			"trinket",
+			"hanging",
 		}
 	default:
 		return TextureTabs
@@ -208,7 +208,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	level := int(Float.Round(change.Offset.Y))
 	design := editor.client.design_to_string[change.Design]
 	switch path.Base(path.Dir(design)) {
-	case "divider", "doorway":
+	case "divider", "doorway", "columns":
 		node = Node3D.New()
 		scene, ok := editor.client.packed_scenes[change.Design].Instance()
 		if ok {
@@ -330,8 +330,13 @@ func (editor *ShelterEditor) PhysicsProcess(delta Float.X) {
 				editor.last_angle_change = angle
 				editor.Preview.AsNode3D().SetRotation(Euler.Radians{Y: angle})
 			}
-			point.X = Float.Round(point.X)
-			point.Z = Float.Round(point.Z)
+			if path.Base(path.Dir(design)) == "columns" {
+				point.X = Float.Round(point.X*2) / 2
+				point.Z = Float.Round(point.Z*2) / 2
+			} else {
+				point.X = Float.Round(point.X)
+				point.Z = Float.Round(point.Z)
+			}
 			if path.Base(path.Dir(design)) == "surface" {
 				point.Y -= editor.Preview.AABB().Size.Y / 2
 			}
