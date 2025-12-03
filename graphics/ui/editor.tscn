@@ -422,6 +422,7 @@ offset_top = 101.01247
 offset_right = 107.93698
 offset_bottom = 141.01248
 pivot_offset = Vector2(66.563576, 18.513847)
+theme_override_constants/separation = 2
 
 [node name="MarginGeometry" type="MarginContainer" parent="CloudControl/ModeIndicator"]
 layout_mode = 2

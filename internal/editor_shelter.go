@@ -14,7 +14,9 @@ import (
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/Viewport"
@@ -34,7 +36,9 @@ type ShelterEditor struct {
 	Objects Node3D.Instance
 	Preview PreviewRenderer
 
-	current_level Plane.NormalD
+	explore       bool
+	current_plane Plane.NormalD
+	current_level int
 	levels        int
 
 	grid_shader ShaderMaterial.ID
@@ -51,12 +55,13 @@ type ShelterEditor struct {
 }
 
 func (editor *ShelterEditor) Ready() {
+	editor.explore = true
 	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
 	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)
 	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
 	editor.entity_to_mirror = make(map[musical.Entity]Node3D.ID)
 
-	editor.current_level = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
+	editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
 	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.2))
 }
 
@@ -72,15 +77,39 @@ func (editor *ShelterEditor) Views() []string {
 }
 
 func (editor *ShelterEditor) SwitchToView(view string) {
+	editor.explore = false
+	scene := SceneTree.Get(editor.AsNode())
 	switch view {
 	case "explore":
-	case "unicode/G":
+		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
+		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
+		for i := 0; i <= editor.levels; i++ {
+			scene.SetGroup("floor_"+strconv.Itoa(i), "visible", true)
+		}
+		editor.explore = true
+		editor.current_level = 0
 		shader, _ := editor.grid_shader.Instance()
 		shader.SetShaderParameter("center_offset", Vector3.New(0, 0, 0))
-		editor.current_level = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
+		editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
 		pos := editor.client.FocalPoint.Position()
 		pos.Y = 0
 		editor.client.FocalPoint.SetPosition(pos)
+	case "unicode/G":
+		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
+		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
+		shader, _ := editor.grid_shader.Instance()
+		shader.SetShaderParameter("center_offset", Vector3.New(0, 0, 0))
+		editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
+		pos := editor.client.FocalPoint.Position()
+		pos.Y = 0
+		editor.client.FocalPoint.SetPosition(pos)
+		editor.current_level = 0
+		scene.SetGroup("floor_0", "visible", true)
+		scene.SetGroup("floor_whole_0", "visible", false)
+		scene.SetGroup("floor_short_0", "visible", true)
+		for i := 1; i <= editor.levels; i++ {
+			scene.SetGroup("floor_"+strconv.Itoa(i), "visible", false)
+		}
 	case "unicode/+":
 		editor.levels++
 		editor.client.ui.ViewSelector.Refresh(editor.levels+1, editor.Views())
@@ -88,12 +117,20 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		if level_str, ok := strings.CutPrefix(view, "unicode/"); ok {
 			level, err := strconv.Atoi(level_str)
 			if err == nil {
-				editor.current_level = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}, D: Float.X(level)}
+				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
+				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
+				editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}, D: Float.X(level)}
 				shader, _ := editor.grid_shader.Instance()
 				shader.SetShaderParameter("center_offset", Vector3.New(0, float64(level), 0))
 				pos := editor.client.FocalPoint.Position()
 				pos.Y = Float.X(level)
 				editor.client.FocalPoint.SetPosition(pos)
+				editor.current_level = level
+				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", false)
+				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", true)
+				for i := 0; i <= editor.levels; i++ {
+					scene.SetGroup("floor_"+strconv.Itoa(i), "visible", i <= level)
+				}
 			}
 		}
 	}
@@ -168,12 +205,37 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		return nil
 	}
 	var node Node3D.Instance
-	scene, ok := editor.client.packed_scenes[change.Design].Instance()
-	if ok {
-		node = Object.To[Node3D.Instance](scene.Instantiate())
-	} else {
+	level := int(Float.Round(change.Offset.Y))
+	design := editor.client.design_to_string[change.Design]
+	switch path.Base(path.Dir(design)) {
+	case "divider", "doorway":
 		node = Node3D.New()
+		scene, ok := editor.client.packed_scenes[change.Design].Instance()
+		if ok {
+			full := Object.To[Node3D.Instance](scene.Instantiate())
+			full.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
+			full.SetVisible(editor.explore || editor.current_level != level)
+			node.AsNode().AddChild(full.AsNode())
+			cut := Resource.Load[PackedScene.Is[Node3D.Instance]](strings.TrimSuffix(design, path.Ext(design)) + "_cut.glb").Instantiate()
+			cut.SetVisible(!editor.explore && editor.current_level == level)
+			cut.AsNode().AddToGroup("floor_short_" + strconv.Itoa(level))
+			node.AsNode().AddChild(cut.AsNode())
+		}
+	default:
+		scene, ok := editor.client.packed_scenes[change.Design].Instance()
+		if ok {
+			node = Object.To[Node3D.Instance](scene.Instantiate())
+		} else {
+			node = Node3D.New()
+		}
 	}
+	if level > editor.levels {
+		editor.levels = level
+		if editor.client.Editing == Editing.Shelter {
+			editor.client.ui.ViewSelector.Refresh(editor.client.ui.ViewSelector.view, editor.Views())
+		}
+	}
+	node.AsNode().AddToGroup("floor_" + strconv.Itoa(level))
 	node.SetPosition(change.Offset)
 	node.SetRotation(change.Angles)
 	node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.2, 0.2, 0.2)))
@@ -213,7 +275,11 @@ func (editor *ShelterEditor) Input(event InputEvent.Instance) {
 		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() {
 			node, ok := editor.client.selection.Instance()
 			if ok {
-				if entity, ok := editor.object_to_entity[Node3D.ID(node.ID())]; ok {
+				entity, ok := editor.object_to_entity[Node3D.ID(node.ID())]
+				if !ok {
+					entity, ok = editor.object_to_entity[node.GetParentNode3d().ID()]
+				}
+				if ok {
 					editor.client.space.Change(musical.Change{
 						Author: editor.client.id,
 						Entity: entity,
@@ -230,7 +296,7 @@ func (editor *ShelterEditor) Input(event InputEvent.Instance) {
 func (editor *ShelterEditor) PhysicsProcess(delta Float.X) {
 	if design := editor.Preview.Design(); design != "" {
 		mouse := Viewport.Get(editor.AsNode()).GetMousePosition()
-		if point, ok := Plane.IntersectsRay(editor.current_level,
+		if point, ok := Plane.IntersectsRay(editor.current_plane,
 			editor.client.FocalPoint.Lens.Camera.ProjectRayOrigin(mouse),
 			editor.client.FocalPoint.Lens.Camera.ProjectRayNormal(mouse),
 		); ok {
