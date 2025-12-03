@@ -7,12 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Material"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Resource"
@@ -82,9 +84,12 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 	switch view {
 	case "explore":
 		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
+		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
 		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
+		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
 		for i := 0; i <= editor.levels; i++ {
 			scene.SetGroup("floor_"+strconv.Itoa(i), "visible", true)
+			scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeInherit)
 		}
 		editor.explore = true
 		editor.current_level = 0
@@ -96,7 +101,9 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		editor.client.FocalPoint.SetPosition(pos)
 	case "unicode/G":
 		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
+		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
 		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
+		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
 		shader, _ := editor.grid_shader.Instance()
 		shader.SetShaderParameter("center_offset", Vector3.New(0, 0, 0))
 		editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
@@ -105,10 +112,14 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		editor.client.FocalPoint.SetPosition(pos)
 		editor.current_level = 0
 		scene.SetGroup("floor_0", "visible", true)
+		scene.SetGroup("floor_0", "process_mode", Node.ProcessModeInherit)
 		scene.SetGroup("floor_whole_0", "visible", false)
+		scene.SetGroup("floor_whole_0", "process_mode", Node.ProcessModeDisabled)
 		scene.SetGroup("floor_short_0", "visible", true)
+		scene.SetGroup("floor_short_0", "process_mode", Node.ProcessModeInherit)
 		for i := 1; i <= editor.levels; i++ {
 			scene.SetGroup("floor_"+strconv.Itoa(i), "visible", false)
+			scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeDisabled)
 		}
 	case "unicode/+":
 		editor.levels++
@@ -118,7 +129,9 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 			level, err := strconv.Atoi(level_str)
 			if err == nil {
 				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
+				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
 				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
+				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
 				editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}, D: Float.X(level)}
 				shader, _ := editor.grid_shader.Instance()
 				shader.SetShaderParameter("center_offset", Vector3.New(0, float64(level), 0))
@@ -126,11 +139,18 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 				pos.Y = Float.X(level)
 				editor.client.FocalPoint.SetPosition(pos)
 				editor.current_level = level
-				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", false)
-				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", true)
 				for i := 0; i <= editor.levels; i++ {
 					scene.SetGroup("floor_"+strconv.Itoa(i), "visible", i <= level)
+					if i <= level {
+						scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeInherit)
+					} else {
+						scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeDisabled)
+					}
 				}
+				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", false)
+				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
+				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", true)
+				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
 			}
 		}
 	}
@@ -143,25 +163,27 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 		return []string{
 			"polygon",
 			"divider",
+			"fencing",
 			"doorway",
 			"windows",
 			"surface",
 			"rooftop",
 			"columns",
 			"ladders",
-			"chimney",
+			"hanging",
 		}
 	case ModeDressing:
 		return []string{
 			"bedding",
 			"kitchen",
 			"bathing",
-			"storage",
 			"benches",
 			"candles",
 			"lesiure",
 			"trinket",
-			"hanging",
+			"storage",
+			"mounted",
+			"chimney",
 		}
 	default:
 		return TextureTabs
@@ -188,6 +210,7 @@ func (*ShelterEditor) SliderConfig(mode Mode, editing string) (init, min, max, s
 func (*ShelterEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {}
 
 func (editor *ShelterEditor) Change(change musical.Change) error {
+	change.Offset.Y += Float.Random() * 0.001 // quick fix for z-fighting
 	container := editor.Objects.AsNode()
 	exists, ok := editor.entity_to_object[change.Entity].Instance()
 	if ok {
@@ -207,8 +230,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	var node Node3D.Instance
 	level := int(Float.Round(change.Offset.Y))
 	design := editor.client.design_to_string[change.Design]
-	switch path.Base(path.Dir(design)) {
-	case "divider", "doorway", "columns":
+	if FileAccess.FileExists(strings.TrimSuffix(design, path.Ext(design)) + "_cut.glb.import") {
 		node = Node3D.New()
 		scene, ok := editor.client.packed_scenes[change.Design].Instance()
 		if ok {
@@ -221,12 +243,15 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			cut.AsNode().AddToGroup("floor_short_" + strconv.Itoa(level))
 			node.AsNode().AddChild(cut.AsNode())
 		}
-	default:
+	} else {
 		scene, ok := editor.client.packed_scenes[change.Design].Instance()
 		if ok {
 			node = Object.To[Node3D.Instance](scene.Instantiate())
 		} else {
 			node = Node3D.New()
+		}
+		if path.Base(path.Dir(design)) == "hanging" || path.Base(path.Dir(design)) == "mounted" {
+			node.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
 		}
 	}
 	if level > editor.levels {
@@ -296,51 +321,82 @@ func (editor *ShelterEditor) Input(event InputEvent.Instance) {
 func (editor *ShelterEditor) PhysicsProcess(delta Float.X) {
 	if design := editor.Preview.Design(); design != "" {
 		mouse := Viewport.Get(editor.AsNode()).GetMousePosition()
-		if point, ok := Plane.IntersectsRay(editor.current_plane,
-			editor.client.FocalPoint.Lens.Camera.ProjectRayOrigin(mouse),
-			editor.client.FocalPoint.Lens.Camera.ProjectRayNormal(mouse),
-		); ok {
-			var angle Angle.Radians
-			// Determine which triangular quadrant the intersection point is in and set angle accordingly
-			theta := Angle.Atan2(point.Z-Float.Round(point.Z), point.X-Float.Round(point.X)) // returns radians
-			same_direction := false
-			switch {
-			case theta >= -Angle.Pi/4 && theta < Angle.Pi/4:
-				angle = -Angle.Pi / 2
-				if editor.last_angle_change == Angle.Pi/2 {
-					same_direction = true
-				}
-			case theta >= Angle.Pi/4 && theta < 3*Angle.Pi/4:
-				angle = Angle.Pi
-				if editor.last_angle_change == 0 {
-					same_direction = true
-				}
-			case theta >= -3*Angle.Pi/4 && theta < -Angle.Pi/4:
-				angle = 0
-				if editor.last_angle_change == Angle.Pi {
-					same_direction = true
-				}
-			default:
-				angle = Angle.Pi / 2
-				if editor.last_angle_change == -Angle.Pi/2 {
-					same_direction = true
+		switch editor.client.ui.mode {
+		case ModeDressing:
+			if hover := MousePicker(editor.AsNode3D()); hover.Collider != Object.Nil {
+				point := hover.Position
+				switch path.Base(path.Dir(design)) {
+				case "mounted":
+					point.Y = Float.Floor(point.Y)
+					normal := hover.Normal
+					// Only allow mounting on vertical surfaces (normal.Y == 0)
+					if Float.Abs(normal.Y) > 0.01 {
+						break
+					}
+					// Only rotate around Y axis to face the surface
+					angle := Angle.Atan2(normal.X, normal.Z)
+					editor.Preview.AsNode3D().SetRotation(Euler.Radians{Y: angle})
+					editor.Preview.AsNode3D().SetGlobalPosition(point)
+				case "chimney":
+					point.Y -= 0.1
+					editor.Preview.AsNode3D().SetGlobalPosition(point)
+				default:
+					node := Object.To[Node3D.Instance](hover.Collider)
+					// Only allow mounting on horizontal surfaces (normal.Y == 1)
+					if Float.Abs(hover.Normal.Y-1) > 0.01 || node.GetParentNode3d().AsNode().IsInGroup("floor_short_"+strconv.Itoa(editor.current_level)) {
+						break
+					}
+					editor.Preview.AsNode3D().SetGlobalPosition(point)
 				}
 			}
-			if time.Since(editor.last_mouse_change) > time.Millisecond*50 || same_direction {
-				editor.last_angle_change = angle
-				editor.Preview.AsNode3D().SetRotation(Euler.Radians{Y: angle})
+		case ModeGeometry:
+			if point, ok := Plane.IntersectsRay(editor.current_plane,
+				editor.client.FocalPoint.Lens.Camera.ProjectRayOrigin(mouse),
+				editor.client.FocalPoint.Lens.Camera.ProjectRayNormal(mouse),
+			); ok {
+				var angle Angle.Radians
+				// Determine which triangular quadrant the intersection point is in and set angle accordingly
+				theta := Angle.Atan2(point.Z-Float.Round(point.Z), point.X-Float.Round(point.X)) // returns radians
+				same_direction := false
+				switch {
+				case theta >= -Angle.Pi/4 && theta < Angle.Pi/4:
+					angle = -Angle.Pi / 2
+					if editor.last_angle_change == Angle.Pi/2 {
+						same_direction = true
+					}
+				case theta >= Angle.Pi/4 && theta < 3*Angle.Pi/4:
+					angle = Angle.Pi
+					if editor.last_angle_change == 0 {
+						same_direction = true
+					}
+				case theta >= -3*Angle.Pi/4 && theta < -Angle.Pi/4:
+					angle = 0
+					if editor.last_angle_change == Angle.Pi {
+						same_direction = true
+					}
+				default:
+					angle = Angle.Pi / 2
+					if editor.last_angle_change == -Angle.Pi/2 {
+						same_direction = true
+					}
+				}
+				if time.Since(editor.last_mouse_change) > time.Millisecond*50 || same_direction {
+					editor.last_angle_change = angle
+					editor.Preview.AsNode3D().SetRotation(Euler.Radians{Y: angle})
+				}
+				aabb := editor.Preview.AABB()
+				if path.Base(path.Dir(design)) == "columns" && aabb.Size.X < 1 && aabb.Size.Z < 1 {
+					point.X = Float.Round(point.X*2) / 2
+					point.Z = Float.Round(point.Z*2) / 2
+				} else {
+					point.X = Float.Round(point.X)
+					point.Z = Float.Round(point.Z)
+				}
+				if path.Base(path.Dir(design)) == "surface" {
+					point.Y -= 0.05
+				}
+				editor.Preview.AsNode3D().SetGlobalPosition(point)
 			}
-			if path.Base(path.Dir(design)) == "columns" {
-				point.X = Float.Round(point.X*2) / 2
-				point.Z = Float.Round(point.Z*2) / 2
-			} else {
-				point.X = Float.Round(point.X)
-				point.Z = Float.Round(point.Z)
-			}
-			if path.Base(path.Dir(design)) == "surface" {
-				point.Y -= editor.Preview.AABB().Size.Y / 2
-			}
-			editor.Preview.AsNode3D().SetGlobalPosition(point)
 		}
 	}
 }
