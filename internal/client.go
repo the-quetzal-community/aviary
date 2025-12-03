@@ -29,6 +29,7 @@ import (
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/InputEventMouseMotion"
+	"graphics.gd/classdb/Light3D"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
@@ -342,9 +343,10 @@ func (world *Client) Ready() {
 	world.Light.AsNode3D().SetRotation(Euler.Radians{X: Angle.InRadians(-17), Y: Angle.InRadians(30), Z: Angle.InRadians(11)})
 	world.Light.AsLight3D().SetLightEnergy(1)
 	world.Light.AsLight3D().SetShadowEnabled(true)
-	world.Light.AsLight3D().SetShadowBias(0.017)
-	world.Light.AsLight3D().SetShadowNormalBias(2.0)
-	world.Light.AsLight3D().SetShadowBlur(1.0)
+	world.Light.AsLight3D().SetShadowBias(0.015)
+	world.Light.AsLight3D().SetShadowNormalBias(0)
+	world.Light.AsLight3D().SetShadowBlur(2.0)
+	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
 	world.Light.SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal)
 
 	env := Environment.New()

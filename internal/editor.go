@@ -80,7 +80,7 @@ func (world *Client) StartEditing(subject Subject) {
 	world.Editing = subject
 	world.ui.Editor.editor = editor
 	editor.EnableEditor()
-	world.ui.Editor.Refresh(subject, world.ui.themes[world.ui.theme_index], world.ui.mode)
+	world.ui.Editor.Refresh(subject, "", world.ui.mode)
 	UserState.Editor = subject
 	world.saveUserState()
 }

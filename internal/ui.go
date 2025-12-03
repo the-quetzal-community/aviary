@@ -100,7 +100,7 @@ func (ui *UI) SetMode(mode Mode) {
 		ui.ModeDressing.AsControl().SetSize(Vector2.New(36, 36))
 	}
 	ui.mode = mode
-	ui.onThemeSelected(ui.theme_index)
+	ui.Editor.Refresh(ui.client.Editing, "", ui.mode)
 }
 
 func (ui *UI) Input(event InputEvent.Instance) {
@@ -153,7 +153,6 @@ func (ui *UI) Ready() {
 		count++
 	}
 	ui.ThemeSelector.LoadThemes(ui.themes)
-	ui.ThemeSelector.ThemeSelected.Call(ui.onThemeSelected)
 	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer)
@@ -241,10 +240,4 @@ func (ui *UI) scale(control Control.Instance, base_screen_width, base_screen_hei
 	// Set uniform scale for both X and Y (preserves aspect, scales icons etc.)
 	scale := Vector2.XY{X: scale_factor, Y: scale_factor}
 	control.SetScale(scale)
-}
-
-// onThemeSelected regenerates the palette picker.
-func (ui *UI) onThemeSelected(idx int) {
-	ui.theme_index = idx
-	ui.Editor.Refresh(ui.client.Editing, ui.themes[idx], ui.mode)
 }

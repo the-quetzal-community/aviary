@@ -79,3 +79,4 @@ texture={
 textures/vram_compression/import_etc2_astc=true
 lights_and_shadows/directional_shadow/size=8192
 lights_and_shadows/directional_shadow/16_bits=false
+environment/defaults/default_clear_color=Color(0.43992788, 0.44849038, 0.4802726, 1)

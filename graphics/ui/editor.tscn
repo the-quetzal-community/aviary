@@ -1,4 +1,4 @@
-[gd_scene load_steps=29 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=31 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -22,6 +22,12 @@
 [ext_resource type="Texture2D" uid="uid://34ipn4hu4h2h" path="res://ui/mineral.svg" id="18_l3ljj"]
 [ext_resource type="Texture2D" uid="uid://47rl4j222xrm" path="res://ui/shelter.svg" id="20_i6rcl"]
 [ext_resource type="Texture2D" uid="uid://d3nq482anjp6c" path="res://ui/vehicle.svg" id="20_sb7vj"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_i6rcl"]
+bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_c0lqr"]
+bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_28l1f"]
 load_path = "res://.godot/imported/mystuff.svg-88b7b9cb01ebdcb25becbd12bbc95e36.ctex"
@@ -85,10 +91,42 @@ anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
+offset_left = -1.0
 offset_top = -360.0
+offset_right = -1.0
 grow_horizontal = 2
 grow_vertical = 0
 theme = ExtResource("1_hi2iw")
+theme_override_constants/separation = 0
+
+[node name="Panel" type="Panel" parent="Editor"]
+custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_i6rcl")
+
+[node name="Themes" type="VBoxContainer" parent="Editor/Panel"]
+custom_minimum_size = Vector2(72, 0)
+layout_mode = 0
+
+[node name="Heading" type="Panel" parent="Editor/Panel/Themes"]
+custom_minimum_size = Vector2(100, 100)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_c0lqr")
+
+[node name="Selected" type="TextureButton" parent="Editor/Panel/Themes/Heading"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Tabs" type="TabContainer" parent="Editor"]
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="ExpansionIndicator" type="Button" parent="."]
 layout_mode = 1

@@ -69,7 +69,7 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 			"sailing",
 			"gliding",
 			"sliding",
-			"rockets",
+			"booster",
 		}
 	case ModeDressing:
 		return []string{

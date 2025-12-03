@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -9,12 +11,14 @@ import (
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/HSlider"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Range"
 	"graphics.gd/classdb/Resource"
@@ -23,6 +27,7 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/Tween"
+	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/String"
@@ -34,7 +39,22 @@ import (
 // It's used for the exploration and selection of designs from The Quetzal
 // Community Library for use in the active [Editor].
 type DesignExplorer struct {
-	TabContainer.Extension[DesignExplorer]
+	HBoxContainer.Extension[DesignExplorer]
+
+	Panel struct {
+		Panel.Instance
+
+		Themes struct {
+			VBoxContainer.Instance
+
+			Heading struct {
+				Panel.Instance
+
+				Selected TextureButton.Instance
+			}
+		}
+	}
+	Tabs TabContainer.Instance
 
 	// This represents the area to hover over in order to expand the design
 	// drawer.
@@ -46,7 +66,9 @@ type DesignExplorer struct {
 	cached map[Node3D.ID]map[string][]*GridFlowContainer
 	slider map[string]map[string]HSlider.ID
 
-	author string
+	author                      string
+	themes                      map[string]TextureButton.ID
+	themes_available_for_editor map[editorMode]map[string]struct{}
 
 	// state that enables the design drawer to open and close.
 	drawExpanded  atomic.Bool
@@ -55,6 +77,11 @@ type DesignExplorer struct {
 	queued        func()
 
 	last_slider_state sliderState
+}
+
+type editorMode struct {
+	Editor Subject
+	Mode   Mode
 }
 
 type sliderState struct {
@@ -68,8 +95,42 @@ type sliderState struct {
 // Ready implements [Node.Interface.Ready].
 func (de *DesignExplorer) Ready() {
 	de.slider = make(map[string]map[string]HSlider.ID)
-	de.AsTabContainer().GetTabBar().AsControl().
+	de.Tabs.GetTabBar().AsControl().
 		SetMouseFilter(Control.MouseFilterStop)
+	de.themes = make(map[string]TextureButton.ID)
+	de.themes_available_for_editor = make(map[editorMode]map[string]struct{})
+	Dir := DirAccess.Open("res://library")
+	if Dir == (DirAccess.Instance{}) {
+		return
+	}
+	for name := range Dir.Iter() {
+		if strings.Contains(name, ".") {
+			continue
+		}
+		if FileAccess.FileExists("res://library/" + name + "/icon.png.import") {
+			button := TextureButton.New()
+			button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png"))
+			button.SetIgnoreTextureSize(true)
+			button.SetStretchMode(TextureButton.StretchKeepAspectCentered)
+			button.AsControl().SetSizeFlagsHorizontal(Control.SizeShrinkBegin)
+			button.AsControl().SetCustomMinimumSize(Vector2.New(72, 64))
+			button.AsBaseButton().OnPressed(func() {
+				for theme := range de.themes_available_for_editor[editorMode{
+					Editor: de.client.Editing,
+					Mode:   de.client.ui.mode,
+				}] {
+					other_button, _ := de.themes[theme].Instance()
+					other_button.AsCanvasItem().SetVisible(true)
+				}
+				de.Refresh(de.client.Editing, name, de.client.ui.mode)
+				de.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png"))
+				button, _ := de.themes[name].Instance()
+				button.AsCanvasItem().SetVisible(false)
+			})
+			de.themes[name] = button.ID()
+			de.Panel.Themes.AsNode().AddChild(button.AsNode())
+		}
+	}
 }
 
 func (ui *DesignExplorer) Sculpt(brush musical.Sculpt) {
@@ -107,9 +168,7 @@ func (ui *DesignExplorer) Process(delta Float.X) {
 // these designs may be cached so that subsequent refreshes are faster.
 func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	expansion, _ := ui.ExpansionIndicator.Instance()
-	preview_path := "res://preview/" + author
-	library_path := "res://library/" + author
-	for _, node := range ui.AsNode().GetChildren() {
+	for _, node := range ui.Tabs.AsNode().GetChildren() {
 		container, ok := Object.As[*GridFlowContainer](node)
 		if ok {
 			container.AsObject()[0].Free()
@@ -124,17 +183,53 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		ui.AsCanvasItem().SetVisible(false)
 		expansion.AsCanvasItem().SetVisible(false)
 	}
-	themes := DirAccess.Open(preview_path)
-	if themes == DirAccess.Nil {
-		return
-	}
-	ui.tabbed = nil
 	const (
 		glb = ".glb"
 		png = ".png"
 	)
 	edits := false
 	index := 0
+	for _, button := range ui.themes {
+		button, _ := button.Instance()
+		button.AsCanvasItem().SetVisible(false)
+	}
+	themes_available, ok := ui.themes_available_for_editor[editorMode{
+		Editor: editor,
+		Mode:   mode,
+	}]
+	if !ok {
+		themes_available = make(map[string]struct{})
+		for author := range ui.themes {
+			for _, tab := range ui.editor.Tabs(mode) {
+				var path = "res://preview/" + author + "/" + tab
+				resources := DirAccess.Open(path)
+				if resources != DirAccess.Nil {
+					themes_available[author] = struct{}{}
+					break
+				}
+			}
+		}
+		ui.themes_available_for_editor[editorMode{
+			Editor: editor,
+			Mode:   mode,
+		}] = themes_available
+	}
+	for _, theme := range slices.Sorted(maps.Keys(themes_available)) {
+		if author == "" {
+			author = theme
+			ui.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + author + "/icon.png"))
+		} else {
+			button, _ := ui.themes[theme].Instance()
+			button.AsCanvasItem().SetVisible(true)
+		}
+	}
+	preview_path := "res://preview/" + author
+	library_path := "res://library/" + author
+	themes := DirAccess.Open(preview_path)
+	if themes == DirAccess.Nil {
+		return
+	}
+	ui.tabbed = nil
 	for _, tab := range ui.editor.Tabs(mode) {
 		if strings.HasPrefix(tab, "editing/") {
 			slider := HSlider.Advanced(HSlider.New())
@@ -158,13 +253,13 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				ui.slider[ui.editor.Name()] = make(map[string]HSlider.ID)
 			}
 			ui.slider[ui.editor.Name()][tab] = slider_id
-			ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
+			ui.Tabs.AsNode().AddChild(Node.Instance(slider.AsNode()))
 			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg.import") {
-				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
+				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
-				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
 			}
-			ui.AsTabContainer().SetTabTitle(index, "")
+			ui.Tabs.SetTabTitle(index, "")
 			edits = true
 			index++
 		} else {
@@ -178,7 +273,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			gridflow.AsControl().SetMouseFilter(Control.MouseFilterStop)
 			gridflow.scroll_lock = true
 			gridflow.AsNode().SetName(tab)
-			ui.AsNode().AddChild(gridflow.AsNode())
+			ui.Tabs.AsNode().AddChild(gridflow.AsNode())
 			gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			ui.tabbed = append(ui.tabbed, gridflow)
@@ -232,15 +327,18 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			gridflow.Update()
 			if FileAccess.FileExists("res://ui/" + tab + ".svg.import") {
-				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
+				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
 			} else {
-				ui.AsTabContainer().SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
 			}
-			ui.AsTabContainer().SetTabTitle(index, "")
+			ui.Tabs.SetTabTitle(index, "")
 			index++
 		}
 	}
-	ui.AsCanvasItem().SetVisible(index > 0)
+	if len(themes_available) == 0 {
+		ui.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/editing.svg"))
+	}
+	ui.AsCanvasItem().SetVisible(index > 0 || len(themes_available) > 0)
 	expansion.AsCanvasItem().SetVisible(index > 0 && !edits)
 }
 
