@@ -34,7 +34,8 @@ func backpack(src_pck, dst_pck string) error {
 		return xray.New(err)
 	}
 	for path := range index {
-		if _, ok := exist[path]; ok || !(strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap")) || strings.HasPrefix(path, "preview/") {
+		isKennyScene := strings.HasSuffix(path, ".scn") && strings.HasPrefix(path, "library/kenney/")
+		if _, ok := exist[path]; ok || !(strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap") || isKennyScene) || strings.HasPrefix(path, "preview/") {
 			delete(index, path)
 		}
 	}
