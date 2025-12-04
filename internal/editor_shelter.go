@@ -184,6 +184,7 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 			"storage",
 			"mounted",
 			"chimney",
+			"carpets",
 		}
 	default:
 		return TextureTabs

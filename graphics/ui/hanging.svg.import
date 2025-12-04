@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cfe2tbgwf0vm2"
-path="res://.godot/imported/trinket.svg-6538280131fd82c1941045b895df15f7.ctex"
+uid="uid://gwov37t8va5a"
+path="res://.godot/imported/hanging.svg-9355b91d0ff6c81a2ccafb9736cba313.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/trinket.svg"
-dest_files=["res://.godot/imported/trinket.svg-6538280131fd82c1941045b895df15f7.ctex"]
+source_file="res://ui/hanging.svg"
+dest_files=["res://.godot/imported/hanging.svg-9355b91d0ff6c81a2ccafb9736cba313.ctex"]
 
 [params]
 

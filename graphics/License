@@ -5,7 +5,7 @@ default/timbers.png - Wildfire Games (http://www.wildfiregames.com/)
 default/mineral.jpg - eRiQ Quaadgras
 
 CC-BY-SA 4.0 https://creativecommons.org/licenses/by/sa/4.0/
-(all UI icons are from The Noun Project & have been color adjusted)
+(all UI icons are from The Noun Project & have been color adjusted + repositioned)
 
 ui/colour.svg - Crossover1370
 ui/slider.svg - Quentin Quaadgras
@@ -20,7 +20,6 @@ ui/shelter.svg - Lars Meiertoberens
 ui/critter.svg - Round Pixel
 ui/citizen.svg - Wilson Joseph
 ui/special.svg - Hayley D'Auria
-ui/trinket.svg - Hamish
 
 ui/housing.svg - NTT
 ui/village.svg - Imron Sadewo
@@ -72,6 +71,18 @@ ui/divider.svg - Bakunetsu Kaito
 ui/surface.svg - Bakunetsu Kaito
 ui/doorway.svg - Bakunetsu Kaito
 ui/columns.svg - Bakunetsu Kaito
+ui/fencing.svg - Bakunetsu Kaito
+ui/windows.svg - Bakunetsu Kaito & Quentin Quaadgras (added windows)
+ui/rooftop.svg - Bakunetsu Kaito
+ui/ladders.svg - Bakunetsu Kaito
+ui/awnings.svg - WavoCC
+
+ui/benches.svg - Tayyab Mahmood
+ui/candles.svg - farra nugraha
+ui/trinket.svg - MihiMihi
+ui/storage.svg - Kartika Sholehatin
+ui/chimney.svg - Firza Alamsyah
+ui/carpets.svg - VectorsLab
 
 ui/dressing.svg - shashank singh
 

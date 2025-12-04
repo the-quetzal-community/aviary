@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cfe2tbgwf0vm2"
-path="res://.godot/imported/trinket.svg-6538280131fd82c1941045b895df15f7.ctex"
+uid="uid://dmld2a2fu2fcm"
+path="res://.godot/imported/ladders.svg-9388742dcf4f241525e14c9c18ede019.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/trinket.svg"
-dest_files=["res://.godot/imported/trinket.svg-6538280131fd82c1941045b895df15f7.ctex"]
+source_file="res://ui/ladders.svg"
+dest_files=["res://.godot/imported/ladders.svg-9388742dcf4f241525e14c9c18ede019.ctex"]
 
 [params]
 

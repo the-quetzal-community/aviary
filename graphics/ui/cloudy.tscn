@@ -81,72 +81,84 @@ columns = 3
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "1"
 
 [node name="2" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "2"
 
 [node name="3" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "3"
 
 [node name="4" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "4"
 
 [node name="5" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "5"
 
 [node name="6" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "6"
 
 [node name="7" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "7"
 
 [node name="8" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "8"
 
 [node name="9" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "9"
 
 [node name="X" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "X"
 
 [node name="0" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = "0"
 
 [node name=">" type="Button" parent="Layout/Keypad/Column/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme = ExtResource("1_ox2so")
+theme_type_variation = &"FlatButton"
 text = ">
 "
 
@@ -200,3 +212,6 @@ theme_override_colors/font_color = Color(0.252722, 0.252722, 0.252722, 1)
 theme_override_font_sizes/font_size = 100
 theme_override_styles/normal = SubResource("StyleBoxFlat_kv74u")
 text = "+"
+
+[node name="GridContainer" type="GridContainer" parent="Layout/GridFlowContainer/Scrollable"]
+layout_mode = 2

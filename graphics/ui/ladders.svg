@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="100"
+   version="1.1"
+   viewBox="0 0 96 75"
+   id="svg13"
+   sodipodi:docname="ladders.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs13" />
+  <sodipodi:namedview
+     id="namedview13"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="pt"
+     inkscape:zoom="2.0075"
+     inkscape:cx="180.32379"
+     inkscape:cy="113.82316"
+     inkscape:window-width="1862"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg13" />
+  <path
+     d="m 67.829894,51.141895 -17.759148,10.25085 3.707577,2.139944 17.758659,-10.250851 z"
+     fill="#4c4c4c"
+     id="path1"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 49.812711,60.947057 67.572355,50.694739 V 46.459521 L 49.812711,56.710375 Z"
+     fill="#4c4c4c"
+     id="path2"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 49.528786,56.279053 67.314809,46.013049 63.633187,43.888353 45.848624,54.154352 Z"
+     fill="#4c4c4c"
+     id="path3"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 45.590884,53.707542 63.349549,43.456201 V 39.250743 L 45.590884,49.501591 Z"
+     fill="#4c4c4c"
+     id="path4"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 45.332366,49.055169 63.091025,38.803832 59.384182,36.664083 41.625034,46.914935 Z"
+     fill="#4c4c4c"
+     id="path5"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 41.367589,46.468513 59.127226,36.21815 V 31.981757 L 41.367589,42.232608 Z"
+     fill="#4c4c4c"
+     id="path6"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 41.11005,41.786332 58.869198,31.535481 55.162203,29.395538 37.403544,39.64639 Z"
+     fill="#4c4c4c"
+     id="path7"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 37.144294,39.200163 54.903931,28.948822 V 24.71282 L 37.144294,34.963672 Z"
+     fill="#4c4c4c"
+     id="path8"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 36.887237,34.517494 54.645903,24.266642 50.939059,22.126112 33.180393,32.377453 Z"
+     fill="#4c4c4c"
+     id="path9"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 32.921977,31.931324 50.680636,21.680472 V 17.444079 L 32.921977,27.694931 Z"
+     fill="#4c4c4c"
+     id="path10"
+     style="stroke-width:0.0488694" />
+  <path
+     d="m 50.423579,16.997852 -3.70757,-2.139747 -17.758666,10.250851 3.707383,2.139943 z"
+     fill="#4c4c4c"
+     id="path11"
+     style="stroke-width:0.0488694" />
+  <path
+     d="M 49.297633,56.740379 45.07482,54.303016 v -4.801619 l -4.223,-2.437752 V 42.232462 L 36.629015,39.795295 V 34.963721 L 32.406791,32.526553 V 27.69498 l -3.706843,-2.139358 v 28.333027 l 24.820297,14.326568 v -4.235812 l -4.222417,-2.437752 z"
+     fill="#4c4c4c"
+     id="path12"
+     style="stroke-width:0.0488694" />
+  <path
+     d="m 54.035524,63.977449 v 4.235812 L 71.794183,57.96241 v -4.236395 z"
+     fill="#4c4c4c"
+     id="path13"
+     style="stroke-width:0.0488694" />
+</svg>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="100"
+   version="1.1"
+   viewBox="0 0 96 75"
+   id="svg3"
+   sodipodi:docname="awnings.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs3" />
+  <sodipodi:namedview
+     id="namedview3"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="pt"
+     inkscape:zoom="2.8390337"
+     inkscape:cx="74.673294"
+     inkscape:cy="118.52624"
+     inkscape:window-width="1862"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg3" />
+  <path
+     d="m 24.647937,62.982477 c 0,1.361601 1.069767,2.431684 2.431687,2.431684 1.361601,0 2.431688,-1.069764 2.431688,-2.431684 l -3.2e-4,-16.048089 h -4.862974 z"
+     fill="#4c4c4c"
+     id="path1"
+     style="stroke-width:0.08024" />
+  <path
+     d="m 66.470054,62.982477 c 0,1.361601 1.069768,2.431684 2.431688,2.431684 1.3616,0 2.431687,-1.069764 2.431687,-2.431684 L 71.33311,46.934388 h -4.862975 z"
+     fill="#4c4c4c"
+     id="path2"
+     style="stroke-width:0.08024" />
+  <path
+     d="m 24.647937,44.016842 c 4.279384,0 7.780836,-3.501451 7.780836,-7.780835 0,4.279384 3.501455,7.780835 7.780834,7.780835 4.279386,0 7.780836,-3.501451 7.780836,-7.780835 0,4.279384 3.501449,7.780835 7.780834,7.780835 4.279386,0 7.780835,-3.501451 7.780835,-7.780835 0,4.279384 3.50145,7.780835 7.780835,7.780835 1.94519,0 3.696033,-0.68079 4.960141,-1.848018 2.139849,-1.848016 3.014952,-4.765877 2.431687,-7.488997 L 78.141468,31.373038 74.251087,11.920349 H 21.730515 l -3.890374,19.452689 -0.680795,3.306789 c -0.583622,2.723201 0.291811,5.738473 2.431688,7.488997 1.361281,1.16726 3.112125,1.848018 5.057315,1.848018 z"
+     fill="#4c4c4c"
+     id="path3"
+     style="stroke-width:0.08024" />
+</svg>

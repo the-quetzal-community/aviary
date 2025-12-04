@@ -1,4 +1,4 @@
-[gd_scene load_steps=31 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene load_steps=57 format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -9,7 +9,9 @@
 [ext_resource type="Texture2D" uid="uid://bi3tuiqeiwxo8" path="res://ui/wiseowl.svg" id="6_4x3iy"]
 [ext_resource type="Texture2D" uid="uid://cx55slyyp10ef" path="res://ui/restart.svg" id="9_75vv8"]
 [ext_resource type="Texture2D" uid="uid://qrqs88rqwn0n" path="res://ui/updates.svg" id="10_4rs6f"]
+[ext_resource type="Texture2D" uid="uid://d4f4piljq04sb" path="res://ui/slider.png" id="10_kd16f"]
 [ext_resource type="Texture2D" uid="uid://btesx4fxc3ldh" path="res://ui/pointer.svg" id="10_tj0f7"]
+[ext_resource type="StyleBox" uid="uid://h4nwukf2mpep" path="res://ui/aviary_stylebox.tres" id="11_0ad7g"]
 [ext_resource type="Texture2D" uid="uid://8njh8i6ykrsx" path="res://ui/colour.svg" id="11_8sq1u"]
 [ext_resource type="PackedScene" uid="uid://dqndk14imylnj" path="res://ui/cloudy.tscn" id="11_75vv8"]
 [ext_resource type="Texture2D" uid="uid://b5v5k7ro0nyfc" path="res://ui/editor.svg" id="11_ny7lf"]
@@ -61,6 +63,107 @@ width = 32
 height = 32
 fill = 1
 fill_from = Vector2(0.5, 0.5)
+
+[sub_resource type="SystemFont" id="SystemFont_yj2rr"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_y1or3"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_g6dpk"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_x8gey"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_f8b4l"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ca6sl"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_4p41l"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_yj2rr"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y1or3"]
+content_margin_top = 5.0
+bg_color = Color(0.7149155, 0.7046573, 0.7258813, 0.6862745)
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_rulru"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_u81bn"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_qtdup"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_slgof"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_djggn"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_7yeyq"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_72be2"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ewvp0"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_tqp4k"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_prqmo"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_t0ppr"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_a2dju"]
+bg_color = Color(1, 1, 1, 0.870588)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5atwb"]
+bg_color = Color(1, 1, 1, 0.431373)
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ydl51"]
+
+[sub_resource type="Theme" id="Theme_1tuwu"]
+Button/colors/font_color = Color(0.3019608, 0.3019608, 0.3019608, 1)
+Button/colors/font_focus_color = Color(0.3019608, 0.3019608, 0.3019608, 1)
+Button/colors/font_hover_color = Color(0.3019608, 0.3019608, 0.3019608, 1)
+Button/colors/font_hover_pressed_color = Color(0.3019608, 0.3019608, 0.3019608, 1)
+Button/colors/font_pressed_color = Color(0.3019608, 0.3019608, 0.3019608, 1)
+Button/font_sizes/font_size = 72
+Button/fonts/font = SubResource("SystemFont_yj2rr")
+Button/styles/disabled = SubResource("StyleBoxEmpty_y1or3")
+Button/styles/focus = SubResource("StyleBoxEmpty_g6dpk")
+Button/styles/hover = SubResource("StyleBoxEmpty_x8gey")
+Button/styles/normal = SubResource("StyleBoxEmpty_f8b4l")
+Button/styles/pressed = SubResource("StyleBoxEmpty_ca6sl")
+HBoxContainer/constants/separation = 20
+HSlider/icons/grabber = ExtResource("10_kd16f")
+HSlider/icons/grabber_disabled = ExtResource("10_kd16f")
+HSlider/icons/grabber_highlight = ExtResource("10_kd16f")
+HSlider/styles/grabber_area = SubResource("StyleBoxEmpty_4p41l")
+HSlider/styles/grabber_area_highlight = SubResource("StyleBoxEmpty_yj2rr")
+HSlider/styles/slider = SubResource("StyleBoxFlat_y1or3")
+Label/colors/font_color = Color(0.301961, 0.301961, 0.301961, 1)
+Label/font_sizes/font_size = 31
+MarginContainer/constants/margin_left = 10
+MarginContainer/constants/margin_right = 0
+OptionButton/font_sizes/font_size = 27
+OptionButton/icons/arrow = null
+OptionButton/styles/disabled = SubResource("StyleBoxEmpty_rulru")
+OptionButton/styles/disabled_mirrored = SubResource("StyleBoxEmpty_u81bn")
+OptionButton/styles/focus = SubResource("StyleBoxEmpty_qtdup")
+OptionButton/styles/hover = SubResource("StyleBoxEmpty_slgof")
+OptionButton/styles/hover_mirrored = SubResource("StyleBoxEmpty_djggn")
+OptionButton/styles/hover_pressed = SubResource("StyleBoxEmpty_7yeyq")
+OptionButton/styles/hover_pressed_mirrored = SubResource("StyleBoxEmpty_72be2")
+OptionButton/styles/normal = SubResource("StyleBoxEmpty_ewvp0")
+OptionButton/styles/normal_mirrored = SubResource("StyleBoxEmpty_tqp4k")
+OptionButton/styles/pressed = SubResource("StyleBoxEmpty_prqmo")
+OptionButton/styles/pressed_mirrored = SubResource("StyleBoxEmpty_t0ppr")
+Panel/styles/panel = SubResource("StyleBoxFlat_a2dju")
+PanelContainer/styles/panel = SubResource("StyleBoxFlat_5atwb")
+TabContainer/colors/font_selected_color = Color(1, 1, 1, 1)
+TabContainer/colors/font_unselected_color = Color(1, 1, 1, 1)
+TabContainer/constants/side_margin = 28
+TabContainer/font_sizes/font_size = 19
+TabContainer/styles/panel = ExtResource("11_0ad7g")
+TabContainer/styles/tab_disabled = ExtResource("11_0ad7g")
+TabContainer/styles/tab_focus = SubResource("StyleBoxEmpty_ydl51")
+TabContainer/styles/tab_hovered = ExtResource("11_0ad7g")
+TabContainer/styles/tab_selected = ExtResource("11_0ad7g")
+TabContainer/styles/tab_unselected = ExtResource("14_nqww0")
+TextEdit/font_sizes/font_size = 43
 
 [node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
@@ -322,78 +425,68 @@ offset_left = 47.0
 offset_top = 123.997
 offset_right = 235.0
 offset_bottom = 349.997
+theme = SubResource("Theme_1tuwu")
 columns = 3
 
 [node name="1" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
+theme_type_variation = &"FlatButton"
 text = "1"
 
 [node name="2" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "2"
 
 [node name="3" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "3"
 
 [node name="4" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "4"
 
 [node name="5" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "5"
 
 [node name="6" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "6"
 
 [node name="7" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "7"
 
 [node name="8" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "8"
 
 [node name="9" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "9"
 
 [node name="X" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "X"
 
 [node name="0" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = "0"
 
 [node name=">" type="Button" parent="CloudControl/Keypad/Keys"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
-theme = ExtResource("1_hi2iw")
 text = ">
 "
 
