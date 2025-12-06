@@ -11,15 +11,11 @@ import (
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/TextureButton"
-	"graphics.gd/classdb/Viewport"
-	"graphics.gd/classdb/Window"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
-	"graphics.gd/variant/Signal"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector2i"
 )
@@ -156,16 +152,9 @@ func (ui *UI) Ready() {
 	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
 	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
-		if !ui.client.isOnline() {
-			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Secret)
-			Object.To[Window.Instance](Viewport.Get(ui.AsNode())).OnFocusEntered(func() {
-				ui.Setup()
-			}, Signal.OneShot)
-		} else {
-			ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
-			if ui.Cloudy.AsCanvasItem().Visible() {
-				ui.Cloudy.Reload()
-			}
+		ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
+		if ui.Cloudy.AsCanvasItem().Visible() {
+			ui.Cloudy.Reload()
 		}
 	})
 	ui.scaling()
