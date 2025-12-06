@@ -102,12 +102,12 @@ func (c *Connectivity) setup() (err error) {
 		return xray.New(err)
 	}
 	ice, err := wsRecv[struct {
-		servers []webrtc.ICEServer `json:"data"`
+		Servers []webrtc.ICEServer `json:"data"`
 	}](c.community)
 	if err != nil {
 		return xray.New(err)
 	}
-	c.ice = ice.servers
+	c.ice = ice.Servers
 	return nil
 }
 
@@ -305,6 +305,7 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 			}
 		}
 	}()
+
 	for range make_offer {
 		peer, err := webrtc.NewPeerConnection(webrtc.Configuration{
 			ICEServers: c.ice,

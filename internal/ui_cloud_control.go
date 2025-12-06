@@ -101,11 +101,12 @@ func (ui *CloudControl) Setup() {
 		manager, err := velopack.NewUpdateManager("https://vpk.quetzal.community")
 		if err != nil {
 			Engine.Raise(err)
-			return
 		}
-		version = "v" + manager.CurrentlyInstalledVersion()
-		ui.on_process <- func(cc *CloudControl) {
-			ui.JoinCode.Versioning.Version.SetText(version)
+		if manager != nil {
+			version = "v" + manager.CurrentlyInstalledVersion()
+			ui.on_process <- func(cc *CloudControl) {
+				ui.JoinCode.Versioning.Version.SetText(version)
+			}
 		}
 		user, err := ui.client.signalling.LookupUser(context.Background())
 		if err != nil {
@@ -130,7 +131,7 @@ func (ui *CloudControl) Setup() {
 			cc.client.saveUserState()
 			cc.set_online_status_indicator(true)
 		}
-		if time.Now().After(user.TogetherUntil) {
+		if manager == nil || time.Now().After(user.TogetherUntil) {
 			return
 		}
 		latest, update, err := manager.CheckForUpdates()
