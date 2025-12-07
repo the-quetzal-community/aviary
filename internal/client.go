@@ -27,8 +27,11 @@ import (
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/InputEventMagnifyGesture"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/InputEventMouseMotion"
+	"graphics.gd/classdb/InputEventPanGesture"
+	"graphics.gd/classdb/InputEventScreenDrag"
 	"graphics.gd/classdb/Light3D"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
@@ -232,10 +235,6 @@ func (world *Client) loadUserState() {
 	if UserState.Editor == (Subject{}) {
 		UserState.Editor = Editing.Scenery
 	}
-}
-
-func (world *Client) isOnline() bool {
-	return UserState.Aviary.ID != ""
 }
 
 func (world *Client) apiJoin(code networking.Code) {
@@ -685,6 +684,30 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			world.FocalPoint.AsNode3D().Rotate(Vector3.New(0, 1, 0), -Angle.Radians(relative.X*0.005))
 			world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(relative.Y*0.005))
 		}
+	}
+	if gesture, ok := Object.As[InputEventScreenDrag.Instance](event); ok {
+		if gesture.Index() != 0 {
+			return
+		}
+		relative := gesture.Relative()
+		world.FocalPoint.AsNode3D().Rotate(Vector3.New(0, 1, 0), -Angle.Radians(relative.X*0.005))
+		world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(relative.Y*0.005))
+	}
+	if gesture, ok := Object.As[InputEventPanGesture.Instance](event); ok {
+		delta := gesture.Delta()
+		if delta.X < 0.5 && delta.Y < 0.5 && delta.X > -0.5 && delta.Y > -0.5 {
+			return
+		}
+		cam_pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
+		scale := Float.X(cam_pos.Z) / 3.0
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(delta.X*0.01*scale, 0, delta.Y*0.01*scale))
+	}
+	if gesture, ok := Object.As[InputEventMagnifyGesture.Instance](event); ok {
+		factor := gesture.Factor()
+		if factor < 1.005 && factor > 0.995 {
+			return
+		}
+		world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, (1-factor)*5))
 	}
 	// Tilt the camera up and down with R and F.
 	if !world.scroll_lock {
