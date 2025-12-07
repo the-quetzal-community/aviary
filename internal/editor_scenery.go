@@ -29,7 +29,7 @@ func (editor *SceneryEditor) Ready() {
 	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.1))
 }
 
-func (editor *SceneryEditor) Input(event InputEvent.Instance) {
+func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 		if Input.IsKeyPressed(Input.KeyShift) {
 			if event.ButtonIndex() == Input.MouseButtonWheelUp {

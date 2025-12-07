@@ -90,7 +90,7 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 	}
 }
 
-func (editor *VehicleEditor) Input(event InputEvent.Instance) {
+func (editor *VehicleEditor) UnhandledInput(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
 		editor.client.entity_ids[editor.client.id]++
 		var mirror Vector3.XYZ

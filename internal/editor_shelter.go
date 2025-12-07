@@ -272,7 +272,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	return nil
 }
 
-func (editor *ShelterEditor) Input(event InputEvent.Instance) {
+func (editor *ShelterEditor) UnhandledInput(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsPressed() {
 		editor.Preview.Remove()
 	}
