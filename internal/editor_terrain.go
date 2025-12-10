@@ -72,11 +72,13 @@ func (fe *TerrainEditor) EnableEditor() {
 }
 
 func (fe *TerrainEditor) ChangeEditor() {
-	fe.shader.SetShaderParameter("height", 0.0)
-	fe.shader.SetShaderParameter("brush_active", false)
-	fe.shader.SetShaderParameter("paint_active", false)
-	fe.shader_buried.SetShaderParameter("height", 0.0)
-	fe.shader_buried.SetShaderParameter("brush_active", false)
+	fe.shader.
+		SetShaderParameter("height", 0.0).
+		SetShaderParameter("brush_active", false).
+		SetShaderParameter("paint_active", false)
+	fe.shader_buried.
+		SetShaderParameter("height", 0.0).
+		SetShaderParameter("brush_active", false)
 	fe.BrushActive = false
 	fe.PaintActive = false
 }
@@ -132,21 +134,21 @@ func (tr *TerrainEditor) Ready() {
 	textures.AsImageTextureLayered().CreateFromImages([]Image.Instance{
 		grass.AsTexture2D().GetImage(),
 	})
-	tr.shader = ShaderMaterial.New()
-	tr.shader.SetShader(shader)
-	tr.shader.SetShaderParameter("albedo", Color.RGBA{1, 1, 1, 1})
-	tr.shader.SetShaderParameter("uv1_scale", Vector2.New(8, 8))
-	tr.shader.SetShaderParameter("texture_albedo", textures)
-	tr.shader.SetShaderParameter("radius", 2.0)
-	tr.shader.SetShaderParameter("height", 0.0)
+	tr.shader = ShaderMaterial.New().
+		SetShader(shader).
+		SetShaderParameter("albedo", Color.RGBA{1, 1, 1, 1}).
+		SetShaderParameter("uv1_scale", Vector2.New(8, 8)).
+		SetShaderParameter("texture_albedo", textures).
+		SetShaderParameter("radius", 2.0).
+		SetShaderParameter("height", 0.0)
 
 	rock := Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")
 	buried := Resource.Load[Shader.Instance]("res://shader/buried.gdshader")
-	tr.shader_buried = ShaderMaterial.New()
-	tr.shader_buried.SetShader(buried)
-	tr.shader_buried.SetShaderParameter("texture_albedo", rock)
-	tr.shader_buried.SetShaderParameter("radius", 2.0)
-	tr.shader_buried.SetShaderParameter("height", 0.0)
+	tr.shader_buried = ShaderMaterial.New().
+		SetShader(buried).
+		SetShaderParameter("texture_albedo", rock).
+		SetShaderParameter("radius", 2.0).
+		SetShaderParameter("height", 0.0)
 
 	tr.BrushRadius = 2.0
 
@@ -186,8 +188,9 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		case res := <-vr.texture:
 			texture := Resource.Load[Texture2D.Instance](res)
 			vr.BrushDesign = res.String()
-			vr.shader.SetShaderParameter("paint_texture", texture)
-			vr.shader.SetShaderParameter("paint_active", true)
+			vr.shader.
+				SetShaderParameter("paint_texture", texture).
+				SetShaderParameter("paint_active", true)
 			vr.PaintActive = true
 		case event := <-vr.brushEvents:
 			vr.BrushTarget = event.BrushTarget
@@ -396,8 +399,9 @@ func (tile *TerrainTile) generateBase() {
 	terrains.AsImageTextureLayered().CreateFromImages(tile.albedos)
 	bumpmaps := Texture2DArray.New()
 	bumpmaps.AsImageTextureLayered().CreateFromImages(tile.normal_maps)
-	tile.shader.SetShaderParameter("texture_albedo", terrains)
-	tile.shader.SetShaderParameter("texture_normal", bumpmaps)
+	tile.shader.
+		SetShaderParameter("texture_albedo", terrains).
+		SetShaderParameter("texture_normal", bumpmaps)
 	tile.reloadSides()
 }
 
@@ -438,8 +442,9 @@ func (tile *TerrainTile) Reload() {
 			terrains.AsImageTextureLayered().CreateFromImages(tile.albedos)
 			bumpmaps := Texture2DArray.New()
 			bumpmaps.AsImageTextureLayered().CreateFromImages(tile.normal_maps)
-			tile.shader.SetShaderParameter("texture_albedo", terrains)
-			tile.shader.SetShaderParameter("texture_normal", bumpmaps)
+			tile.shader.
+				SetShaderParameter("texture_albedo", terrains).
+				SetShaderParameter("texture_normal", bumpmaps)
 		}
 		offset := Vector3.XYZ{
 			-8, 0, -8,

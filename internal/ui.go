@@ -131,8 +131,9 @@ func (ui *UI) Ready() {
 	})
 	Callable.Defer(Callable.New(func() {
 		pos := ui.ModeGeometry.AsControl().Position()
-		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-4, -4)))
-		ui.ModeGeometry.AsControl().SetSize(Vector2.New(32, 32))
+		ui.ModeGeometry.AsControl().
+			SetPosition(Vector2.Add(pos, Vector2.New(-4, -4))).
+			SetSize(Vector2.New(32, 32))
 	}))
 
 	ui.themes = append(ui.themes, "")

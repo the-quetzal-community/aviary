@@ -83,10 +83,11 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 	scene := SceneTree.Get(editor.AsNode())
 	switch view {
 	case "explore":
-		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
-		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
-		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
-		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
+		scene.
+			SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true).
+			SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit).
+			SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false).
+			SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
 		for i := 0; i <= editor.levels; i++ {
 			scene.SetGroup("floor_"+strconv.Itoa(i), "visible", true)
 			scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeInherit)
@@ -100,10 +101,11 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		pos.Y = 0
 		editor.client.FocalPoint.SetPosition(pos)
 	case "unicode/G":
-		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
-		scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
-		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
-		scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
+		scene.
+			SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true).
+			SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit).
+			SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false).
+			SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
 		shader, _ := editor.grid_shader.Instance()
 		shader.SetShaderParameter("center_offset", Vector3.New(0, 0, 0))
 		editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
@@ -111,15 +113,17 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		pos.Y = 0
 		editor.client.FocalPoint.SetPosition(pos)
 		editor.current_level = 0
-		scene.SetGroup("floor_0", "visible", true)
-		scene.SetGroup("floor_0", "process_mode", Node.ProcessModeInherit)
-		scene.SetGroup("floor_whole_0", "visible", false)
-		scene.SetGroup("floor_whole_0", "process_mode", Node.ProcessModeDisabled)
-		scene.SetGroup("floor_short_0", "visible", true)
-		scene.SetGroup("floor_short_0", "process_mode", Node.ProcessModeInherit)
+		scene.
+			SetGroup("floor_0", "visible", true).
+			SetGroup("floor_0", "process_mode", Node.ProcessModeInherit).
+			SetGroup("floor_whole_0", "visible", false).
+			SetGroup("floor_whole_0", "process_mode", Node.ProcessModeDisabled).
+			SetGroup("floor_short_0", "visible", true).
+			SetGroup("floor_short_0", "process_mode", Node.ProcessModeInherit)
 		for i := 1; i <= editor.levels; i++ {
-			scene.SetGroup("floor_"+strconv.Itoa(i), "visible", false)
-			scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeDisabled)
+			scene.
+				SetGroup("floor_"+strconv.Itoa(i), "visible", false).
+				SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeDisabled)
 		}
 	case "unicode/+":
 		editor.levels++
@@ -128,10 +132,11 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		if level_str, ok := strings.CutPrefix(view, "unicode/"); ok {
 			level, err := strconv.Atoi(level_str)
 			if err == nil {
-				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true)
-				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
-				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false)
-				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
+				scene.
+					SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", true).
+					SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit).
+					SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", false).
+					SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
 				editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}, D: Float.X(level)}
 				shader, _ := editor.grid_shader.Instance()
 				shader.SetShaderParameter("center_offset", Vector3.New(0, float64(level), 0))
@@ -147,10 +152,11 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 						scene.SetGroup("floor_"+strconv.Itoa(i), "process_mode", Node.ProcessModeDisabled)
 					}
 				}
-				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", false)
-				scene.SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled)
-				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", true)
-				scene.SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
+				scene.
+					SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "visible", false).
+					SetGroup("floor_whole_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeDisabled).
+					SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "visible", true).
+					SetGroup("floor_short_"+strconv.Itoa(editor.current_level), "process_mode", Node.ProcessModeInherit)
 			}
 		}
 	}
@@ -223,9 +229,10 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			exists.AsNode().QueueFree()
 			return nil
 		}
-		exists.SetPosition(change.Offset)
-		exists.SetRotation(change.Angles)
-		exists.SetScale(Vector3.New(0.2, 0.2, 0.2))
+		exists.
+			SetPosition(change.Offset).
+			SetRotation(change.Angles).
+			SetScale(Vector3.New(0.2, 0.2, 0.2))
 		return nil
 	}
 	var node Node3D.Instance
