@@ -45,8 +45,9 @@ func (fe *BoulderEditor) Ready() {
 	fe.Mesh.SetMesh(fe.rock.AsMesh())
 
 	standard := StandardMaterial3D.New()
-	standard.AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/mineral.jpg"))
-	standard.AsBaseMaterial3D().SetUv1Triplanar(true)
+	standard.AsBaseMaterial3D().
+		SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")).
+		SetUv1Triplanar(true)
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, standard.AsMaterial())
 }
 

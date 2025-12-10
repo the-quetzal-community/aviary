@@ -75,8 +75,8 @@ func (world *Client) StartEditing(subject Subject) {
 		editor = world.VehicleEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/vehicle.svg"))
 	}
-	editor.AsNode3D().SetVisible(true)
-	editor.AsNode3D().AsNode().SetProcessMode(Node.ProcessModeInherit)
+	editor.AsNode3D().SetVisible(true).
+		AsNode().SetProcessMode(Node.ProcessModeInherit)
 	world.Editing = subject
 	world.ui.Editor.editor = editor
 	editor.EnableEditor()

@@ -148,9 +148,10 @@ func (ui *UI) Ready() {
 		ui.themes = append(ui.themes, name)
 		count++
 	}
-	ui.ExpansionIndicator.AsControl().SetMouseFilter(Control.MouseFilterPass)
-	ui.ExpansionIndicator.AsBaseButton().SetToggleMode(true)
-	ui.ExpansionIndicator.AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer)
+	ui.ExpansionIndicator.
+		AsBaseButton().SetToggleMode(true).
+		AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer).
+		AsControl().SetMouseFilter(Control.MouseFilterPass)
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
 		if ui.Cloudy.AsCanvasItem().Visible() {

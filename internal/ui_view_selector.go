@@ -45,10 +45,10 @@ func (selector *ViewSelector) Refresh(view int, views []string) {
 	}
 	selector.AsCanvasItem().SetVisible(true)
 	for _, view := range views {
-		if strings.HasPrefix(view, "unicode/") {
-			var label = Button.New()
-			label.SetText(strings.TrimPrefix(view, "unicode/"))
-			label.AsControl().SetCustomMinimumSize(Vector2.New(64, 64))
+		if symbols, ok := strings.CutPrefix(view, "unicode/"); ok {
+			var label = Button.New().
+				SetText(symbols).
+				AsControl().SetCustomMinimumSize(Vector2.New(64, 64))
 			selector.Views.AsNode().AddChild(label.AsNode())
 		} else {
 			var button = TextureButton.New()
@@ -57,9 +57,10 @@ func (selector *ViewSelector) Refresh(view int, views []string) {
 			} else {
 				button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/dressing.svg"))
 			}
-			button.SetIgnoreTextureSize(true)
-			button.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-			button.AsControl().SetCustomMinimumSize(Vector2.New(64, 64))
+			button.
+				SetIgnoreTextureSize(true).
+				SetStretchMode(TextureButton.StretchKeepAspectCentered).
+				AsControl().SetCustomMinimumSize(Vector2.New(64, 64))
 			selector.Views.AsNode().AddChild(button.AsNode())
 		}
 	}

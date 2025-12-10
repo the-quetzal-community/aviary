@@ -164,8 +164,9 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 	case !ok && change.Mirror == (Vector3.XYZ{}):
 		return
 	}
-	node.AsNode3D().SetPosition(Vector3.Add(parent.Position(), change.Mirror))
-	node.AsNode3D().SetRotation(Euler.Radians{X: change.Angles.X, Y: -change.Angles.Y, Z: -change.Angles.Z})
+	node.
+		SetPosition(Vector3.Add(parent.Position(), change.Mirror)).
+		SetRotation(Euler.Radians{X: change.Angles.X, Y: -change.Angles.Y, Z: -change.Angles.Z})
 }
 
 func (editor *VehicleEditor) Change(change musical.Change) error {
@@ -181,9 +182,10 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 			exists.AsNode().QueueFree()
 			return nil
 		}
-		exists.SetPosition(change.Offset)
-		exists.SetRotation(change.Angles)
-		exists.SetScale(Vector3.New(0.3, 0.3, 0.3))
+		exists.
+			SetPosition(change.Offset).
+			SetRotation(change.Angles).
+			SetScale(Vector3.New(0.3, 0.3, 0.3))
 		return nil
 	}
 	var node Node3D.Instance
@@ -193,9 +195,10 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 	} else {
 		node = Node3D.New()
 	}
-	node.SetPosition(change.Offset)
-	node.SetRotation(change.Angles)
-	node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, 0.3)))
+	node.
+		SetPosition(change.Offset).
+		SetRotation(change.Angles).
+		SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, 0.3)))
 	editor.entity_to_object[change.Entity] = node.ID()
 	editor.object_to_entity[node.ID()] = change.Entity
 	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
@@ -234,8 +237,9 @@ func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 			editor.Preview.AsNode3D().SetGlobalPosition(pos)
 			if pos.X != 0 {
 				pos.X = -pos.X
-				editor.MirrorPreview.AsNode3D().SetGlobalPosition(pos)
-				editor.MirrorPreview.AsNode3D().SetVisible(true)
+				editor.MirrorPreview.AsNode3D().
+					SetGlobalPosition(pos).
+					SetVisible(true)
 			} else {
 				editor.MirrorPreview.AsNode3D().SetVisible(false)
 			}
@@ -285,8 +289,9 @@ func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 		if editor.MirrorPreview.AsNode().GetChildCount() > 0 {
 			Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
 		}
-		editor.Preview.SetDesign(design)
-		editor.Preview.SetRotation(Euler.Radians{})
+		editor.Preview.
+			SetDesign(design).
+			SetRotation(Euler.Radians{})
 		editor.MirrorPreview.SetDesign(design)
 	}
 }

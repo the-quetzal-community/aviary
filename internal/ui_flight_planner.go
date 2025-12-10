@@ -57,24 +57,25 @@ func (fl *FlightPlanner) Reload() {
 	for save := range DirAccess.Open("user://snaps").Iter() {
 		if strings.HasSuffix(save, ".png") {
 			fl.processed[save] = struct{}{}
-			mapButton := TextureButton.New()
-			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(Image.LoadFromFile("user://snaps/" + save)).AsTexture2D())
-			mapButton.AsBaseButton().OnPressed(func() {
-				record, err := base64.RawURLEncoding.DecodeString(strings.TrimSuffix(save, ".png"))
-				if err != nil {
-					Engine.Raise(err)
-					return
-				}
-				fresh := NewClientLoading(musical.WorkID(record))
-				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
-					child.QueueFree()
-				}
-				SceneTree.Add(fresh)
-			})
-			mapButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-			mapButton.SetIgnoreTextureSize(true)
-			mapButton.SetStretchMode(TextureButton.StretchKeepAspect)
-			fl.Maps.AsNode().AddChild(mapButton.AsNode())
+			fl.Maps.AsNode().AddChild(TextureButton.New().
+				SetIgnoreTextureSize(true).
+				SetStretchMode(TextureButton.StretchKeepAspect).
+				AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(Image.LoadFromFile("user://snaps/" + save)).AsTexture2D()).
+				AsBaseButton().OnPressed(
+				func() {
+					record, err := base64.RawURLEncoding.DecodeString(strings.TrimSuffix(save, ".png"))
+					if err != nil {
+						Engine.Raise(err)
+						return
+					}
+					fresh := NewClientLoading(musical.WorkID(record))
+					for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
+						child.QueueFree()
+					}
+					SceneTree.Add(fresh)
+				}).
+				AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).AsNode(),
+			)
 		}
 	}
 	go fl.fetchCloudSnaps()
@@ -112,23 +113,24 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 			var image = Image.New()
 			image.LoadPngFromBuffer(buf)
 			image.SavePng("user://snaps/" + string(save) + ".png")
-			mapButton := Object.Leak(TextureButton.New())
-			mapButton.AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(image).AsTexture2D())
-			mapButton.AsBaseButton().OnPressed(func() {
-				record, err := base64.RawURLEncoding.DecodeString(string(save))
-				if err != nil {
-					Engine.Raise(err)
-					return
-				}
-				fresh := NewClientLoading(musical.WorkID(record))
-				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
-					child.QueueFree()
-				}
-				SceneTree.Add(fresh)
-			})
-			mapButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-			mapButton.SetIgnoreTextureSize(true)
-			mapButton.SetStretchMode(TextureButton.StretchKeepAspect)
+			mapButton := Object.Leak(TextureButton.New()).
+				SetIgnoreTextureSize(true).
+				SetStretchMode(TextureButton.StretchKeepAspect).
+				AsTextureButton().SetTextureNormal(ImageTexture.CreateFromImage(image).AsTexture2D()).
+				AsBaseButton().OnPressed(
+				func() {
+					record, err := base64.RawURLEncoding.DecodeString(string(save))
+					if err != nil {
+						Engine.Raise(err)
+						return
+					}
+					fresh := NewClientLoading(musical.WorkID(record))
+					for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
+						child.QueueFree()
+					}
+					SceneTree.Add(fresh)
+				}).
+				AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
 			select {
 			case fl.on_process <- func() {
 				fl.Maps.AsNode().AddChild(mapButton.AsNode())

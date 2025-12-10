@@ -103,7 +103,8 @@ func NewMaterialSharingDecal(replace ImporterMeshInstance3D.Instance) *MaterialS
 
 func (decal *MaterialSharingDecal) Ready() {
 	mat := Object.To[BaseMaterial3D.Instance](Resource.Load[Material.Instance](decal.Material))
-	decal.AsDecal().SetTextureAlbedo(mat.AlbedoTexture())
-	decal.AsDecal().SetTextureNormal(mat.NormalTexture())
-	decal.AsDecal().SetTextureOrm(mat.RoughnessTexture())
+	decal.AsDecal().
+		SetTextureAlbedo(mat.AlbedoTexture()).
+		SetTextureNormal(mat.NormalTexture()).
+		SetTextureOrm(mat.RoughnessTexture())
 }

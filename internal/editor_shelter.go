@@ -262,9 +262,10 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		}
 	}
 	node.AsNode().AddToGroup("floor_" + strconv.Itoa(level))
-	node.SetPosition(change.Offset)
-	node.SetRotation(change.Angles)
-	node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.2, 0.2, 0.2)))
+	node.
+		SetPosition(change.Offset).
+		SetRotation(change.Angles).
+		SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.2, 0.2, 0.2)))
 	editor.entity_to_object[change.Entity] = node.ID()
 	editor.object_to_entity[node.ID()] = change.Entity
 	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
@@ -336,8 +337,9 @@ func (editor *ShelterEditor) PhysicsProcess(delta Float.X) {
 					}
 					// Only rotate around Y axis to face the surface
 					angle := Angle.Atan2(normal.X, normal.Z)
-					editor.Preview.AsNode3D().SetRotation(Euler.Radians{Y: angle})
-					editor.Preview.AsNode3D().SetGlobalPosition(point)
+					editor.Preview.AsNode3D().
+						SetRotation(Euler.Radians{Y: angle}).
+						SetGlobalPosition(point)
 				case "chimney":
 					point.Y -= 0.1
 					editor.Preview.AsNode3D().SetGlobalPosition(point)

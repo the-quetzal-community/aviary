@@ -108,12 +108,13 @@ func (de *DesignExplorer) Ready() {
 			continue
 		}
 		if FileAccess.FileExists("res://library/" + name + "/icon.png.import") {
-			button := TextureButton.New()
-			button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png"))
-			button.SetIgnoreTextureSize(true)
-			button.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-			button.AsControl().SetSizeFlagsHorizontal(Control.SizeShrinkBegin)
-			button.AsControl().SetCustomMinimumSize(Vector2.New(72, 64))
+			button := TextureButton.New().
+				SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png")).
+				SetIgnoreTextureSize(true).
+				SetStretchMode(TextureButton.StretchKeepAspectCentered)
+			button.AsControl().
+				SetSizeFlagsHorizontal(Control.SizeShrinkBegin).
+				SetCustomMinimumSize(Vector2.New(72, 64))
 			button.AsBaseButton().OnPressed(func() {
 				for theme := range de.themes_available_for_editor[editorMode{
 					Editor: de.client.Editing,
@@ -298,31 +299,33 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
 						resource = tscn
 					}
-					ImageButton := TextureButton.New()
-					ImageButton.SetTextureNormal(preview)
-					ImageButton.SetIgnoreTextureSize(true)
-					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
-					ImageButton.AsBaseButton().OnPressed(func() {
-						ui.editor.SelectDesign(mode, resource)
-						ui.closeDrawer()
-					})
-					elements.AsNode().AddChild(ImageButton.AsNode())
+					elements.AsNode().AddChild(TextureButton.New().
+						SetTextureNormal(preview).
+						SetIgnoreTextureSize(true).
+						SetStretchMode(TextureButton.StretchKeepAspectCentered).
+						AsBaseButton().OnPressed(
+						func() {
+							ui.editor.SelectDesign(mode, resource)
+							ui.closeDrawer()
+						}).
+						AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).
+						AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode(),
+					)
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
 					resource := library_path + "/" + tab + "/" + resource
-					ImageButton := TextureButton.New()
-					ImageButton.SetTextureNormal(texture)
-					ImageButton.SetIgnoreTextureSize(true)
-					ImageButton.SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					ImageButton.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					ImageButton.AsControl().SetMouseFilter(Control.MouseFilterStop)
-					ImageButton.AsBaseButton().OnPressed(func() {
-						ui.editor.SelectDesign(mode, resource)
-						ui.closeDrawer()
-					})
-					elements.AsNode().AddChild(ImageButton.AsNode())
+					elements.AsNode().AddChild(TextureButton.New().
+						SetTextureNormal(texture).
+						SetIgnoreTextureSize(true).
+						SetStretchMode(TextureButton.StretchKeepAspectCentered).
+						AsBaseButton().OnPressed(
+						func() {
+							ui.editor.SelectDesign(mode, resource)
+							ui.closeDrawer()
+						}).
+						AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).
+						AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode(),
+					)
 				}
 			}
 			gridflow.Update()

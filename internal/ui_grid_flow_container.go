@@ -22,8 +22,9 @@ type GridFlowContainer struct {
 func (grid *GridFlowContainer) Ready() {
 	grid.Scrollable.AsControl().SetAnchorsPreset(Control.PresetFullRect)
 	if grid.scroll_lock {
-		grid.Scrollable.SetHorizontalScrollMode(ScrollContainer.ScrollModeDisabled)
-		grid.Scrollable.SetVerticalScrollMode(ScrollContainer.ScrollModeDisabled)
+		grid.Scrollable.
+			SetHorizontalScrollMode(ScrollContainer.ScrollModeDisabled).
+			SetVerticalScrollMode(ScrollContainer.ScrollModeDisabled)
 	}
 	grid.AsControl().SetClipContents(true)
 }

@@ -336,36 +336,37 @@ func (world *Client) Ready() {
 		world.AsNode().AddChild(editor.AsNode())
 		editor.Setup()
 	}
-	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
-	world.FocalPoint.Lens.Camera.AsNode3D().LookAt(Vector3.Zero)
+	world.FocalPoint.Lens.Camera.AsNode3D().
+		SetPosition(Vector3.New(0, 1, 3)).
+		LookAt(Vector3.Zero)
 
 	world.Light.AsNode3D().SetRotation(Euler.Radians{X: Angle.InRadians(-17), Y: Angle.InRadians(30), Z: Angle.InRadians(11)})
-	world.Light.AsLight3D().SetLightEnergy(1)
-	world.Light.AsLight3D().SetShadowEnabled(true)
-	world.Light.AsLight3D().SetShadowBias(0.015)
-	world.Light.AsLight3D().SetShadowNormalBias(0)
-	world.Light.AsLight3D().SetShadowBlur(2.0)
+	world.Light.
+		SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal).
+		AsLight3D().
+		SetLightEnergy(1).
+		SetShadowEnabled(true).
+		SetShadowBias(0.015).
+		SetShadowNormalBias(0).
+		SetShadowBlur(2.0)
 	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
-	world.Light.SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal)
 
-	env := Environment.New()
-	env.SetBackgroundMode(Environment.BgClearColor)
-	env.SetAmbientLightColor(Color.X11.White)
-	env.SetAmbientLightSkyContribution(0)
-	env.SetAmbientLightSource(Environment.AmbientSourceColor)
-	env.SetAmbientLightEnergy(0.5)
+	env := Environment.New().
+		SetBackgroundMode(Environment.BgClearColor).
+		SetAmbientLightColor(Color.X11.White).
+		SetAmbientLightSkyContribution(0).
+		SetAmbientLightSource(Environment.AmbientSourceColor).
+		SetAmbientLightEnergy(0.5)
 
-	worldenv := WorldEnvironment.New()
-	worldenv.SetEnvironment(env)
+	worldenv := WorldEnvironment.New().SetEnvironment(env)
 
 	world.AsNode().AddChild(worldenv.AsNode())
 	RenderingServer.SetDebugGenerateWireframes(true)
 
-	cover := QuadMesh.New()
-	cover.AsPlaneMesh().SetSize(Vector2.New(2, 2))
-	world.FocalPoint.Lens.Camera.Cover.AsNode3D().RotateObjectLocal(Vector3.New(0, 1, 0), Angle.Pi)
-	world.FocalPoint.Lens.Camera.Cover.AsGeometryInstance3D().SetExtraCullMargin(16384)
-	world.FocalPoint.Lens.Camera.Cover.SetMesh(cover.AsMesh())
+	world.FocalPoint.Lens.Camera.Cover.
+		SetMesh(QuadMesh.New().AsPlaneMesh().SetSize(Vector2.New(2, 2)).AsMesh()).
+		AsGeometryInstance3D().SetExtraCullMargin(16384).
+		AsNode3D().RotateObjectLocal(Vector3.New(0, 1, 0), Angle.Pi)
 
 	fmt.Println("Client setup complete")
 }
@@ -464,10 +465,10 @@ func (world musicalImpl) Import(uri musical.Import) error {
 				continue
 			}
 			if scene, ok := world.packed_scenes[uri.Design].Instance(); ok {
-				new_node := Object.To[Node3D.Instance](scene.Instantiate())
-				new_node.SetPosition(node.AsNode3D().Position())
-				new_node.SetRotation(node.AsNode3D().Rotation())
-				new_node.SetScale(node.AsNode3D().Scale())
+				new_node := Object.To[Node3D.Instance](scene.Instantiate()).
+					SetPosition(node.AsNode3D().Position()).
+					SetRotation(node.AsNode3D().Rotation()).
+					SetScale(node.AsNode3D().Scale())
 				if new_node.AsNode().HasNode("AnimationPlayer") {
 					anim := Object.To[AnimationPlayer.Instance](new_node.AsNode().GetNode("AnimationPlayer"))
 					anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
@@ -512,9 +513,10 @@ func (world musicalImpl) Change(con musical.Change) error {
 				return
 			}
 
-			exists.SetPosition(con.Offset)
-			exists.SetRotation(con.Angles)
-			exists.SetScale(Vector3.New(0.1, 0.1, 0.1))
+			exists.
+				SetPosition(con.Offset).
+				SetRotation(con.Angles).
+				SetScale(Vector3.New(0.1, 0.1, 0.1))
 			return
 		}
 		var node Node3D.Instance
@@ -531,9 +533,10 @@ func (world musicalImpl) Change(con musical.Change) error {
 				anim.PlayNamed("Idle")
 			}
 		}
-		node.SetPosition(con.Offset)
-		node.SetRotation(con.Angles)
-		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
+		node.
+			SetPosition(con.Offset).
+			SetRotation(con.Angles).
+			SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
 		world.entity_to_object[con.Entity] = node.ID()
 		world.object_to_entity[node.ID()] = con.Entity
 		world.design_to_entity[con.Design] = append(world.design_to_entity[con.Design], node.ID())
@@ -586,10 +589,10 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 			PropertyTweener.Make(tween, avatar.AsObject(), "rotation", view.Angles, 0.1)
 			return
 		}
-		avatar := Resource.Load[PackedScene.Is[Node3D.Instance]]("res://library/everything/avatar/bald_eagle.glb").Instantiate()
-		avatar.SetPosition(view.Offset)
-		avatar.SetRotation(view.Angles)
-		avatar.SetScale(Vector3.New(0.1, 0.1, 0.1))
+		avatar := Resource.Load[PackedScene.Is[Node3D.Instance]]("res://library/everything/avatar/bald_eagle.glb").Instantiate().
+			SetPosition(view.Offset).
+			SetRotation(view.Angles).
+			SetScale(Vector3.New(0.1, 0.1, 0.1))
 		if avatar.AsNode().HasNode("AnimationPlayer") {
 			anim := Object.To[AnimationPlayer.Instance](avatar.AsNode().GetNode("AnimationPlayer"))
 			if anim.AsAnimationMixer().HasAnimation("Flap") {

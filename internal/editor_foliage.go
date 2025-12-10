@@ -41,13 +41,13 @@ func (fe *FoliageEditor) Ready() {
 	fe.tree = Object.Leak(NewTree())
 	fe.Mesh.SetMesh(fe.tree.AsMesh())
 
-	leaflet := StandardMaterial3D.New()
-	leaflet.AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/leaflet.png"))
-	leaflet.AsBaseMaterial3D().SetTransparency(BaseMaterial3D.TransparencyAlphaScissor)
+	leaflet := StandardMaterial3D.New().
+		AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/leaflet.png")).
+		AsBaseMaterial3D().SetTransparency(BaseMaterial3D.TransparencyAlphaScissor)
 	fe.Mesh.Mesh().SurfaceSetMaterial(1, leaflet.AsMaterial())
 
-	timbers := StandardMaterial3D.New()
-	timbers.AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/timbers.png"))
+	timbers := StandardMaterial3D.New().
+		AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/timbers.png"))
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, timbers.AsMaterial())
 }
 

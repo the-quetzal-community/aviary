@@ -362,11 +362,10 @@ func (tile *TerrainTile) generateBase() {
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
 	)
-	tile.Mesh.SetMesh(mesh.AsMesh())
+	tile.Mesh.
+		SetMesh(mesh.AsMesh()).
+		AsNode3D().SetPosition(Vector3.New(-8, 0, -8))
 	tile.Mesh.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
-	tile.Mesh.AsNode3D().SetPosition(Vector3.XYZ{
-		-8, 0, -8,
-	})
 	//
 	// We set this up so that we can figure out which point on the terrain was clicked on input.
 	//
@@ -383,10 +382,10 @@ func (tile *TerrainTile) generateBase() {
 		collision_shape = CollisionShape3D.New()
 		tile.AsNode().AddChild(collision_shape.AsNode())
 	}
-	shape := HeightMapShape3D.New()
-	shape.SetMapDepth(17)
-	shape.SetMapWidth(17)
-	shape.SetMapData(tile.heights)
+	shape := HeightMapShape3D.New().
+		SetMapDepth(17).
+		SetMapWidth(17).
+		SetMapData(tile.heights)
 	collision_shape.SetShape(shape.AsShape3D())
 	//
 	// Whenever there is a new texture added to the tile, we need to recreate these texture arrays.

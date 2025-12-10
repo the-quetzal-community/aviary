@@ -22,7 +22,7 @@ func (preview *PreviewRenderer) Design() string {
 	return preview.design
 }
 
-func (preview *PreviewRenderer) SetDesign(design string) {
+func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 	preview.design = design
 	instance := Resource.Load[PackedScene.Is[Node3D.Instance]](design).Instantiate()
 	preview.remove_collisions(instance.AsNode())
@@ -30,6 +30,7 @@ func (preview *PreviewRenderer) SetDesign(design string) {
 		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
 	}
 	preview.AsNode().AddChild(instance.AsNode())
+	return preview
 }
 
 func (preview *PreviewRenderer) Remove() {
