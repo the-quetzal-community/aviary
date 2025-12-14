@@ -1,17 +1,19 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/TextureButton"
-	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector2"
 )
 
 type EditorIndicator struct {
-	TextureRect.Extension[EditorIndicator]
+	Control.Extension[EditorIndicator]
+
+	Triangle *Triangle
 
 	EditorIcon     TextureButton.Instance
 	EditorSelector struct {
@@ -28,6 +30,7 @@ type EditorIndicator struct {
 }
 
 func (ed *EditorIndicator) Ready() {
+	ed.Triangle.AsControl().SetAnchorsPreset(Control.PresetFullRect)
 	ed.EditorIcon.AsBaseButton().OnPressed(ed.toggle)
 	for i, child := range ed.EditorSelector.EditorTypes.AsNode().GetChildren() {
 		button, ok := Object.As[TextureButton.Instance](child)

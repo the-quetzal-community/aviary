@@ -211,9 +211,7 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 	fw.lock.Lock()
 	n, err = fw.writer.Write(p)
 	if fw.sync.CompareAndSwap(false, true) {
-		PendingSaves.Add(1)
-		go func() {
-			defer PendingSaves.Done()
+		PendingSaves.Go(func() {
 			defer fw.sync.Store(false)
 			select {
 			case <-ShuttingDown:
@@ -236,7 +234,7 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 			if err := fw.community.InsertSave(ctx, signalling.WorkID(fw.name), signalling.PartID(UserState.Device), file); err != nil {
 				Engine.Raise(err)
 			}
-		}()
+		})
 	}
 	fw.lock.Unlock()
 	fw.size += int64(n)

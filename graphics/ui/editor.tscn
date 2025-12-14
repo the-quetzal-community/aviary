@@ -53,17 +53,6 @@ TextEdit/constants/caret_width = 0
 TextEdit/font_sizes/font_size = 30
 TextEdit/styles/normal = SubResource("StyleBoxFlat_5on0m")
 
-[sub_resource type="Gradient" id="Gradient_28l1f"]
-offsets = PackedFloat32Array(0.362554, 0.444805, 0.504329)
-colors = PackedColorArray(0.75784, 0.794741, 0.803057, 1, 0.324203, 0.324203, 0.324203, 1, 1, 1, 1, 0)
-
-[sub_resource type="GradientTexture2D" id="GradientTexture2D_75vv8"]
-gradient = SubResource("Gradient_28l1f")
-width = 32
-height = 32
-fill = 1
-fill_from = Vector2(0.5, 0.5)
-
 [sub_resource type="SystemFont" id="SystemFont_yj2rr"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_y1or3"]
@@ -164,6 +153,17 @@ TabContainer/styles/tab_hovered = ExtResource("11_0ad7g")
 TabContainer/styles/tab_selected = ExtResource("11_0ad7g")
 TabContainer/styles/tab_unselected = ExtResource("14_nqww0")
 TextEdit/font_sizes/font_size = 43
+
+[sub_resource type="Gradient" id="Gradient_28l1f"]
+offsets = PackedFloat32Array(0.362554, 0.444805, 0.504329)
+colors = PackedColorArray(0.75784, 0.794741, 0.803057, 1, 0.324203, 0.324203, 0.324203, 1, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_75vv8"]
+gradient = SubResource("Gradient_28l1f")
+width = 32
+height = 32
+fill = 1
+fill_from = Vector2(0.5, 0.5)
 
 [node name="AviaryUI" type="AviaryUI"]
 anchors_preset = 15
@@ -301,6 +301,7 @@ offset_right = -0.0087890625
 offset_bottom = 13.999997
 
 [node name="CloudControl" type="CloudControl" parent="."]
+z_index = 1
 layout_mode = 0
 offset_left = 8.9975
 offset_top = 4.00561
@@ -308,12 +309,58 @@ offset_right = 400.997
 offset_bottom = 135.006
 mouse_filter = 2
 
+[node name="Triangle" type="Triangle" parent="CloudControl"]
+color = Color(0.27728483, 0.27728483, 0.27728483, 1)
+layout_mode = 0
+offset_left = 103.88081
+offset_top = 191.06485
+offset_right = 266.89996
+offset_bottom = 330.3
+scale = Vector2(-0.3822345, -0.3822345)
+
+[node name="ModeGeometry" type="TextureButton" parent="CloudControl"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(24, 32)
+layout_mode = 0
+offset_left = 36.92013
+offset_top = 128.02306
+offset_right = 60.920135
+offset_bottom = 168.02307
+texture_normal = ExtResource("11_ny7lf")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="ModeMaterial" type="TextureButton" parent="CloudControl"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(24, 32)
+layout_mode = 0
+offset_left = 83.920135
+offset_top = 128.05238
+offset_right = 107.920135
+offset_bottom = 168.05241
+texture_normal = ExtResource("11_8sq1u")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="ModeDressing" type="TextureButton" parent="CloudControl"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(28, 32)
+layout_mode = 0
+offset_left = 57.89705
+offset_top = 165.03613
+offset_right = 85.89705
+offset_bottom = 205.03613
+texture_normal = ExtResource("13_n8yra")
+ignore_texture_size = true
+stretch_mode = 4
+
 [node name="JoinCode" type="Panel" parent="CloudControl"]
 layout_mode = 1
-offset_left = 74.9937
-offset_top = 33.0006
-offset_right = 128.994
-offset_bottom = 84.0006
+offset_left = 88.97253
+offset_top = 44.055527
+offset_right = 142.97284
+offset_bottom = 95.05553
+scale = Vector2(1.1799695, 1.1799695)
 mouse_filter = 2
 theme = SubResource("Theme_5on0m")
 
@@ -380,26 +427,6 @@ layout_mode = 2
 texture = ExtResource("10_4rs6f")
 expand_mode = 4
 stretch_mode = 4
-
-[node name="HBoxContainer" type="HBoxContainer" parent="CloudControl"]
-layout_mode = 1
-offset_left = -0.986272
-offset_top = -22.0006
-offset_right = 493.014
-offset_bottom = 105.999
-mouse_filter = 2
-
-[node name="Cloud" type="TextureButton" parent="CloudControl/HBoxContainer"]
-layout_mode = 2
-texture_normal = ExtResource("4_4x3iy")
-
-[node name="OnlineIndicator" type="TextureRect" parent="CloudControl/HBoxContainer/Cloud"]
-layout_mode = 0
-offset_left = 86.9794
-offset_top = 33.0543
-offset_right = 118.979
-offset_bottom = 65.0543
-texture = SubResource("GradientTexture2D_75vv8")
 
 [node name="Keypad" type="Panel" parent="CloudControl"]
 visible = false
@@ -509,60 +536,30 @@ offset_right = 179.0
 offset_bottom = 101.0
 show_percentage = false
 
-[node name="ModeIndicator" type="HBoxContainer" parent="CloudControl"]
-layout_mode = 0
-offset_left = 19.936977
-offset_top = 101.01247
-offset_right = 107.93698
-offset_bottom = 141.01248
-pivot_offset = Vector2(66.563576, 18.513847)
-theme_override_constants/separation = 2
-
-[node name="MarginGeometry" type="MarginContainer" parent="CloudControl/ModeIndicator"]
-layout_mode = 2
-theme_override_constants/margin_left = 5
-theme_override_constants/margin_right = 10
-
-[node name="ModeGeometry" type="TextureButton" parent="CloudControl/ModeIndicator/MarginGeometry"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(24, 32)
-layout_mode = 2
-texture_normal = ExtResource("11_ny7lf")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="MarginMaterial" type="MarginContainer" parent="CloudControl/ModeIndicator"]
-layout_mode = 2
-theme_override_constants/margin_left = 10
-theme_override_constants/margin_right = 5
-
-[node name="ModeMaterial" type="TextureButton" parent="CloudControl/ModeIndicator/MarginMaterial"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(24, 32)
-layout_mode = 2
-texture_normal = ExtResource("11_8sq1u")
-ignore_texture_size = true
-stretch_mode = 4
-
-[node name="MarginDressing" type="MarginContainer" parent="CloudControl"]
+[node name="HBoxContainer" type="HBoxContainer" parent="CloudControl"]
 layout_mode = 1
-offset_left = 39.914505
-offset_top = 137.02493
-offset_right = 82.914505
-offset_bottom = 177.02493
-theme_override_constants/margin_left = 5
-theme_override_constants/margin_right = 10
+offset_left = -0.98627186
+offset_top = -22.0006
+offset_right = 493.014
+offset_bottom = 105.9994
+scale = Vector2(1.1799695, 1.1799695)
+mouse_filter = 2
 
-[node name="ModeDressing" type="TextureButton" parent="CloudControl/MarginDressing"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(28, 32)
+[node name="Cloud" type="TextureButton" parent="CloudControl/HBoxContainer"]
 layout_mode = 2
-texture_normal = ExtResource("13_n8yra")
-ignore_texture_size = true
-stretch_mode = 4
+texture_normal = ExtResource("4_4x3iy")
+
+[node name="OnlineIndicator" type="TextureRect" parent="CloudControl/HBoxContainer/Cloud"]
+layout_mode = 0
+offset_left = 86.9794
+offset_top = 33.0543
+offset_right = 118.979
+offset_bottom = 65.0543
+texture = SubResource("GradientTexture2D_75vv8")
 
 [node name="Cloudy" parent="." instance=ExtResource("11_75vv8")]
 visible = false
+z_index = 2
 layout_mode = 1
 
 [node name="EditorIndicator" type="EditorIndicator" parent="."]
@@ -570,22 +567,29 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -209.00049
-offset_top = 0.58838296
-offset_right = 214.55933
-offset_bottom = 194.9512
+offset_left = -200.0
+offset_bottom = 200.0
 grow_horizontal = 0
 pivot_offset = Vector2(208.68042, -3.5928783)
-texture = ExtResource("10_tj0f7")
-expand_mode = 3
+
+[node name="Triangle" type="Triangle" parent="EditorIndicator"]
+right_angled = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+rotation = 1.5707964
+pivot_offset = Vector2(100, 100)
 
 [node name="EditorSelector" type="Panel" parent="EditorIndicator"]
 z_index = -1
 layout_mode = 0
-offset_left = 80.194214
-offset_top = -848.033
-offset_right = 209.32861
-offset_bottom = 0.41784668
+offset_left = 71.194275
+offset_top = -848.03876
+offset_right = 200.32867
+offset_bottom = 0.41210938
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
@@ -594,7 +598,10 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = 95.93523
+offset_left = -3.0
+offset_top = 95.933334
+offset_right = -3.0
+offset_bottom = -0.0018920898
 grow_horizontal = 2
 grow_vertical = 2
 alignment = 2

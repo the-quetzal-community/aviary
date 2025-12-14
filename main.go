@@ -39,6 +39,7 @@ func main() {
 	classdb.Register[internal.TerrainTile]()
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
+	classdb.Register[internal.Triangle](internal.NewTriangle)
 
 	classdb.Register[internal.SceneryEditor]()
 	classdb.Register[internal.TerrainEditor]()
