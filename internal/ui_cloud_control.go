@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/quaadgras/velopack-go/velopack"
+	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/Engine"
@@ -16,6 +17,9 @@ import (
 	"graphics.gd/classdb/GradientTexture2D"
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/InputEvent"
+	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/OS"
@@ -31,12 +35,14 @@ import (
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/Tween"
+	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/Window"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Signal"
+	"graphics.gd/variant/Vector2"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
 	"the.quetzal.community/aviary/internal/networking"
@@ -75,12 +81,27 @@ type CloudControl struct {
 		Keys GridContainer.Instance
 	}
 
+	GizmoTypes     VBoxContainer.Instance
+	GizmoIndicator TextureRect.Instance
+
 	UpdateProgress ProgressBar.Instance
+
+	Gizmo       Gizmo
+	gizmoBackup Gizmo
 
 	sharing    bool
 	client     *Client
 	on_process chan func(*CloudControl)
 }
+
+type Gizmo int
+
+const (
+	GizmoPoint Gizmo = iota
+	GizmoShift
+	GizmoTwist
+	GizmoScale
+)
 
 var setting_up atomic.Bool
 var version string
@@ -197,7 +218,53 @@ func (ui *CloudControl) Setup() {
 	}()
 }
 
+func (ui *CloudControl) Input(event InputEvent.Instance) {
+	if event, ok := Object.As[InputEventKey.Instance](event); ok {
+		if event.AsInputEvent().IsPressed() {
+			switch event.Keycode() {
+			case Input.KeyShift:
+				if Input.IsKeyPressed(Input.KeyCtrl) {
+					ui.set_gizmo(GizmoScale)
+				} else {
+					ui.gizmoBackup = ui.Gizmo
+					ui.set_gizmo(GizmoShift)
+				}
+			case Input.KeyCtrl:
+				if Input.IsKeyPressed(Input.KeyShift) {
+					ui.set_gizmo(GizmoScale)
+				} else {
+					ui.gizmoBackup = ui.Gizmo
+					ui.set_gizmo(GizmoTwist)
+				}
+			}
+		} else {
+			switch event.Keycode() {
+			case Input.KeyShift, Input.KeyCtrl:
+				if Input.IsKeyPressed(Input.KeyShift) && Input.IsKeyPressed(Input.KeyCtrl) {
+					return
+				}
+				ui.set_gizmo(ui.gizmoBackup)
+			}
+		}
+	}
+}
+
+func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
+	ui.Gizmo = gizmo
+	child := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(gizmo)))
+	PropertyTweener.Make(ui.GizmoIndicator.AsNode().CreateTween(), ui.GizmoIndicator.AsObject(), "position", Vector2.Sub(
+		Vector2.Add(ui.GizmoTypes.AsControl().Position(), child.Position()),
+		Vector2.New(3, 3),
+	), 0.1).SetEase(Tween.EaseOut)
+}
+
 func (ui *CloudControl) Ready() {
+	for i := 0; i < ui.GizmoTypes.AsNode().GetChildCount(); i++ {
+		child := ui.GizmoTypes.AsNode().GetChild(i)
+		Object.To[BaseButton.Instance](child).OnPressed(func() {
+			ui.set_gizmo(Gizmo(i))
+		})
+	}
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
 		if time.Now().After(UserState.Aviary.TogetherUntil) {
 			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Secret)

@@ -217,6 +217,9 @@ func (*ShelterEditor) SliderConfig(mode Mode, editing string) (init, min, max, s
 func (*ShelterEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {}
 
 func (editor *ShelterEditor) Change(change musical.Change) error {
+	if change.Editor != "shelter" {
+		return nil
+	}
 	change.Offset.Y += Float.Random() * 0.001 // quick fix for z-fighting
 	container := editor.Objects.AsNode()
 	exists, ok := editor.entity_to_object[change.Entity].Instance()
@@ -281,6 +284,9 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 }
 
 func (editor *ShelterEditor) UnhandledInput(event InputEvent.Instance) {
+	if !editor.AsNode3D().Visible() {
+		return
+	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsPressed() {
 		editor.Preview.Remove()
 	}

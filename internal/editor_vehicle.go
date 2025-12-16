@@ -91,6 +91,9 @@ func (*VehicleEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *VehicleEditor) UnhandledInput(event InputEvent.Instance) {
+	if !editor.AsNode3D().Visible() {
+		return
+	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
 		editor.client.entity_ids[editor.client.id]++
 		var mirror Vector3.XYZ
@@ -170,6 +173,9 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 }
 
 func (editor *VehicleEditor) Change(change musical.Change) error {
+	if change.Editor != "vehicle" {
+		return nil
+	}
 	container := editor.Objects.AsNode()
 	exists, ok := editor.entity_to_object[change.Entity].Instance()
 	if ok {
