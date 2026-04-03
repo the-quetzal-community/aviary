@@ -2,10 +2,12 @@ package internal
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"graphics.gd/classdb/Control"
@@ -62,6 +64,8 @@ func (dl *LibraryDownloader) Ready() {
 	}
 	dl.setContentLength(resp)
 	dl.DownloadButton.AsBaseButton().OnPressed(func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		if dl.downloading {
 			return
 		}
@@ -111,11 +115,13 @@ func (dl *LibraryDownloader) download(body io.ReadCloser) {
 		Notify: dl.bytes_downloaded,
 	}
 	reader := io.TeeReader(body, counter)
+	fmt.Println("Starting download of preview.pck...")
 	library, err := os.Create(filepath.Join(OS.GetUserDataDir(), "preview.pck"))
 	if err != nil {
 		Engine.Raise(err)
 		return
 	}
+	fmt.Println("Downloading preview.pck to", library.Name())
 	defer library.Close()
 	if _, err := io.Copy(library, reader); err != nil {
 		Engine.Raise(err)

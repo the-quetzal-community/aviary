@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log/slog"
 	"runtime"
 
 	"graphics.gd/classdb"
@@ -13,25 +12,7 @@ import (
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/startup"
 	"the.quetzal.community/aviary/internal"
-
-	"github.com/quaadgras/velopack-go/velopack"
 )
-
-func init() {
-	velopack.Run(velopack.App{
-		AutoApplyOnStartup: true,
-		Logger: func(level, message string) {
-			switch level {
-			case "error":
-				slog.Error(message)
-			case "trace":
-				slog.Debug(message)
-			case "info":
-				slog.Info(message)
-			}
-		},
-	})
-}
 
 func main() {
 	classdb.Register[internal.Tree](internal.NewTree)

@@ -18,6 +18,7 @@ import (
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Range"
@@ -172,11 +173,11 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	for _, node := range ui.Tabs.AsNode().GetChildren() {
 		container, ok := Object.As[*GridFlowContainer](node)
 		if ok {
-			container.AsObject()[0].Free()
+			Object.Free(container)
 		} else {
 			slider, ok := Object.As[HSlider.Instance](node)
 			if ok {
-				slider.AsObject()[0].Free()
+				Object.Free(slider)
 			}
 		}
 	}
@@ -275,6 +276,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			gridflow.scroll_lock = true
 			gridflow.AsNode().SetName(tab)
 			ui.Tabs.AsNode().AddChild(gridflow.AsNode())
+			OS.GetUserDataDir()
 			gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			ui.tabbed = append(ui.tabbed, gridflow)

@@ -35,7 +35,7 @@ type ViewSelector struct {
 
 func (selector *ViewSelector) Refresh(view int, views []string) {
 	for _, child := range selector.Views.AsNode().GetChildren() {
-		child.AsObject()[0].Free()
+		Object.Free(child)
 	}
 	selector.views = views
 	selector.view = view
