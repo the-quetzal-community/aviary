@@ -1,4 +1,4 @@
-[gd_scene load_steps=62 format=3 uid="uid://di3hxgqi78me4"]
+[gd_scene format=3 uid="uid://di3hxgqi78me4"]
 
 [ext_resource type="Theme" uid="uid://dtppp6q43eiuc" path="res://ui/aviary.tres" id="1_hi2iw"]
 [ext_resource type="StyleBox" uid="uid://baak3o1sawm3" path="res://ui/rounded_button.tres" id="2_fx2qn"]
@@ -29,6 +29,7 @@
 [ext_resource type="Texture2D" uid="uid://dwodcy8axfahv" path="res://ui/moving.svg" id="26_nmgcu"]
 [ext_resource type="Texture2D" uid="uid://ba27w1ohk0wrl" path="res://ui/rotate.svg" id="27_nterg"]
 [ext_resource type="Texture2D" uid="uid://bme16r67ciq1p" path="res://ui/scales.svg" id="28_nterg"]
+[ext_resource type="Texture2D" uid="uid://bbuujrcrjflt8" path="res://ui/citizen.svg" id="29_hwdbu"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_i6rcl"]
 bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
@@ -170,7 +171,7 @@ height = 32
 fill = 1
 fill_from = Vector2(0.5, 0.5)
 
-[node name="AviaryUI" type="AviaryUI"]
+[node name="AviaryUI" type="AviaryUI" unique_id=1121722305]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -179,7 +180,7 @@ grow_vertical = 2
 rotation = -0.000623948
 mouse_filter = 2
 
-[node name="WiseOwl" type="TextureButton" parent="."]
+[node name="WiseOwl" type="TextureButton" parent="." unique_id=830596891]
 visible = false
 layout_mode = 1
 anchors_preset = 1
@@ -192,7 +193,7 @@ texture_normal = ExtResource("6_4x3iy")
 ignore_texture_size = true
 stretch_mode = 0
 
-[node name="Editor" type="DesignExplorer" parent="." node_paths=PackedStringArray("expansion_indicator")]
+[node name="Editor" type="DesignExplorer" parent="." unique_id=528348136 node_paths=PackedStringArray("expansion_indicator")]
 expansion_indicator = NodePath("../ExpansionIndicator")
 layout_mode = 1
 anchors_preset = 12
@@ -207,21 +208,21 @@ grow_vertical = 0
 theme = ExtResource("1_hi2iw")
 theme_override_constants/separation = 0
 
-[node name="Panel" type="Panel" parent="Editor"]
+[node name="Panel" type="Panel" parent="Editor" unique_id=54805055]
 custom_minimum_size = Vector2(72, 0)
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_i6rcl")
 
-[node name="Themes" type="VBoxContainer" parent="Editor/Panel"]
+[node name="Themes" type="VBoxContainer" parent="Editor/Panel" unique_id=208071922]
 custom_minimum_size = Vector2(72, 0)
 layout_mode = 0
 
-[node name="Heading" type="Panel" parent="Editor/Panel/Themes"]
+[node name="Heading" type="Panel" parent="Editor/Panel/Themes" unique_id=1826328995]
 custom_minimum_size = Vector2(100, 100)
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_c0lqr")
 
-[node name="Selected" type="TextureButton" parent="Editor/Panel/Themes/Heading"]
+[node name="Selected" type="TextureButton" parent="Editor/Panel/Themes/Heading" unique_id=1507270189]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -232,11 +233,11 @@ grow_vertical = 2
 ignore_texture_size = true
 stretch_mode = 5
 
-[node name="Tabs" type="TabContainer" parent="Editor"]
+[node name="Tabs" type="TabContainer" parent="Editor" unique_id=192871668]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="ExpansionIndicator" type="Button" parent="."]
+[node name="ExpansionIndicator" type="Button" parent="." unique_id=204559880]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -256,7 +257,7 @@ theme_override_styles/normal = ExtResource("2_fx2qn")
 toggle_mode = true
 text = "^"
 
-[node name="Options" type="VBoxContainer" parent="."]
+[node name="Options" type="VBoxContainer" parent="." unique_id=254868427]
 visible = false
 layout_mode = 1
 anchors_preset = 1
@@ -267,17 +268,17 @@ offset_right = 396.0
 offset_bottom = 524.0
 grow_horizontal = 0
 
-[node name="MyStuff" type="TextureButton" parent="Options"]
+[node name="MyStuff" type="TextureButton" parent="Options" unique_id=1512410665]
 visible = false
 layout_mode = 2
 texture_normal = SubResource("CompressedTexture2D_28l1f")
 
-[node name="Shading" type="TextureButton" parent="Options"]
+[node name="Shading" type="TextureButton" parent="Options" unique_id=192992218]
 visible = false
 layout_mode = 2
 texture_normal = ExtResource("3_c55ig")
 
-[node name="ViewSelector" type="ViewSelector" parent="."]
+[node name="ViewSelector" type="ViewSelector" parent="." unique_id=231457982]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -288,7 +289,7 @@ offset_bottom = 40.0
 grow_horizontal = 2
 pivot_offset = Vector2(20, 0.09)
 
-[node name="Pointer" type="TextureRect" parent="ViewSelector"]
+[node name="Pointer" type="TextureRect" parent="ViewSelector" unique_id=1142122943]
 layout_mode = 0
 offset_left = 27.0004
 offset_top = -0.396642
@@ -298,14 +299,14 @@ grow_horizontal = 2
 texture = ExtResource("10_tj0f7")
 expand_mode = 1
 
-[node name="Views" type="HBoxContainer" parent="ViewSelector"]
+[node name="Views" type="HBoxContainer" parent="ViewSelector" unique_id=1846691490]
 layout_mode = 0
 offset_left = -0.0087890625
 offset_top = 13.999997
 offset_right = -0.0087890625
 offset_bottom = 13.999997
 
-[node name="CloudControl" type="CloudControl" parent="."]
+[node name="CloudControl" type="CloudControl" parent="." unique_id=42387269]
 z_index = 1
 layout_mode = 0
 offset_left = 8.9975
@@ -314,7 +315,7 @@ offset_right = 400.997
 offset_bottom = 135.006
 mouse_filter = 2
 
-[node name="Triangle" type="Triangle" parent="CloudControl"]
+[node name="Triangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
 color = Color(0.27728483, 0.27728483, 0.27728483, 1)
 layout_mode = 0
 offset_left = 103.88081
@@ -323,19 +324,19 @@ offset_right = 266.89996
 offset_bottom = 330.3
 scale = Vector2(-0.3822345, -0.3822345)
 
-[node name="ModeGeometry" type="TextureButton" parent="CloudControl"]
+[node name="ModeGeometry" type="TextureButton" parent="CloudControl" unique_id=683549109]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(24, 32)
 layout_mode = 0
-offset_left = 30.91701
-offset_top = 125.0243
-offset_right = 62.917007
-offset_bottom = 157.02432
+offset_left = 26.91701
+offset_top = 121.0243
+offset_right = 58.917007
+offset_bottom = 153.02429
 texture_normal = ExtResource("11_ny7lf")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="ModeMaterial" type="TextureButton" parent="CloudControl"]
+[node name="ModeMaterial" type="TextureButton" parent="CloudControl" unique_id=647403131]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(24, 32)
 layout_mode = 0
@@ -347,7 +348,7 @@ texture_normal = ExtResource("11_8sq1u")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="ModeDressing" type="TextureButton" parent="CloudControl"]
+[node name="ModeDressing" type="TextureButton" parent="CloudControl" unique_id=1791096523]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(28, 32)
 layout_mode = 0
@@ -359,7 +360,7 @@ texture_normal = ExtResource("13_n8yra")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="JoinCode" type="Panel" parent="CloudControl"]
+[node name="JoinCode" type="Panel" parent="CloudControl" unique_id=1572169024]
 layout_mode = 1
 offset_left = 88.97253
 offset_top = 44.055527
@@ -369,7 +370,7 @@ scale = Vector2(1.1799695, 1.1799695)
 mouse_filter = 2
 theme = SubResource("Theme_5on0m")
 
-[node name="ShareButton" type="TextureButton" parent="CloudControl/JoinCode"]
+[node name="ShareButton" type="TextureButton" parent="CloudControl/JoinCode" unique_id=101806762]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -382,7 +383,7 @@ texture_normal = ExtResource("4_28l1f")
 ignore_texture_size = true
 stretch_mode = 0
 
-[node name="Label" type="Label" parent="CloudControl/JoinCode"]
+[node name="Label" type="Label" parent="CloudControl/JoinCode" unique_id=1886685432]
 layout_mode = 1
 anchors_preset = 6
 anchor_left = 1.0
@@ -399,14 +400,14 @@ theme = ExtResource("1_hi2iw")
 text = "123456"
 horizontal_alignment = 1
 
-[node name="Versioning" type="HBoxContainer" parent="CloudControl/JoinCode"]
+[node name="Versioning" type="HBoxContainer" parent="CloudControl/JoinCode" unique_id=714651713]
 layout_mode = 0
 offset_left = 40.9988
 offset_top = -20.9282
 offset_right = 104.999
 offset_bottom = 2.07178
 
-[node name="Version" type="RichTextLabel" parent="CloudControl/JoinCode/Versioning"]
+[node name="Version" type="RichTextLabel" parent="CloudControl/JoinCode/Versioning" unique_id=1484432136]
 clip_contents = false
 layout_mode = 2
 size_flags_horizontal = 3
@@ -417,7 +418,7 @@ text = "v0.0.0"
 scroll_active = false
 autowrap_mode = 0
 
-[node name="Restart" type="TextureButton" parent="CloudControl/JoinCode/Versioning"]
+[node name="Restart" type="TextureButton" parent="CloudControl/JoinCode/Versioning" unique_id=1085205703]
 visible = false
 custom_minimum_size = Vector2(20, 0)
 layout_mode = 2
@@ -425,7 +426,7 @@ texture_normal = ExtResource("9_75vv8")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="Updates" type="TextureRect" parent="CloudControl/JoinCode/Versioning"]
+[node name="Updates" type="TextureRect" parent="CloudControl/JoinCode/Versioning" unique_id=719626225]
 visible = false
 custom_minimum_size = Vector2(15, 0)
 layout_mode = 2
@@ -433,7 +434,7 @@ texture = ExtResource("10_4rs6f")
 expand_mode = 4
 stretch_mode = 4
 
-[node name="Keypad" type="Panel" parent="CloudControl"]
+[node name="Keypad" type="Panel" parent="CloudControl" unique_id=1526564241]
 visible = false
 layout_mode = 0
 offset_left = 56.9101
@@ -442,7 +443,7 @@ offset_right = 338.91
 offset_bottom = 532.036
 theme = ExtResource("1_hi2iw")
 
-[node name="TextEdit" type="TextEdit" parent="CloudControl/Keypad"]
+[node name="TextEdit" type="TextEdit" parent="CloudControl/Keypad" unique_id=1285242272]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
@@ -452,7 +453,7 @@ offset_right = -31.0
 offset_bottom = 97.0
 grow_horizontal = 2
 
-[node name="Keys" type="GridContainer" parent="CloudControl/Keypad"]
+[node name="Keys" type="GridContainer" parent="CloudControl/Keypad" unique_id=1506362471]
 layout_mode = 0
 offset_left = 47.0
 offset_top = 123.997
@@ -461,69 +462,69 @@ offset_bottom = 349.997
 theme = SubResource("Theme_1tuwu")
 columns = 3
 
-[node name="1" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="1" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1565364463]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 theme_type_variation = &"FlatButton"
 text = "1"
 
-[node name="2" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="2" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1812779774]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "2"
 
-[node name="3" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="3" type="Button" parent="CloudControl/Keypad/Keys" unique_id=719357114]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "3"
 
-[node name="4" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="4" type="Button" parent="CloudControl/Keypad/Keys" unique_id=947162286]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "4"
 
-[node name="5" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="5" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1010839554]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "5"
 
-[node name="6" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="6" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1715304945]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "6"
 
-[node name="7" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="7" type="Button" parent="CloudControl/Keypad/Keys" unique_id=904568525]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "7"
 
-[node name="8" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="8" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1589187348]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "8"
 
-[node name="9" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="9" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1511402072]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "9"
 
-[node name="X" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="X" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1467701885]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "X"
 
-[node name="0" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name="0" type="Button" parent="CloudControl/Keypad/Keys" unique_id=1054555035]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = "0"
 
-[node name=">" type="Button" parent="CloudControl/Keypad/Keys"]
+[node name=">" type="Button" parent="CloudControl/Keypad/Keys" unique_id=925415078]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
 text = ">
 "
 
-[node name="TextureRect" type="TextureRect" parent="CloudControl/Keypad"]
+[node name="TextureRect" type="TextureRect" parent="CloudControl/Keypad" unique_id=70262320]
 layout_mode = 0
 offset_left = 11.897
 offset_top = 27.0493
@@ -532,7 +533,7 @@ offset_bottom = 97.0493
 texture = ExtResource("4_75vv8")
 expand_mode = 1
 
-[node name="UpdateProgress" type="ProgressBar" parent="CloudControl"]
+[node name="UpdateProgress" type="ProgressBar" parent="CloudControl" unique_id=852663894]
 visible = false
 layout_mode = 0
 offset_left = 3.0
@@ -541,7 +542,7 @@ offset_right = 179.0
 offset_bottom = 101.0
 show_percentage = false
 
-[node name="HBoxContainer" type="HBoxContainer" parent="CloudControl"]
+[node name="HBoxContainer" type="HBoxContainer" parent="CloudControl" unique_id=1598206403]
 layout_mode = 1
 offset_left = -0.98627186
 offset_top = -22.0006
@@ -550,11 +551,11 @@ offset_bottom = 105.9994
 scale = Vector2(1.1799695, 1.1799695)
 mouse_filter = 2
 
-[node name="Cloud" type="TextureButton" parent="CloudControl/HBoxContainer"]
+[node name="Cloud" type="TextureButton" parent="CloudControl/HBoxContainer" unique_id=983361287]
 layout_mode = 2
 texture_normal = ExtResource("4_4x3iy")
 
-[node name="OnlineIndicator" type="TextureRect" parent="CloudControl/HBoxContainer/Cloud"]
+[node name="OnlineIndicator" type="TextureRect" parent="CloudControl/HBoxContainer/Cloud" unique_id=143274597]
 layout_mode = 0
 offset_left = 86.9794
 offset_top = 33.0543
@@ -562,7 +563,7 @@ offset_right = 118.979
 offset_bottom = 65.0543
 texture = SubResource("GradientTexture2D_75vv8")
 
-[node name="GizmoTypes" type="VBoxContainer" parent="CloudControl"]
+[node name="GizmoTypes" type="VBoxContainer" parent="CloudControl" unique_id=340909491]
 layout_mode = 1
 anchors_preset = 4
 anchor_top = 0.5
@@ -574,35 +575,35 @@ offset_bottom = 365.5304
 grow_vertical = 2
 theme_override_constants/separation = 16
 
-[node name="TextureButton" type="TextureButton" parent="CloudControl/GizmoTypes"]
+[node name="TextureButton" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=1816913608]
 custom_minimum_size = Vector2(42, 42)
 layout_mode = 2
 texture_normal = ExtResource("25_0ad7g")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="TextureButton2" type="TextureButton" parent="CloudControl/GizmoTypes"]
+[node name="TextureButton2" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=2137950467]
 custom_minimum_size = Vector2(42, 42)
 layout_mode = 2
 texture_normal = ExtResource("26_nmgcu")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="TextureButton3" type="TextureButton" parent="CloudControl/GizmoTypes"]
+[node name="TextureButton3" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=1134815266]
 custom_minimum_size = Vector2(42, 42)
 layout_mode = 2
 texture_normal = ExtResource("27_nterg")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="TextureButton4" type="TextureButton" parent="CloudControl/GizmoTypes"]
+[node name="TextureButton4" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=1879089453]
 custom_minimum_size = Vector2(42, 42)
 layout_mode = 2
 texture_normal = ExtResource("28_nterg")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="GizmoIndicator" type="TextureRect" parent="CloudControl"]
+[node name="GizmoIndicator" type="TextureRect" parent="CloudControl" unique_id=423126648]
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 45.867096
@@ -612,12 +613,12 @@ offset_bottom = 1813.0287
 scale = Vector2(0.02946642, 0.02946642)
 texture = ExtResource("21_bs2fd")
 
-[node name="Cloudy" parent="." instance=ExtResource("11_75vv8")]
+[node name="Cloudy" parent="." unique_id=1665134801 instance=ExtResource("11_75vv8")]
 visible = false
 z_index = 2
 layout_mode = 1
 
-[node name="EditorIndicator" type="EditorIndicator" parent="."]
+[node name="EditorIndicator" type="EditorIndicator" parent="." unique_id=1166549893]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -627,7 +628,7 @@ offset_bottom = 200.0
 grow_horizontal = 0
 pivot_offset = Vector2(208.68042, -3.5928783)
 
-[node name="Triangle" type="Triangle" parent="EditorIndicator"]
+[node name="Triangle" type="Triangle" parent="EditorIndicator" unique_id=212828080]
 right_angled = true
 layout_mode = 1
 anchors_preset = 15
@@ -638,7 +639,7 @@ grow_vertical = 2
 rotation = 1.5707964
 pivot_offset = Vector2(100, 100)
 
-[node name="EditorSelector" type="Panel" parent="EditorIndicator"]
+[node name="EditorSelector" type="Panel" parent="EditorIndicator" unique_id=519162058]
 z_index = -1
 layout_mode = 0
 offset_left = 71.194275
@@ -648,7 +649,7 @@ offset_bottom = 0.41210938
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
-[node name="EditorTypes" type="VBoxContainer" parent="EditorIndicator/EditorSelector"]
+[node name="EditorTypes" type="VBoxContainer" parent="EditorIndicator/EditorSelector" unique_id=827707441]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -661,35 +662,39 @@ grow_horizontal = 2
 grow_vertical = 2
 alignment = 2
 
-[node name="Senery" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Senery" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=1650037271]
 layout_mode = 2
 texture_normal = ExtResource("15_407as")
 
-[node name="Terrain" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Terrain" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=155742553]
 layout_mode = 2
 texture_normal = ExtResource("14_8sq1u")
 
-[node name="Foliage" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Foliage" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=148075987]
 layout_mode = 2
 texture_normal = ExtResource("16_2x4ir")
 
-[node name="Mineral" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Mineral" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=206105171]
 layout_mode = 2
 texture_normal = ExtResource("18_l3ljj")
 
-[node name="Shelter" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Shelter" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=385703741]
 layout_mode = 2
 texture_normal = ExtResource("20_i6rcl")
 
-[node name="Vehicle" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Vehicle" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=1227618680]
 layout_mode = 2
 texture_normal = ExtResource("20_sb7vj")
 
-[node name="Control" type="Control" parent="EditorIndicator/EditorSelector/EditorTypes"]
+[node name="Citizen" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=799548801]
+layout_mode = 2
+texture_normal = ExtResource("29_hwdbu")
+
+[node name="Control" type="Control" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=630442614]
 custom_minimum_size = Vector2(0, 20)
 layout_mode = 2
 
-[node name="Panel" type="Panel" parent="EditorIndicator/EditorSelector"]
+[node name="Panel" type="Panel" parent="EditorIndicator/EditorSelector" unique_id=817048047]
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -702,7 +707,7 @@ offset_bottom = 22.99997
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="EditorIcon" type="TextureButton" parent="EditorIndicator"]
+[node name="EditorIcon" type="TextureButton" parent="EditorIndicator" unique_id=1042978839]
 layout_mode = 0
 offset_left = 80.00005
 offset_top = 0.04991579
@@ -712,7 +717,7 @@ pivot_offset = Vector2(59.656982, 53.900574)
 texture_normal = ExtResource("14_8sq1u")
 stretch_mode = 4
 
-[node name="Arrows" type="TextureRect" parent="EditorIndicator"]
+[node name="Arrows" type="TextureRect" parent="EditorIndicator" unique_id=1048505585]
 layout_mode = 1
 offset_left = 122.946335
 offset_top = 86.07677

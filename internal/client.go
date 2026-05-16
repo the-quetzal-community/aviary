@@ -102,6 +102,7 @@ type Client struct {
 	TerrainEditor *TerrainEditor
 	FoliageEditor *FoliageEditor
 	MineralEditor *BoulderEditor
+	CitizenEditor *CitizenEditor
 
 	signalling signalling.API
 
@@ -282,6 +283,7 @@ func (world *Client) Ready() {
 		"mineral": world.MineralEditor,
 		"boulder": world.MineralEditor,
 		"vehicle": world.VehicleEditor,
+		"citizen": world.CitizenEditor,
 	}
 	defer world.StartEditing(UserState.Editor)
 	defer world.clientReady.Done()
@@ -326,6 +328,7 @@ func (world *Client) Ready() {
 	world.MineralEditor.client = world
 	world.SceneryEditor.client = world
 	world.ShelterEditor.client = world
+	world.CitizenEditor.client = world
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
@@ -448,12 +451,19 @@ func (world musicalImpl) Import(uri musical.Import) error {
 			return
 		}
 		world.design_ids[uri.Design.Author] = max(world.design_ids[uri.Design.Author], uri.Design.Number)
-		res := Object.Leak(Resource.Load[Resource.Instance](uri.Import))
-		switch {
-		case Object.Is[PackedScene.Instance](res):
-			world.packed_scenes[uri.Design] = Object.To[PackedScene.Instance](res).ID()
-		case Object.Is[Texture2D.Instance](res):
-			world.textures[uri.Design] = Object.To[Texture2D.Instance](res).ID()
+		// Some imports are non-Godot-resource files shipped verbatim
+		// (.obj files used by the citizen dressing pipeline use the
+		// `keep` importer). Resource.Load on those logs an error to
+		// the console; skip the load for those — we still want the
+		// URI→Design mapping registered for later lookup.
+		if !isKeepImporterPath(uri.Import) {
+			res := Object.Leak(Resource.Load[Resource.Instance](uri.Import))
+			switch {
+			case Object.Is[PackedScene.Instance](res):
+				world.packed_scenes[uri.Design] = Object.To[PackedScene.Instance](res).ID()
+			case Object.Is[Texture2D.Instance](res):
+				world.textures[uri.Design] = Object.To[Texture2D.Instance](res).ID()
+			}
 		}
 		world.loaded[uri.Import] = uri.Design
 		world.design_to_string[uri.Design] = uri.Import
@@ -971,6 +981,15 @@ func (tc *TimingCoordinator) Process(delta Float.X) {
 	} else {
 		tc.smooth = musical.Timing(time.Now().UnixNano())
 	}
+}
+
+// isKeepImporterPath returns true for resource paths Godot ships
+// verbatim via the `keep` importer (no .ctex/.scn produced). Calling
+// Resource.Load on these logs a noisy error even though the file is
+// reachable via FileAccess. The citizen dressing pipeline uses .obj
+// + .mhclo files this way to preserve raw vertex order.
+func isKeepImporterPath(p string) bool {
+	return strings.HasSuffix(p, ".obj") || strings.HasSuffix(p, ".mhclo")
 }
 
 func (tc *TimingCoordinator) Follow(t musical.Timing) {

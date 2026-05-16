@@ -35,7 +35,12 @@ func backpack(src_pck, dst_pck string) error {
 	}
 	for path := range index {
 		isKennyScene := strings.HasSuffix(path, ".scn") && strings.HasPrefix(path, "library/kenney/")
-		if _, ok := exist[path]; ok || !(strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap") || isKennyScene) || strings.HasPrefix(path, "preview/") {
+		// Bring in the imported texture data for per-source icons so the
+		// library UI has something to render at startup. Everything else
+		// stays on-demand via CommunityResourceLoader's downloader.
+		isImportedIcon := strings.HasSuffix(path, ".ctex") &&
+			strings.HasPrefix(path, ".godot/imported/icon.")
+		if _, ok := exist[path]; ok || !(strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap") || isKennyScene || isImportedIcon) || strings.HasPrefix(path, "preview/") {
 			delete(index, path)
 		}
 	}
@@ -52,10 +57,18 @@ func backpack(src_pck, dst_pck string) error {
 	if err != nil {
 		return xray.New(err)
 	}
+	var mismatches int
 	for path := range index {
-		if err := pck.Remap(dst, src, exist[path], index[path]); err != nil {
-			return xray.New(err)
+		next, prev := exist[path], index[path]
+		if err := pck.Remap(dst, src, next, prev); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"backpack: remap %q: %v (dst size=%d hash=%x | src size=%d hash=%x)\n",
+				path, err, next.Size, next.Hash, prev.Size, prev.Hash)
+			mismatches++
 		}
+	}
+	if mismatches > 0 {
+		return xray.New(fmt.Errorf("backpack: %d remap failure(s); see above", mismatches))
 	}
 	if _, err := dst.Seek(0, io.SeekStart); err != nil {
 		return xray.New(err)

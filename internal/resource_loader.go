@@ -220,7 +220,15 @@ func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
 		return
 	}
 	for path, entry := range crl.preview {
-		if path == ".godot/uid_cache.bin" {
+		// These are engine-managed metadata that Godot regenerates per
+		// export, so they legitimately differ between the two pcks. The
+		// rest of `.godot/` — notably `.godot/imported/*.ctex` — holds
+		// imported resource data (compressed textures, etc.) that must
+		// be remapped or Godot will fail to load referenced resources.
+		switch path {
+		case ".godot/uid_cache.bin",
+			".godot/global_script_class_cache.cfg",
+			"project.binary":
 			continue
 		}
 		if slot, ok := crl.local[path]; ok {

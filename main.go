@@ -4,6 +4,7 @@ import (
 	"runtime"
 
 	"graphics.gd/classdb"
+	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/ProjectSettings"
@@ -44,6 +45,10 @@ func main() {
 	classdb.Register[internal.DesignExplorer]()
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
 	startup.LoadingScene()
+	if Engine.IsEditorHint() {
+		startup.Scene()
+		return
+	}
 	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
 		SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
 	} else {
