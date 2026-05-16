@@ -46,11 +46,12 @@ func main() {
 	startup.LoadingScene()
 	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
 		SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
-		startup.Scene()
-		return
+	} else {
+		SceneTree.Add(internal.NewClient())
 	}
-	ResourceLoader.AddResourceFormatLoader(internal.NewCommunityResourceLoader().AsResourceFormatLoader(), true)
-	SceneTree.Add(internal.NewClient())
+	community_resource_loader := internal.NewCommunityResourceLoader().AsResourceFormatLoader()
+	ResourceLoader.AddResourceFormatLoader(community_resource_loader, true)
+	defer ResourceLoader.RemoveResourceFormatLoader(community_resource_loader)
 	startup.Scene()
 	close(internal.ShuttingDown)
 	internal.PendingSaves.Wait()

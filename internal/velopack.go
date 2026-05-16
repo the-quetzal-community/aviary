@@ -3,7 +3,6 @@
 package internal
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -13,10 +12,7 @@ import (
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FileAccess"
-	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/variant/Float"
-	"the.quetzal.community/aviary/internal/ice/signalling"
-	"the.quetzal.community/aviary/internal/musical"
 )
 
 func (ui *CloudControl) automaticallyUpdate() {
@@ -37,28 +33,9 @@ func (ui *CloudControl) automaticallyUpdate() {
 			ui.JoinCode.Versioning.Version.SetText(version)
 		}
 	}
-	user, err := ui.client.signalling.LookupUser(context.Background())
-	if err != nil {
-		Engine.Raise(err)
-		ui.on_process <- func(cc *CloudControl) {
-			if err.Error() == "Unauthorized" {
-				UserState.Aviary = signalling.User{}
-			}
-			cc.set_online_status_indicator(false)
-		}
+	user, ok := ui.loginUpdate()
+	if !ok {
 		return
-	}
-	ui.on_process <- func(cc *CloudControl) {
-		if UserState.Aviary.ID != user.ID {
-			fresh := NewClientLoading(musical.WorkID(ui.client.record))
-			for _, child := range SceneTree.Get(ui.AsNode()).Root().AsNode().GetChildren() {
-				child.QueueFree()
-			}
-			SceneTree.Add(fresh)
-		}
-		UserState.Aviary = user
-		cc.client.saveUserState()
-		cc.set_online_status_indicator(true)
 	}
 	if manager == nil || time.Now().After(user.TogetherUntil) {
 		return

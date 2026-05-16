@@ -171,15 +171,8 @@ func (ui *DesignExplorer) Process(delta Float.X) {
 func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	expansion, _ := ui.ExpansionIndicator.Instance()
 	for _, node := range ui.Tabs.AsNode().GetChildren() {
-		container, ok := Object.As[*GridFlowContainer](node)
-		if ok {
-			Object.Free(container)
-		} else {
-			slider, ok := Object.As[HSlider.Instance](node)
-			if ok {
-				Object.Free(slider)
-			}
-		}
+		ui.Tabs.AsNode().RemoveChild(node)
+		node.QueueFree()
 	}
 	if ui.AsNode().GetChildCount() == 0 {
 		ui.AsCanvasItem().SetVisible(false)

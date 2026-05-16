@@ -1,13 +1,13 @@
 module the.quetzal.community/aviary
 
-go 1.25.0
+go 1.26.1
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v4 v4.1.6
 	github.com/quaadgras/velopack-go v0.0.1358
-	graphics.gd v0.0.0-20251123043939-b899bea95571
+	graphics.gd v0.0.0-20260516024521-6863665bbc35
 	runtime.link v0.0.0-20251110101815-59f3debe833d
 )
 
@@ -29,11 +29,11 @@ require (
 	github.com/pion/turn/v4 v4.1.3 // indirect
 	github.com/tetratelabs/wazero v1.10.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
 )

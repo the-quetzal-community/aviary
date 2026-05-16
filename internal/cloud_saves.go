@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -211,11 +212,22 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 	fw.lock.Lock()
 	n, err = fw.writer.Write(p)
 	if fw.sync.CompareAndSwap(false, true) {
+		savePath := OS.GetUserDataDir() + "/saves/" + fw.name + "/" + UserState.Device + ".mus3"
+		device := UserState.Device
 		PendingSaves.Go(func() {
 			defer fw.sync.Store(false)
+			var shuttingDown bool
 			select {
 			case <-ShuttingDown:
+				shuttingDown = true
 			case <-time.After(10 * time.Minute):
+			}
+			raise := func(err error) {
+				if shuttingDown {
+					log.Println("aviary: cloud save error during shutdown:", err)
+					return
+				}
+				Engine.Raise(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -223,16 +235,16 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 			fw.lock.Lock()
 			defer fw.lock.Unlock()
 
-			file, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+fw.name+"/"+UserState.Device+".mus3", os.O_RDONLY, 0666)
+			file, err := os.OpenFile(savePath, os.O_RDONLY, 0666)
 			if err != nil {
-				Engine.Raise(err)
+				raise(err)
 				return
 			}
 			if stat, err := file.Stat(); err == nil && stat.Size() < int64(len(musical.MagicHeader)) {
 				return
 			}
-			if err := fw.community.InsertSave(ctx, signalling.WorkID(fw.name), signalling.PartID(UserState.Device), file); err != nil {
-				Engine.Raise(err)
+			if err := fw.community.InsertSave(ctx, signalling.WorkID(fw.name), signalling.PartID(device), file); err != nil {
+				raise(err)
 			}
 		})
 	}
