@@ -22,6 +22,13 @@ type BaseMesh struct {
 	// UVs is empty when the OBJ has no `vt` references; otherwise it has
 	// exactly len(Verts) entries.
 	UVs []Vec2
+	// EyeIndices are the faces from the `helper-l-eye` and
+	// `helper-r-eye` groups, kept separate from Indices so they can be
+	// rendered as their own surface with a distinct eye-tint material.
+	// MakeHuman's apps/human.py masks these out of its main body
+	// render, but we want them visible — eye colour is part of
+	// character customisation.
+	EyeIndices []int32
 }
 
 // ParseOBJ reads a Wavefront OBJ file producing a triangulated BaseMesh.
@@ -41,16 +48,18 @@ func ParseOBJ(name string, r io.Reader) (*BaseMesh, error) {
 	var posUV []Vec2
 	hasUVRefs := false
 	var indices []int32
+	var eyeIndices []int32
 	type faceRef struct{ pos, uv int32 }
 	var faceBuf []faceRef
 	// group is the current `g <name>` group context. MakeHuman's base.obj
 	// tags joint and helper scaffolding faces with `joint-*` / `helper-*`
-	// group names — those are never rendered as body in MH's UI (see
-	// apps/human.py: maskFaces). Dropping them here keeps `Verts`
-	// indexable by .mhclo files (which reference the full 19158-vert
-	// space) while only emitting the actual body geometry.
+	// group names — those are never rendered as body in MH's UI.
+	// We drop joint-* and most helper-* groups but route the eye
+	// helpers to a separate index buffer so they can be rendered as
+	// a tintable surface alongside the body.
 	group := ""
 	skipGroup := false
+	eyeGroup := false
 	line := 0
 	for sc.Scan() {
 		line++
@@ -99,7 +108,9 @@ func ParseOBJ(name string, r io.Reader) (*BaseMesh, error) {
 			} else {
 				group = ""
 			}
-			skipGroup = strings.HasPrefix(group, "joint-") || strings.HasPrefix(group, "helper-")
+			eyeGroup = group == "helper-l-eye" || group == "helper-r-eye"
+			skipGroup = !eyeGroup && (strings.HasPrefix(group, "joint-") ||
+				strings.HasPrefix(group, "helper-"))
 		case strings.HasPrefix(s, "f "):
 			if skipGroup {
 				continue
@@ -136,8 +147,12 @@ func ParseOBJ(name string, r io.Reader) (*BaseMesh, error) {
 			// so we swap the last two vertices of each tri to flip the
 			// winding. (If we ever ingest a CCW-wound OBJ, this is the
 			// one line to change.)
+			dst := &indices
+			if eyeGroup {
+				dst = &eyeIndices
+			}
 			for i := 1; i < len(faceBuf)-1; i++ {
-				indices = append(indices, faceBuf[0].pos, faceBuf[i+1].pos, faceBuf[i].pos)
+				*dst = append(*dst, faceBuf[0].pos, faceBuf[i+1].pos, faceBuf[i].pos)
 			}
 			// Record one UV per position. Faces are visited in order;
 			// last write wins, so seams (where one position has multiple
@@ -169,7 +184,7 @@ func ParseOBJ(name string, r io.Reader) (*BaseMesh, error) {
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	bm := &BaseMesh{Verts: verts, Indices: indices}
+	bm := &BaseMesh{Verts: verts, Indices: indices, EyeIndices: eyeIndices}
 	if hasUVRefs {
 		if len(posUV) < len(verts) {
 			grown := make([]Vec2, len(verts))

@@ -103,6 +103,7 @@ type Client struct {
 	FoliageEditor *FoliageEditor
 	MineralEditor *BoulderEditor
 	CitizenEditor *CitizenEditor
+	CritterEditor *CritterEditor
 
 	signalling signalling.API
 
@@ -284,6 +285,7 @@ func (world *Client) Ready() {
 		"boulder": world.MineralEditor,
 		"vehicle": world.VehicleEditor,
 		"citizen": world.CitizenEditor,
+		"critter": world.CritterEditor,
 	}
 	defer world.StartEditing(UserState.Editor)
 	defer world.clientReady.Done()
@@ -329,6 +331,7 @@ func (world *Client) Ready() {
 	world.SceneryEditor.client = world
 	world.ShelterEditor.client = world
 	world.CitizenEditor.client = world
+	world.CritterEditor.client = world
 	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)

@@ -110,7 +110,19 @@ func (*CitizenEditor) Tabs(mode Mode) []string {
 // the second path segment and encode it in the Slider field as
 // "dressing/<slot>".
 func (ce *CitizenEditor) SelectDesign(mode Mode, design string) {
-	if mode != ModeDressing {
+	// ModeDressing accepts any slot under res://library/<author>/<slot>/.
+	// ModeGeometry only accepts the proxy-mesh slots that come from
+	// proxy assets — haircut and eyebrows — which look like dressings
+	// at runtime but live under the geometry tab because they shape
+	// the character's appearance rather than dress it.
+	switch mode {
+	case ModeDressing:
+	case ModeGeometry:
+		slot := citizenDressingSlot(design)
+		if slot != "haircut" && slot != "eyebrow" {
+			return
+		}
+	default:
 		return
 	}
 	ce.ensureLoaded()
@@ -121,14 +133,26 @@ func (ce *CitizenEditor) SelectDesign(mode Mode, design string) {
 	if slot == "" {
 		return
 	}
+	// Sentinel design path: clicking the "_empty.obj" tile in the
+	// design grid clears the slot. The .png lives in each preview
+	// dir; the .obj is virtual — we never load it, just detect the
+	// suffix and route to the clear path.
+	clearSlot := strings.HasSuffix(design, "/"+clearDesignName)
 	if ce.client == nil {
 		// Editor not yet wired into Client; apply locally so single-user
 		// development still works while the multiplayer plumbing comes
 		// online.
-		ce.body.AttachDressing(slot, design)
+		if clearSlot {
+			ce.body.AttachDressing(slot, "")
+		} else {
+			ce.body.AttachDressing(slot, design)
+		}
 		return
 	}
-	musicalDesign := ce.client.MusicalDesign(design)
+	var musicalDesign musical.Design
+	if !clearSlot {
+		musicalDesign = ce.client.MusicalDesign(design)
+	}
 	if err := ce.client.space.Sculpt(musical.Sculpt{
 		Author: ce.client.id,
 		Editor: "citizen",
@@ -139,6 +163,12 @@ func (ce *CitizenEditor) SelectDesign(mode Mode, design string) {
 		Engine.Raise(err)
 	}
 }
+
+// clearDesignName is the basename (without preview suffix) of the
+// sentinel tile rendered in every dressing/proxy slot's design
+// grid. Clicking it sends a Sculpt with an empty Design ref, which
+// applyDressing interprets as "unequip this slot".
+const clearDesignName = "_empty.obj"
 
 // dressingSliderPrefix marks a Sculpt as a dressing-slot change rather
 // than a numeric slider adjustment. The remainder of the Slider field
@@ -167,6 +197,7 @@ var citizenGeometryTabs = []string{
 	// composite + non-shape placeholders
 	"editing/head_size",
 	"haircut",
+	"eyebrow",
 	"stubble",
 	// face proportions
 	"editing/head_age",
@@ -224,10 +255,23 @@ var citizenEditorSliders = func() map[string]struct {
 }()
 
 func (*CitizenEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
+	if init, ok := citizenMaterialSliders[editing]; ok {
+		return init, 0, 1, 0.01
+	}
 	if _, ok := citizenEditorSliders[editing]; ok {
 		return 0, -1, 1, 0.01
 	}
 	return 0, 0, 1, 0.01
+}
+
+// citizenMaterialSliders are the single-slider material tabs under
+// ModeMaterial: one slider per tab, values 0..1, mapped through a
+// palette inside CitizenBody.SetPigment / SetEyeTint to actual
+// albedo colours. Init values position the slider at the default
+// citizen's appearance (fair skin, hazel eyes).
+var citizenMaterialSliders = map[string]float64{
+	"pigment": defaultPigment,
+	"eyetint": defaultEyeTint,
 }
 
 func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
@@ -290,6 +334,17 @@ func (ce *CitizenEditor) applyDressing(slot string, design musical.Design) {
 func (ce *CitizenEditor) applySlider(editing string, value Float.X) {
 	ce.ensureLoaded()
 	if ce.body.citizen == nil {
+		return
+	}
+	// Material-tab sliders drive a per-surface material's albedo,
+	// not a shape-key, so they short-circuit before the citizen
+	// shape-target lookup below.
+	switch editing {
+	case "pigment":
+		ce.body.SetPigment(float32(value))
+		return
+	case "eyetint":
+		ce.body.SetEyeTint(float32(value))
 		return
 	}
 	spec, ok := citizenEditorSliders[editing]

@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	"graphics.gd/classdb/ArrayMesh"
+	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
@@ -51,6 +53,12 @@ type CitizenBody struct {
 	// edge without a halo.
 	indices   []int32
 	vertexBuf []Vector3.XYZ
+	// uvBuf is the per-vertex UV coords from base.obj, in the same
+	// position-indexed space as vertexBuf. Static across the body's
+	// lifetime (sliders only move positions, not UVs). Passed into
+	// every surface so the eye material can sample its iris/sclera
+	// texture; harmless on surfaces with no texture bound.
+	uvBuf []Vector2.XY
 	// neighbours is per-vertex adjacency derived from baseIndices,
 	// built lazily on first need and cached. Used to erode the
 	// covered set inward by one vertex spacing before deciding which
@@ -77,6 +85,19 @@ type CitizenBody struct {
 	// runs the rebuild. Coalesces N startup-replay AttachDressings
 	// into one rebuild per frame.
 	shrinkDirty bool
+	// eyeIndices is the second-surface index buffer for the eye
+	// helper groups (helper-l-eye + helper-r-eye in MakeHuman's
+	// base.obj). Shares vertexBuf with the body surface — eyes use
+	// the same global vertex space as everything else, they just
+	// get rendered as a separate surface so they can carry a
+	// distinct (tintable) material.
+	eyeIndices []int32
+	// skinMaterial is the StandardMaterial3D applied to surface 0
+	// (body). Its albedo is driven by the "pigment" slider.
+	skinMaterial StandardMaterial3D.Instance
+	// eyeMaterial is the StandardMaterial3D applied to surface 1
+	// (eyes). Its albedo is driven by the "eyetint" slider.
+	eyeMaterial StandardMaterial3D.Instance
 }
 
 // bodyShrinkAmount is how far we push anchored body verts inward
@@ -127,23 +148,61 @@ func AttachCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh, targe
 	for i, v := range base.Verts {
 		vbuf[i] = Vector3.XYZ{X: Float.X(v.X), Y: Float.X(v.Y), Z: Float.X(v.Z)}
 	}
+	var uvbuf []Vector2.XY
+	if len(base.UVs) == len(base.Verts) {
+		uvbuf = make([]Vector2.XY, len(base.UVs))
+		for i, uv := range base.UVs {
+			uvbuf[i] = Vector2.XY{X: Float.X(uv.U), Y: Float.X(uv.V)}
+		}
+	}
 	baseCopy := make([]citizen.Vec3, len(base.Verts))
 	copy(baseCopy, base.Verts)
 	c := citizen.New(baseCopy)
 	c.AddTargets(targets)
 	body := CitizenBody{
-		citizen:     c,
-		mesh:        mi,
-		arrayMesh:   ArrayMesh.New(),
-		baseIndices: base.Indices,
-		indices:     base.Indices,
-		vertexBuf:   vbuf,
-		dressings:   make(map[string]*CitizenDressing),
+		citizen:      c,
+		mesh:         mi,
+		arrayMesh:    ArrayMesh.New(),
+		baseIndices:  base.Indices,
+		indices:      base.Indices,
+		vertexBuf:    vbuf,
+		uvBuf:        uvbuf,
+		dressings:    make(map[string]*CitizenDressing),
+		eyeIndices:   base.EyeIndices,
+		skinMaterial: StandardMaterial3D.New(),
+		eyeMaterial:  StandardMaterial3D.New(),
 	}
+	body.skinMaterial.AsBaseMaterial3D().SetAlbedoColor(pigmentColor(defaultPigment))
+	body.eyeMaterial.AsBaseMaterial3D().SetAlbedoColor(eyeTintColor(defaultEyeTint))
+	// Iris/sclera texture (CC0, originally MakeHuman's brown_eye.png,
+	// copied into the library by import_makehuman.sh). Combined with
+	// the eyetint slider's albedo colour via StandardMaterial3D's
+	// implicit modulation, so the slider tints the texture rather
+	// than replacing it.
+	if eyeTex := Resource.Load[Texture2D.Instance]("res://library/makehuman/citizen_eye.png"); eyeTex != Texture2D.Nil {
+		body.eyeMaterial.AsBaseMaterial3D().SetAlbedoTexture(eyeTex)
+	}
+	// The hm08 eye spheres come from the helper-l-eye / helper-r-eye
+	// groups, which appear to have opposite winding from the body
+	// group — Godot's default backface cull then hides them.
+	// Disabling cull on the eye material renders both sides of every
+	// triangle, which is harmless for closed spheres (we never see
+	// their interior anyway) and robust against per-group winding
+	// inconsistencies in the source mesh.
+	body.eyeMaterial.AsBaseMaterial3D().SetCullMode(BaseMaterial3D.CullDisabled)
 	body.surface()
+	body.applySurfaceMaterials()
 	mi.SetMesh(body.arrayMesh.AsMesh())
 	return body, nil
 }
+
+// defaultPigment / defaultEyeTint pick the neutral palette index for
+// citizens with no explicit slider value yet — a fair-skin and a
+// hazel-eye starting point.
+const (
+	defaultPigment = 0.25
+	defaultEyeTint = 0.65
+)
 
 // Citizen exposes the underlying pure-Go state for direct querying
 // (current weights, target catalogue, etc.).
@@ -166,6 +225,7 @@ func (b *CitizenBody) rebuild() {
 	b.writeShrunkVertexBuf(body)
 	b.arrayMesh.ClearSurfaces()
 	b.surface()
+	b.applySurfaceMaterials()
 	for _, d := range b.dressings {
 		d.refit(body)
 	}
@@ -287,15 +347,125 @@ func clothRestNormals(verts []citizen.Vec3, indices []int32) []citizen.Vec3 {
 	return n
 }
 
-// surface (re)constructs the arrayMesh's surface 0 from the current
-// vertexBuf and the current (possibly culled) index buffer. Caller
-// should ClearSurfaces() before calling this on a mesh that already
-// has surfaces.
+// surface (re)constructs the arrayMesh's surfaces from the current
+// vertexBuf: surface 0 is the body (using b.indices, possibly culled
+// under clothing); surface 1 is the eyes if base.obj contained any.
+// Caller should ClearSurfaces() before calling this on a mesh that
+// already has surfaces.
 func (b *CitizenBody) surface() {
 	var arrays [Mesh.ArrayMax]any
 	arrays[Mesh.ArrayVertex] = b.vertexBuf
 	arrays[Mesh.ArrayIndex] = b.indices
+	if len(b.uvBuf) == len(b.vertexBuf) {
+		arrays[Mesh.ArrayTexUv] = b.uvBuf
+	}
 	b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
+	if len(b.eyeIndices) > 0 {
+		var eyeArrays [Mesh.ArrayMax]any
+		eyeArrays[Mesh.ArrayVertex] = b.vertexBuf
+		eyeArrays[Mesh.ArrayIndex] = b.eyeIndices
+		if len(b.uvBuf) == len(b.vertexBuf) {
+			eyeArrays[Mesh.ArrayTexUv] = b.uvBuf
+		}
+		b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, eyeArrays[:])
+	}
+}
+
+// applySurfaceMaterials rebinds the per-surface override materials
+// on the MeshInstance3D. Called after every surface(): Godot stores
+// overrides on the MI not the Mesh, but only honours an override
+// whose surface index existed when set — so binding after
+// AddSurfaceFromArrays is the safe path.
+func (b *CitizenBody) applySurfaceMaterials() {
+	if b.skinMaterial != StandardMaterial3D.Nil {
+		b.mesh.SetSurfaceOverrideMaterial(0, b.skinMaterial.AsMaterial())
+	}
+	if len(b.eyeIndices) > 0 && b.eyeMaterial != StandardMaterial3D.Nil {
+		b.mesh.SetSurfaceOverrideMaterial(1, b.eyeMaterial.AsMaterial())
+	}
+}
+
+// SetPigment maps a 0..1 slider value through the skin-tone palette
+// and sets the body material's albedo. Stored on the citizen's
+// weights map too so it serialises alongside shape sliders.
+func (b *CitizenBody) SetPigment(value float32) {
+	b.citizen.SetWeight("pigment", value)
+	if b.skinMaterial == StandardMaterial3D.Nil {
+		return
+	}
+	b.skinMaterial.AsBaseMaterial3D().SetAlbedoColor(pigmentColor(value))
+}
+
+// SetEyeTint maps a 0..1 slider value through the eye-colour palette
+// and sets the eye material's albedo.
+func (b *CitizenBody) SetEyeTint(value float32) {
+	b.citizen.SetWeight("eyetint", value)
+	if b.eyeMaterial == StandardMaterial3D.Nil {
+		return
+	}
+	b.eyeMaterial.AsBaseMaterial3D().SetAlbedoColor(eyeTintColor(value))
+}
+
+// pigmentColor interpolates between five hand-picked skin tones,
+// from pale-peach (0) to deep-brown (1). Two-segment lerp keeps the
+// extremes from being washed-out 1D averages.
+func pigmentColor(t float32) Color.RGBA {
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	stops := [...]Color.RGBA{
+		{R: 1.00, G: 0.86, B: 0.76, A: 1},
+		{R: 0.93, G: 0.76, B: 0.62, A: 1},
+		{R: 0.81, G: 0.62, B: 0.45, A: 1},
+		{R: 0.55, G: 0.37, B: 0.24, A: 1},
+		{R: 0.27, G: 0.17, B: 0.10, A: 1},
+	}
+	return lerpPalette(stops[:], t)
+}
+
+// eyeTintColor interpolates between five hand-picked iris colours,
+// from blue (0) through green/hazel to deep brown (1).
+func eyeTintColor(t float32) Color.RGBA {
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	stops := [...]Color.RGBA{
+		{R: 0.20, G: 0.40, B: 0.78, A: 1},
+		{R: 0.25, G: 0.55, B: 0.55, A: 1},
+		{R: 0.40, G: 0.55, B: 0.30, A: 1},
+		{R: 0.46, G: 0.33, B: 0.18, A: 1},
+		{R: 0.22, G: 0.13, B: 0.07, A: 1},
+	}
+	return lerpPalette(stops[:], t)
+}
+
+func lerpPalette(stops []Color.RGBA, t float32) Color.RGBA {
+	if len(stops) == 0 {
+		return Color.RGBA{A: 1}
+	}
+	if len(stops) == 1 || t <= 0 {
+		return stops[0]
+	}
+	if t >= 1 {
+		return stops[len(stops)-1]
+	}
+	scaled := t * float32(len(stops)-1)
+	i := int(scaled)
+	if i >= len(stops)-1 {
+		return stops[len(stops)-1]
+	}
+	u := scaled - float32(i)
+	a, b := stops[i], stops[i+1]
+	return Color.RGBA{
+		R: Float.X(float32(a.R) + (float32(b.R)-float32(a.R))*u),
+		G: Float.X(float32(a.G) + (float32(b.G)-float32(a.G))*u),
+		B: Float.X(float32(a.B) + (float32(b.B)-float32(a.B))*u),
+		A: 1,
+	}
 }
 
 // AttachDressing equips or replaces clothing in a slot. The design is a
