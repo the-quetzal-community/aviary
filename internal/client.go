@@ -764,9 +764,20 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				} else {
 					node, ok := Object.As[Node.Instance](intersect.Collider)
 					if ok {
-						node = node.Owner()
-						world.selection = Node3D.ID(node.ID())
-						Select(node, true)
+						// node.Owner() returns Nil for colliders that
+						// weren't loaded from a scene file — including
+						// any procedurally-spawned StaticBody3D in an
+						// editor (critter body, spine handles, …).
+						// Calling .ID() on Nil segfaults; treat it as
+						// "not a selectable entity" instead.
+						owner := node.Owner()
+						if owner == Node.Nil {
+							world.selection = 0
+						} else {
+							node = owner
+							world.selection = Node3D.ID(node.ID())
+							Select(node, true)
+						}
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action

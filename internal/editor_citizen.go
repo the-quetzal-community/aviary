@@ -22,15 +22,42 @@ type CitizenEditor struct {
 
 	loadOnce sync.Once
 	loadErr  error
+	loaded   bool
 	body     CitizenBody
 
 	last_slider_sculpt time.Time
+
+	// pendingSculpts queues Sculpts that arrived before the user
+	// entered the citizen editor — typically history replay on
+	// session load, occasionally network catch-up. Drained in
+	// EnableEditor once the body is built, so loading the world
+	// doesn't pay the O(N targets × rebuilds) cost up-front when
+	// the user may never open the citizen editor at all.
+	pendingSculpts []musical.Sculpt
 }
 
 func (*CitizenEditor) Name() string    { return "citizen" }
 func (*CitizenEditor) Views() []string { return nil }
-func (*CitizenEditor) EnableEditor()   {}
-func (*CitizenEditor) ChangeEditor()   {}
+
+// EnableEditor fires when the user switches into the citizen
+// editor. This is where we pay the deferred load cost — building
+// the base mesh + applying any queued Sculpts that piled up
+// during world load (or while the user was in another editor) —
+// so a session that never opens the citizen editor never builds
+// the citizen body at all.
+func (ce *CitizenEditor) EnableEditor() {
+	ce.ensureLoaded()
+	if len(ce.pendingSculpts) == 0 {
+		return
+	}
+	pending := ce.pendingSculpts
+	ce.pendingSculpts = nil
+	for _, brush := range pending {
+		ce.applySculpt(brush)
+	}
+}
+
+func (*CitizenEditor) ChangeEditor() {}
 
 // Process runs once per frame; we use it to flush any pending body
 // visibility recompute that AttachDressing deferred. During replay of
@@ -65,6 +92,7 @@ func (ce *CitizenEditor) ensureLoaded() {
 			return
 		}
 		ce.body = body
+		ce.loaded = true
 	})
 }
 
@@ -301,13 +329,29 @@ func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, 
 // from the network — actually move the displayed mesh. Dressing changes
 // piggyback on the same channel: they're encoded with Slider =
 // "dressing/<slot>" and Design = the imported library URI's design ref.
+//
+// If the citizen body hasn't been built yet (the user hasn't entered the
+// citizen editor this session), we just queue the sculpt and bail. The
+// cost of base-mesh + N-deltas worth of rebuilds is paid in EnableEditor
+// once instead of at world load, so opening to any other editor stays
+// snappy.
 func (ce *CitizenEditor) Sculpt(brush musical.Sculpt) error {
-	if strings.HasPrefix(brush.Slider, dressingSliderPrefix) {
-		ce.applyDressing(strings.TrimPrefix(brush.Slider, dressingSliderPrefix), brush.Design)
+	if !ce.loaded {
+		ce.pendingSculpts = append(ce.pendingSculpts, brush)
 		return nil
 	}
-	ce.applySlider(brush.Slider, brush.Amount)
+	ce.applySculpt(brush)
 	return nil
+}
+
+// applySculpt is the actual handler — called either from Sculpt
+// (live) or from EnableEditor (draining the deferred queue).
+func (ce *CitizenEditor) applySculpt(brush musical.Sculpt) {
+	if strings.HasPrefix(brush.Slider, dressingSliderPrefix) {
+		ce.applyDressing(strings.TrimPrefix(brush.Slider, dressingSliderPrefix), brush.Design)
+		return
+	}
+	ce.applySlider(brush.Slider, brush.Amount)
 }
 
 // applyDressing resolves the numeric Design back to a library URI and

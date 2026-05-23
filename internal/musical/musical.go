@@ -201,40 +201,73 @@ func (rel Action) validateAuthor(author Author) bool { return rel.Author == auth
 func (ats Sculpt) validateAuthor(author Author) bool { return ats.Author == author }
 func (bev LookAt) validateAuthor(author Author) bool { return bev.Author == author }
 
+// encode/decode pack a struct's "which fields are present" mask
+// into a uint16 layout word.
+//
+// Non-bool fields claim bit `i` (their struct index, counting up
+// from 0). Bool fields claim bit `(1 << 14) >> j` where `j` is the
+// bool counter — i.e. the FIRST bool in the struct uses bit 14,
+// the second uses bit 13, etc. This is the original design intent
+// — pack bools into high bits so they stay out of non-bool
+// territory — but the legacy implementation slipped and used the
+// struct field index in the bool formula `(1 << 15) >> i` instead
+// of the bool counter. With 12 non-bool fields preceding two bools
+// (Change.Remove at struct index 12, Commit at 13) the legacy
+// formula mapped them onto bits 3 and 2 — exactly where Offset
+// and Design were already living. Result: every persisted Add
+// silently decoded as a Remove.
+//
+// Bit 15 is reserved as a format marker. Legacy records never set
+// it (no struct had a bool at struct index 0, which is the only
+// way the old formula could have produced bit 15); new records
+// always set it, so the decoder can branch and apply the legacy
+// collision-fixup when reading older `.mu3s` files.
+const (
+	newFormatMarker uint16 = 1 << 15
+	boolBitTop      uint16 = 14 // first bool occupies bit 14, then 13, …
+)
+
 func encode(v encodable) (buf []byte, err error) {
 	rvalue := reflect.ValueOf(v)
-	var layout uint16
+	layout := newFormatMarker
+	boolN := uint16(0)
 	for i := 0; i < rvalue.NumField(); i++ {
-		if !rvalue.Field(i).IsZero() {
+		if rvalue.Field(i).IsZero() {
 			if rvalue.Field(i).Kind() == reflect.Bool {
-				layout |= (1 << 15) >> uint16(i)
-			} else {
-				layout |= 1 << uint16(i)
+				boolN++
 			}
+			continue
+		}
+		if rvalue.Field(i).Kind() == reflect.Bool {
+			layout |= 1 << (boolBitTop - boolN)
+			boolN++
+		} else {
+			layout |= 1 << uint16(i)
 		}
 	}
 	buf = append(buf, uint8(v.entryType()))
 	buf = binary.LittleEndian.AppendUint16(buf, layout)
+	boolN = 0
 	for i := 0; i < rvalue.NumField(); i++ {
-		if rvalue.Field(i).Kind() == reflect.Bool {
-			if layout&((1<<15)>>uint16(i)) == 0 {
-				continue
-			}
-		} else {
-			if layout&(1<<uint16(i)) == 0 {
-				continue
-			}
+		field := rvalue.Field(i)
+		if field.Kind() == reflect.Bool {
+			set := layout&(1<<(boolBitTop-boolN)) != 0
+			boolN++
+			_ = set // bools carry no payload; bit alone is the value
+			continue
 		}
-		switch rvalue.Field(i).Kind() {
-		case reflect.Bool:
+		if layout&(1<<uint16(i)) == 0 {
+			continue
+		}
+		switch field.Kind() {
 		case reflect.String:
-			str := rvalue.Field(i).String()
+			str := field.String()
 			strLen := uint16(len(str))
 			buf = binary.LittleEndian.AppendUint16(buf, strLen)
 			buf = append(buf, []byte(str)...)
 		case reflect.Interface:
 		default:
-			buf, err = binary.Append(buf, binary.LittleEndian, rvalue.Field(i).Interface())
+			buf, err = binary.Append(buf, binary.LittleEndian, field.Interface())
 			if err != nil {
 				return nil, xray.New(err)
 			}
@@ -252,6 +285,12 @@ func decode(r io.Reader) (encodable, error) {
 	if err := binary.Read(r, binary.LittleEndian, &layout); err != nil {
 		return nil, xray.New(err)
 	}
+	// Discriminate new vs legacy format. New records set bit 15;
+	// legacy records never set it (no struct has a bool at index 0,
+	// which is the only field that would have populated bit 15 in
+	// the old scheme).
+	newFormat := layout&newFormatMarker != 0
+	layout &^= newFormatMarker
 	var v reflect.Value
 	switch et {
 	case entryTypeMember:
@@ -271,19 +310,26 @@ func decode(r io.Reader) (encodable, error) {
 	default:
 		return nil, xray.New(errors.New("unknown entry type " + fmt.Sprint(et)))
 	}
+	boolN := uint16(0)
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Field(i)
-
+		var bitset bool
 		if field.Kind() == reflect.Bool {
-			if layout&((1<<15)>>uint16(i)) == 0 {
-				continue
+			if newFormat {
+				bitset = layout&(1<<(boolBitTop-boolN)) != 0
+			} else {
+				// Legacy formula used the struct field index where it
+				// should have used the bool counter, collapsing bool
+				// bits into the non-bool range — that's the collision.
+				bitset = layout&((1<<15)>>uint16(i)) != 0
 			}
+			boolN++
 		} else {
-			if layout&(1<<uint16(i)) == 0 {
-				continue
-			}
+			bitset = layout&(1<<uint16(i)) != 0
 		}
-
+		if !bitset {
+			continue
+		}
 		switch field.Kind() {
 		case reflect.Bool:
 			field.SetBool(true)
@@ -306,6 +352,39 @@ func decode(r io.Reader) (encodable, error) {
 			}
 		}
 	}
+	if !newFormat {
+		fixLegacyBoolCollisions(v)
+	}
 	asserted, _ := reflect.TypeAssert[encodable](v)
 	return asserted, nil
+}
+
+// fixLegacyBoolCollisions repairs the bool/non-bool bit collision
+// in legacy records. For each bool field at index i_bool, the
+// non-bool field at index `15 - i_bool` shares the layout bit. If
+// that non-bool field decoded with a meaningful (non-zero) value,
+// the bool was almost certainly a phantom set by the collision —
+// our writers never deliberately mixed both (e.g. a Change is
+// either an Add with Offset and Commit, or a Remove with neither).
+// The heuristic is safe for the only structs that have bool fields
+// in collision range: Change, Action, Sculpt.
+func fixLegacyBoolCollisions(v reflect.Value) {
+	n := v.NumField()
+	for i := 0; i < n; i++ {
+		field := v.Field(i)
+		if field.Kind() != reflect.Bool || !field.Bool() {
+			continue
+		}
+		partner := 15 - i
+		if partner < 0 || partner >= n {
+			continue
+		}
+		pf := v.Field(partner)
+		if pf.Kind() == reflect.Bool {
+			continue
+		}
+		if !pf.IsZero() {
+			field.SetBool(false)
+		}
+	}
 }
