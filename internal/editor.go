@@ -116,6 +116,33 @@ type Editor interface {
 	SliderHandle(mode Mode, editing string, value float64, commit bool)
 }
 
+// BuiltinDesign is one procedural/builtin entry that an editor wants
+// shown in a tab alongside (or instead of) library scenes. Used by
+// editors whose part categories include shapes generated in code
+// rather than backed by an imported .glb — e.g. the critter editor's
+// procedural foreleg. The design explorer renders these as tiles
+// before the library scan in the same tab.
+type BuiltinDesign struct {
+	// Resource is the sentinel string passed back to SelectDesign so
+	// the editor can recognise its own builtin tile. By convention
+	// "procedural://<editor>/<name>" so it never collides with a real
+	// file path from a library directory.
+	Resource string
+	// Icon is an optional res:// path to a thumbnail texture. When
+	// empty the tile shows a label-only fallback.
+	Icon string
+	// Label is shown in tooltips / accessibility metadata.
+	Label string
+}
+
+// BuiltinDesignProvider is an optional interface that an [Editor]
+// can implement to inject procedural tiles into the design explorer.
+// The design explorer checks for it via a type assertion, so most
+// editors don't need to know it exists.
+type BuiltinDesignProvider interface {
+	BuiltinDesigns(mode Mode, tab string) []BuiltinDesign
+}
+
 /*
 	type ExampleEditor struct {
 		Node3D.Extension[ExampleEditor]

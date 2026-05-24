@@ -37,8 +37,56 @@ type Bone struct {
 // per-bone editing layers on top.
 type Critter struct {
 	bones   []Bone
+	legs    []Leg
 	weights map[string]float32
 }
+
+// Leg is a mirrored limb attached to one spine bone. The struct
+// stores the +X-side rest-pose joint positions in body-local
+// space; the renderer draws the limb on both sides by flipping X
+// at draw time, so legs are always bilaterally symmetric.
+//
+// Multiple legs can share the same Attach (e.g. front-pair both
+// socketed to the shoulder bone); they're stored independently so
+// each pair can be edited in isolation. Procedural walking is a
+// runtime concern — the data model only carries the rest pose
+// (Hip, Knee, Foot) and a per-joint tube radius. Per-side phase
+// for the gait controller lives outside this package.
+//
+// HipRadius / KneeRadius / FootRadius let the user thin the limb
+// to a tapered claw or fatten it to a barrel — the mesh
+// interpolates linearly between them along the femur and tibia.
+type Leg struct {
+	Attach     int
+	Hip        Vec3
+	Knee       Vec3
+	Foot       Vec3
+	HipRadius  float32
+	KneeRadius float32
+	FootRadius float32
+}
+
+// LegJoint names the three editable joints on a leg. The integer
+// values match the order in which the editor lays handles out
+// along the chain so external code (sculpt protocol) can encode
+// "which joint" as a small int.
+type LegJoint int
+
+const (
+	LegHip  LegJoint = 0
+	LegKnee LegJoint = 1
+	LegFoot LegJoint = 2
+)
+
+// GroundY is the body-local Y floor for leg joints. The editor
+// lifts the body's MeshInstance3D by +0.3 above the world ground
+// plane (see ensureLoaded in editor_critter.go), so body-local
+// Y=−0.3 is exactly world Y=0. Clamping joint Y to ≥ GroundY here
+// in the data model keeps locally-driven drags and replayed
+// sculpts from poking control points underground. Must agree with
+// the lift used by the editor — if that lift changes, change this
+// too.
+const GroundY = float32(-0.3)
 
 // New returns a default critter — a 5-bone tail-to-head chain with
 // the same rest pose previous versions used (so existing tests +
@@ -103,6 +151,327 @@ func (c *Critter) SetBoneRadius(i int, r float32) bool {
 	return true
 }
 
+// Legs returns a copy of the current leg list — safe to walk or
+// hand to a renderer without subsequent edits mutating the slice
+// underneath.
+func (c *Critter) Legs() []Leg {
+	out := make([]Leg, len(c.legs))
+	copy(out, c.legs)
+	return out
+}
+
+// LegCount is the current number of legs.
+func (c *Critter) LegCount() int { return len(c.legs) }
+
+// AppendLeg adds a new leg with a deterministic default rest pose
+// derived from the spine — used by both the local editor click and
+// the replicated "leg/grow" sculpt so every client computes the
+// same new entry without having to ship the joint coordinates.
+// Returns the new leg's index (or -1 if the spine is empty).
+func (c *Critter) AppendLeg() int {
+	return c.AppendLegAt(c.defaultLegAttach())
+}
+
+// AppendLegAt adds a leg socketed to the given spine bone index,
+// with the default rest pose derived from that bone's position and
+// radius. Out-of-range indices clamp into the valid range.
+func (c *Critter) AppendLegAt(attach int) int {
+	n := len(c.bones)
+	if n == 0 {
+		return -1
+	}
+	if attach < 0 {
+		attach = 0
+	}
+	if attach >= n {
+		attach = n - 1
+	}
+	c.legs = append(c.legs, defaultLegPose(c.bones[attach], attach))
+	return len(c.legs) - 1
+}
+
+// defaultLegAttach picks a sensible spine bone for a new leg —
+// roughly the hip position on a quadruped (front quarter of the
+// chain). Falls back to the head end on very short spines.
+func (c *Critter) defaultLegAttach() int {
+	if len(c.bones) < 2 {
+		return 0
+	}
+	idx := len(c.bones) / 4
+	if idx == 0 {
+		idx = 1
+	}
+	return idx
+}
+
+// LegRestPoseAtPos returns the default leg rest pose for a leg
+// whose hip lands at the given body-local position. Knee bends
+// forward and downward, foot lands on the ground plane (GroundY).
+// Attach is set to the nearest spine bone so downstream gait/IK
+// code still has a chain reference. Used by both the editor's
+// placement preview (ghost) and the free-attach commit path so
+// they produce the exact same rest pose. ok=false on an empty
+// spine.
+func (c *Critter) LegRestPoseAtPos(hip Vec3) (Leg, bool) {
+	if len(c.bones) == 0 {
+		return Leg{}, false
+	}
+	if hip.X < 0 {
+		hip.X = -hip.X
+	}
+	if hip.Y < GroundY {
+		hip.Y = GroundY
+	}
+	attach := c.NearestBone(hip)
+	footY := GroundY
+	kneeY := (hip.Y + footY) * 0.5
+	if kneeY < GroundY {
+		kneeY = GroundY
+	}
+	return Leg{
+		Attach:     attach,
+		Hip:        hip,
+		Knee:       Vec3{X: hip.X + 0.05, Y: kneeY, Z: hip.Z + 0.05},
+		Foot:       Vec3{X: hip.X + 0.05, Y: footY, Z: hip.Z},
+		HipRadius:  0.06,
+		KneeRadius: 0.048,
+		FootRadius: 0.036,
+	}, true
+}
+
+// AppendLegAtPos adds a leg whose hip lands at the given body-local
+// position with the default rest pose from LegRestPoseAtPos.
+// Returns the new leg's index, or -1 if the spine is empty.
+func (c *Critter) AppendLegAtPos(hip Vec3) int {
+	leg, ok := c.LegRestPoseAtPos(hip)
+	if !ok {
+		return -1
+	}
+	c.legs = append(c.legs, leg)
+	return len(c.legs) - 1
+}
+
+// LegRestPoseAt returns the default leg rest pose for a leg
+// socketed to the given spine bone, without actually appending the
+// leg. Used by the editor's placement preview to render a ghost
+// leg at the would-be attach point before the user commits. Clamps
+// the attach index into the valid range; returns ok=false on an
+// empty spine.
+func (c *Critter) LegRestPoseAt(attach int) (Leg, bool) {
+	if len(c.bones) == 0 {
+		return Leg{}, false
+	}
+	if attach < 0 {
+		attach = 0
+	}
+	if attach >= len(c.bones) {
+		attach = len(c.bones) - 1
+	}
+	return defaultLegPose(c.bones[attach], attach), true
+}
+
+// NearestBone returns the index of the spine bone closest to the
+// given body-local point in 3D. Used by the editor to map a
+// body-surface raycast hit to an attach bone for new legs.
+func (c *Critter) NearestBone(p Vec3) int {
+	if len(c.bones) == 0 {
+		return -1
+	}
+	best := 0
+	var bestD float32
+	for i, b := range c.bones {
+		dx := p.X - b.Pos.X
+		dy := p.Y - b.Pos.Y
+		dz := p.Z - b.Pos.Z
+		d := dx*dx + dy*dy + dz*dz
+		if i == 0 || d < bestD {
+			best = i
+			bestD = d
+		}
+	}
+	return best
+}
+
+// defaultLegPose returns rest joint positions for a leg socketed
+// to the given bone. Hip sits on the +X body surface; knee bends
+// outward and forward; foot lands on the ground plane (GroundY).
+// All joints are clamped to ≥ GroundY so even a low-slung attach
+// bone won't push the rest pose underground. Default per-joint
+// radii reproduce the old tapered look (0.06 → 0.048 → 0.036) so
+// existing scenes keep the same silhouette.
+func defaultLegPose(b Bone, attach int) Leg {
+	r := b.Radius
+	hipY := b.Pos.Y
+	footY := GroundY
+	kneeY := (hipY + footY) * 0.5
+	if hipY < GroundY {
+		hipY = GroundY
+	}
+	if kneeY < GroundY {
+		kneeY = GroundY
+	}
+	return Leg{
+		Attach:     attach,
+		Hip:        Vec3{X: r, Y: hipY, Z: b.Pos.Z},
+		Knee:       Vec3{X: r + 0.05, Y: kneeY, Z: b.Pos.Z + 0.05},
+		Foot:       Vec3{X: r + 0.05, Y: footY, Z: b.Pos.Z},
+		HipRadius:  0.06,
+		KneeRadius: 0.048,
+		FootRadius: 0.036,
+	}
+}
+
+// RemoveLeg drops the leg at index i. Returns true on a real
+// removal; out-of-range indices are no-ops.
+func (c *Critter) RemoveLeg(i int) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	c.legs = append(c.legs[:i], c.legs[i+1:]...)
+	return true
+}
+
+// SetLegAttach re-sockets leg i to a different spine bone.
+// Returns true on a real change.
+func (c *Critter) SetLegAttach(i, bone int) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	if bone < 0 {
+		bone = 0
+	}
+	if bone >= len(c.bones) {
+		bone = len(c.bones) - 1
+	}
+	if c.legs[i].Attach == bone {
+		return false
+	}
+	c.legs[i].Attach = bone
+	return true
+}
+
+// SetLegJoint sets one joint on leg i to the given position. X is
+// normalised to ≥0 since legs are mirrored across X=0 — passing a
+// negative X would just flip-flop which side renders "primary".
+// Y is clamped to ≥ GroundY so joints can't sink under the ground
+// plane. Returns true on a real change.
+func (c *Critter) SetLegJoint(i int, joint LegJoint, pos Vec3) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	if pos.X < 0 {
+		pos.X = -pos.X
+	}
+	if pos.Y < GroundY {
+		pos.Y = GroundY
+	}
+	cur := c.legPtr(i, joint)
+	if *cur == pos {
+		return false
+	}
+	*cur = pos
+	return true
+}
+
+// SetLegJointAxis sets a single axis (0=X, 1=Y, 2=Z) of one joint
+// on leg i. Matches the sculpt protocol where each axis ships as
+// its own message (so a drag emitting Y+Z doesn't have to bundle
+// the unchanged X). Returns true on a real change.
+func (c *Critter) SetLegJointAxis(i int, joint LegJoint, axis int, v float32) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	cur := c.legPtr(i, joint)
+	p := *cur
+	switch axis {
+	case 0:
+		if v < 0 {
+			v = -v
+		}
+		if p.X == v {
+			return false
+		}
+		p.X = v
+	case 1:
+		if v < GroundY {
+			v = GroundY
+		}
+		if p.Y == v {
+			return false
+		}
+		p.Y = v
+	case 2:
+		if p.Z == v {
+			return false
+		}
+		p.Z = v
+	default:
+		return false
+	}
+	*cur = p
+	return true
+}
+
+// SetLegRadius sets all three joint radii on leg i to the given
+// value — convenience for the "uniform thickness" case. Per-joint
+// edits go through SetLegJointRadius. Returns true on a real
+// change.
+func (c *Critter) SetLegRadius(i int, r float32) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	if r < 0 {
+		r = 0
+	}
+	leg := &c.legs[i]
+	if leg.HipRadius == r && leg.KneeRadius == r && leg.FootRadius == r {
+		return false
+	}
+	leg.HipRadius = r
+	leg.KneeRadius = r
+	leg.FootRadius = r
+	return true
+}
+
+// SetLegJointRadius sets the tube radius at one joint of leg i.
+// Returns true on a real change.
+func (c *Critter) SetLegJointRadius(i int, joint LegJoint, r float32) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	if r < 0 {
+		r = 0
+	}
+	cur := c.legRadiusPtr(i, joint)
+	if *cur == r {
+		return false
+	}
+	*cur = r
+	return true
+}
+
+func (c *Critter) legRadiusPtr(i int, joint LegJoint) *float32 {
+	switch joint {
+	case LegHip:
+		return &c.legs[i].HipRadius
+	case LegKnee:
+		return &c.legs[i].KneeRadius
+	default:
+		return &c.legs[i].FootRadius
+	}
+}
+
+func (c *Critter) legPtr(i int, joint LegJoint) *Vec3 {
+	switch joint {
+	case LegHip:
+		return &c.legs[i].Hip
+	case LegKnee:
+		return &c.legs[i].Knee
+	default:
+		return &c.legs[i].Foot
+	}
+}
+
 // AppendHead grows the spine by one bone past the current head
 // tip, extrapolating the head-end direction so the new tip sits
 // the same distance further out as the previous segment length.
@@ -129,7 +498,8 @@ func (c *Critter) AppendHead() int {
 // AppendTail grows the spine by one bone past the current tail
 // tip, mirroring AppendHead. The new bone is inserted at index 0,
 // so all existing bone indices shift up by one — callers tracking
-// bones by index need to compensate.
+// bones by index need to compensate. Legs that were attached to
+// pre-existing bones have their Attach index bumped to match.
 func (c *Critter) AppendTail() int {
 	if len(c.bones) < 2 {
 		if len(c.bones) == 1 {
@@ -144,29 +514,45 @@ func (c *Critter) AppendTail() int {
 		Pos:    add(first.Pos, step),
 		Radius: first.Radius * 0.85,
 	}}, c.bones...)
+	for i := range c.legs {
+		c.legs[i].Attach++
+	}
 	return 0
 }
 
 // RemoveHead removes the head-end bone. Refuses to drop below two
 // bones (a chain needs at least one segment). Returns true on a
-// real removal.
+// real removal. Legs that were attached to the dropped bone clamp
+// to the new head tip.
 func (c *Critter) RemoveHead() bool {
 	if len(c.bones) <= 2 {
 		return false
 	}
 	c.bones = c.bones[:len(c.bones)-1]
+	newMax := len(c.bones) - 1
+	for i := range c.legs {
+		if c.legs[i].Attach > newMax {
+			c.legs[i].Attach = newMax
+		}
+	}
 	return true
 }
 
 // RemoveTail removes the tail-end bone. Refuses to drop below two
 // bones. Returns true on a real removal. Existing bone indices
 // shift down by one — callers tracking bones by index need to
-// compensate.
+// compensate. Legs that were attached to bone 0 clamp to the new
+// tail (now bone 0).
 func (c *Critter) RemoveTail() bool {
 	if len(c.bones) <= 2 {
 		return false
 	}
 	c.bones = c.bones[1:]
+	for i := range c.legs {
+		if c.legs[i].Attach > 0 {
+			c.legs[i].Attach--
+		}
+	}
 	return true
 }
 
@@ -312,8 +698,7 @@ func sub(a, b Vec3) Vec3 { return Vec3{X: a.X - b.X, Y: a.Y - b.Y, Z: a.Z - b.Z}
 // the radial direction at angle theta — theta then controls the
 // roll of the attached part around the snout axis.
 func (c *Critter) AnchorPoint(t, theta, off float32) (pos, outward, along Vec3) {
-	s := c.sampleSpineAt(t)
-	n, b := frameFromTangent(s.tan, Vec3{Y: 1})
+	s, n, b := c.rmfAt(t)
 	cs := float32(math.Cos(float64(theta)))
 	sn := float32(math.Sin(float64(theta)))
 	radial := Vec3{
@@ -373,11 +758,20 @@ func (c *Critter) ClosestAnchor(p Vec3) (t, theta, off float32) {
 	if samples < 2 {
 		return 0, 0, 0
 	}
+	// Pre-sample the spine once + walk the RMF over the same
+	// samples so theta is read off the same frame the renderer
+	// draws (otherwise parts placed on a corkscrewing surface
+	// would jump to a different angle after the RMF fix).
+	sList := make([]sample, samples)
+	for i := 0; i < samples; i++ {
+		ti := float32(i) / float32(samples-1)
+		sList[i] = c.sampleSpineAt(ti)
+	}
+	normals, binormals := sampleFrames(sList, Vec3{Y: 1})
 	bestI := 0
 	bestD := float32(-1)
 	for i := 0; i < samples; i++ {
-		ti := float32(i) / float32(samples-1)
-		s := c.sampleSpineAt(ti)
+		s := sList[i]
 		dx := p.X - s.pos.X
 		dy := p.Y - s.pos.Y
 		dz := p.Z - s.pos.Z
@@ -395,8 +789,8 @@ func (c *Critter) ClosestAnchor(p Vec3) (t, theta, off float32) {
 	default:
 		t = float32(bestI) / float32(samples-1)
 	}
-	s := c.sampleSpineAt(t)
-	n, b := frameFromTangent(s.tan, Vec3{Y: 1})
+	s := sList[bestI]
+	n, b := normals[bestI], binormals[bestI]
 	dp := Vec3{X: p.X - s.pos.X, Y: p.Y - s.pos.Y, Z: p.Z - s.pos.Z}
 	dn := dotV(dp, n)
 	db := dotV(dp, b)
@@ -409,6 +803,31 @@ func (c *Critter) ClosestAnchor(p Vec3) (t, theta, off float32) {
 		off = float32(math.Sqrt(float64(dn*dn + db*db)))
 	}
 	return t, theta, off
+}
+
+// rmfAt walks the rotation-minimising frame from t=0 to the
+// requested t and returns the spine sample + (normal, binormal)
+// there. Resolution matches what BuildMesh uses by default
+// (samplesAlong=24) so AnchorPoint and the rendered tube agree on
+// the frame's rotation at any given t — without that, fixing the
+// corkscrew in BuildMesh would just move it into the part
+// placement, with anchored parts drifting off the surface.
+func (c *Critter) rmfAt(t float32) (s sample, normal, binormal Vec3) {
+	const steps = 24
+	n := steps
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	sList := make([]sample, n)
+	for i := 0; i < n; i++ {
+		ti := t * float32(i) / float32(n-1)
+		sList[i] = c.sampleSpineAt(ti)
+	}
+	normals, binormals := sampleFrames(sList, Vec3{Y: 1})
+	return sList[n-1], normals[n-1], binormals[n-1]
 }
 
 func dotV(a, b Vec3) float32 { return a.X*b.X + a.Y*b.Y + a.Z*b.Z }

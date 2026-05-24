@@ -260,6 +260,156 @@ func TestMoveBone_UpdatesShape(t *testing.T) {
 	}
 }
 
+func TestAppendLeg_DefaultPose(t *testing.T) {
+	c := New()
+	idx := c.AppendLeg()
+	if idx != 0 {
+		t.Fatalf("AppendLeg idx = %d, want 0", idx)
+	}
+	if c.LegCount() != 1 {
+		t.Errorf("LegCount = %d, want 1", c.LegCount())
+	}
+	leg := c.Legs()[0]
+	// Default attach should land somewhere in the chain, not past the
+	// ends — defaultLegAttach uses len/4 clamped to ≥1 on the default
+	// 5-bone critter.
+	if leg.Attach <= 0 || leg.Attach >= c.BoneCount()-1 {
+		t.Errorf("Attach = %d, want interior bone in [1,%d)", leg.Attach, c.BoneCount()-1)
+	}
+	// Joints should be stored on the +X side; foot should sit below
+	// the hip (more negative Y) so the rest pose looks plausibly
+	// downward.
+	if leg.Hip.X < 0 || leg.Knee.X < 0 || leg.Foot.X < 0 {
+		t.Errorf("joints must store +X coords; got %+v", leg)
+	}
+	if !(leg.Foot.Y < leg.Knee.Y && leg.Knee.Y < leg.Hip.Y) {
+		t.Errorf("Y ordering broken: hip=%v knee=%v foot=%v", leg.Hip.Y, leg.Knee.Y, leg.Foot.Y)
+	}
+}
+
+func TestSetLegJoint_NormalisesX(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	// Passing a negative X should be reflected to positive — legs are
+	// mirrored, so the storage convention is +X only.
+	if !c.SetLegJoint(0, LegKnee, Vec3{X: -0.4, Y: -0.2, Z: 0.1}) {
+		t.Fatal("SetLegJoint returned false on a real change")
+	}
+	knee := c.Legs()[0].Knee
+	if knee.X != 0.4 {
+		t.Errorf("X = %v, want 0.4 (positive mirror)", knee.X)
+	}
+	if knee.Y != -0.2 || knee.Z != 0.1 {
+		t.Errorf("Y/Z not stored: got %+v", knee)
+	}
+}
+
+func TestSetLegJointAxis_Idempotent(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	if !c.SetLegJointAxis(0, LegKnee, 2, 0.2) {
+		t.Fatal("first SetLegJointAxis should report change")
+	}
+	if c.SetLegJointAxis(0, LegKnee, 2, 0.2) {
+		t.Error("repeated SetLegJointAxis to same value should report no change")
+	}
+}
+
+func TestSetLegJoint_ClampsToGround(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	c.SetLegJoint(0, LegFoot, Vec3{X: 0.3, Y: -5, Z: 0})
+	if got := c.Legs()[0].Foot.Y; got != GroundY {
+		t.Errorf("Foot Y after underground set = %v, want %v (GroundY)", got, GroundY)
+	}
+	c.SetLegJointAxis(0, LegKnee, 1, -10)
+	if got := c.Legs()[0].Knee.Y; got != GroundY {
+		t.Errorf("Knee Y after underground axis set = %v, want %v", got, GroundY)
+	}
+}
+
+func TestRemoveLeg_ShiftsIndices(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	c.AppendLeg()
+	c.AppendLeg()
+	if !c.RemoveLeg(1) {
+		t.Fatal("RemoveLeg refused")
+	}
+	if c.LegCount() != 2 {
+		t.Errorf("LegCount = %d, want 2", c.LegCount())
+	}
+	if c.RemoveLeg(5) {
+		t.Error("RemoveLeg accepted out-of-range index")
+	}
+}
+
+func TestAppendTail_BumpsLegAttach(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	before := c.Legs()[0].Attach
+	c.AppendTail()
+	after := c.Legs()[0].Attach
+	if after != before+1 {
+		t.Errorf("leg Attach after AppendTail = %d, want %d", after, before+1)
+	}
+}
+
+func TestRemoveTail_DecrementsLegAttach(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	before := c.Legs()[0].Attach
+	c.RemoveTail()
+	after := c.Legs()[0].Attach
+	if before > 0 && after != before-1 {
+		t.Errorf("leg Attach after RemoveTail = %d, want %d", after, before-1)
+	}
+}
+
+func TestRemoveHead_ClampsLegAttach(t *testing.T) {
+	c := New()
+	// Attach a leg explicitly to the head bone so RemoveHead has to
+	// clamp it.
+	tip := c.BoneCount() - 1
+	c.AppendLegAt(tip)
+	c.RemoveHead()
+	got := c.Legs()[0].Attach
+	if got != c.BoneCount()-1 {
+		t.Errorf("Attach after RemoveHead = %d, want %d (new tip)", got, c.BoneCount()-1)
+	}
+}
+
+func TestBuildLegMesh_HasMirrorAndIndicesInRange(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	leg := c.Legs()[0]
+	const rings, around = 4, 6
+	m := c.BuildLegMesh(leg, rings, around, true)
+	// Single continuous tube: rings*2 - 1 ring samples (shared knee)
+	// times segmentsAround verts per ring, plus one foot cap vert.
+	// Mirror doubles the total.
+	wantPerSide := (rings*2-1)*around + 1
+	if len(m.Verts) != wantPerSide*2 {
+		t.Errorf("Verts = %d, want %d (per-side x 2)", len(m.Verts), wantPerSide*2)
+	}
+	if len(m.Normals) != len(m.Verts) {
+		t.Errorf("Normals=%d, Verts=%d — must match", len(m.Normals), len(m.Verts))
+	}
+	for i, idx := range m.Indices {
+		if int(idx) < 0 || int(idx) >= len(m.Verts) {
+			t.Fatalf("index[%d] = %d out of range [0,%d)", i, idx, len(m.Verts))
+		}
+	}
+	// Mirror half should contain a vert with negated X for each
+	// vert in the primary half.
+	mid := wantPerSide
+	for i := 0; i < mid; i++ {
+		if !approx(m.Verts[i].X, -m.Verts[mid+i].X, 1e-4) {
+			t.Errorf("mirror X mismatch at %d: %v vs %v", i, m.Verts[i].X, m.Verts[mid+i].X)
+		}
+	}
+}
+
 func TestClosestAnchor_CapPreservesRadial(t *testing.T) {
 	c := New()
 	// Construct a point ON the head cap disc (perpendicular to the

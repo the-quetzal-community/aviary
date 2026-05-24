@@ -72,6 +72,13 @@ type Client struct {
 
 	scroll_lock bool
 
+	// controlLockMovement disables the world's WASD/QE/RF camera
+	// translation block so an editor can take ownership of those
+	// keys. The critter editor's "control" view sets this so W/S/A/D
+	// drive the critter instead of the camera; the editor restores
+	// the flag when leaving the view.
+	controlLockMovement bool
+
 	Light DirectionalLight3D.Instance
 
 	// FocalPoint is the point in the scene that the camera is
@@ -661,6 +668,15 @@ func (world *Client) Process(dt Float.X) {
 		return
 	}
 
+	// controlLockMovement lets the active editor take exclusive
+	// ownership of the keyboard movement keys (W/S/A/D/Q/E/R/F/+/−).
+	// The critter editor's "control" view drives the critter with
+	// these keys; without the gate, the world would also translate
+	// the focal point under our feet each frame.
+	if world.controlLockMovement {
+		return
+	}
+
 	if Input.IsKeyPressed(Input.KeyQ) {
 		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), -Angle.Radians(dt))
 	}
@@ -1001,9 +1017,12 @@ func (tc *TimingCoordinator) Process(delta Float.X) {
 // verbatim via the `keep` importer (no .ctex/.scn produced). Calling
 // Resource.Load on these logs a noisy error even though the file is
 // reachable via FileAccess. The citizen dressing pipeline uses .obj
-// + .mhclo files this way to preserve raw vertex order.
+// + .mhclo files this way to preserve raw vertex order; the critter
+// editor uses "procedural://" pseudo-URIs to ship procedurally-
+// built parts (eyes, …) through the same Import/Change machinery
+// without an actual resource backing them.
 func isKeepImporterPath(p string) bool {
-	return strings.HasSuffix(p, ".obj") || strings.HasSuffix(p, ".mhclo")
+	return strings.HasSuffix(p, ".obj") || strings.HasSuffix(p, ".mhclo") || strings.HasPrefix(p, "procedural://")
 }
 
 func (tc *TimingCoordinator) Follow(t musical.Timing) {

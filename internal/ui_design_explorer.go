@@ -261,7 +261,16 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			var path = "res://preview/" + author + "/"
 			path += tab
 			resources := DirAccess.Open(path)
-			if resources == DirAccess.Nil {
+			// Builtin procedural tiles the editor wants shown in this
+			// tab (e.g. the critter editor's procedural foreleg). The
+			// tab is shown if EITHER the library has entries OR the
+			// editor injects builtins, so procedural-only tabs aren't
+			// hidden by a missing preview directory.
+			var builtins []BuiltinDesign
+			if provider, ok := ui.editor.(BuiltinDesignProvider); ok {
+				builtins = provider.BuiltinDesigns(mode, tab)
+			}
+			if resources == DirAccess.Nil && len(builtins) == 0 {
 				continue
 			}
 			gridflow := new(GridFlowContainer)
@@ -274,6 +283,38 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			ui.tabbed = append(ui.tabbed, gridflow)
 			elements := gridflow.Scrollable.GridContainer
+			for _, b := range builtins {
+				resource := b.Resource
+				button := TextureButton.New()
+				if b.Icon != "" {
+					if icon := Resource.Load[Texture2D.Instance](b.Icon); icon != Texture2D.Nil {
+						button.SetTextureNormal(icon)
+					}
+				}
+				button.SetIgnoreTextureSize(true).
+					SetStretchMode(TextureButton.StretchKeepAspectCentered).
+					AsBaseButton().OnPressed(func() {
+					ui.editor.SelectDesign(mode, resource)
+					ui.closeDrawer()
+				})
+				if b.Label != "" {
+					button.AsControl().SetTooltipText(b.Label)
+				}
+				elements.AsNode().AddChild(button.
+					AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).
+					AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode())
+			}
+			if resources == DirAccess.Nil {
+				gridflow.Update()
+				if FileAccess.FileExists("res://ui/" + tab + ".svg.import") {
+					ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
+				} else {
+					ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+				}
+				ui.Tabs.SetTabTitle(index, "")
+				index++
+				continue
+			}
 			var ext = glb
 			if mode == ModeMaterial {
 				ext = png
