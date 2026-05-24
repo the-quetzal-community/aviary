@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"graphics.gd/classdb/Engine"
-	"graphics.gd/classdb/SceneTree"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
 )
@@ -23,11 +22,7 @@ func (ui *CloudControl) loginUpdate() (signalling.User, bool) {
 	}
 	ui.on_process <- func(cc *CloudControl) {
 		if UserState.Aviary.ID != user.ID {
-			fresh := NewClientLoading(musical.WorkID(ui.client.record))
-			for _, child := range SceneTree.Get(ui.AsNode()).Root().AsNode().GetChildren() {
-				child.QueueFree()
-			}
-			SceneTree.Add(fresh)
+			replaceSceneTree(ui.AsNode(), NewClientLoading(musical.WorkID(ui.client.record)))
 		}
 		UserState.Aviary = user
 		cc.client.saveUserState()

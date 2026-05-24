@@ -59,8 +59,6 @@ type TerrainEditor struct {
 
 	PaintActive bool
 
-	designs map[musical.Design]Texture2D.Instance
-
 	client *Client
 }
 
@@ -160,27 +158,36 @@ func (tr *TerrainEditor) Ready() {
 }
 
 func (tr *TerrainEditor) Paint() {
-	design, ok := tr.client.loaded[tr.BrushDesign]
-	if !ok {
-		tr.client.design_ids[tr.client.id]++
-		design = musical.Design{
-			Author: tr.client.id,
-			Number: tr.client.design_ids[tr.client.id],
-		}
-		tr.client.space.Import(musical.Import{
-			Design: design,
-			Import: tr.BrushDesign,
-		})
-	}
 	tr.client.space.Sculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
 		Amount: tr.BrushAmount,
-		Design: design,
+		Design: tr.client.MusicalDesign(tr.BrushDesign),
 		Commit: true,
 	})
 }
+
+// CancelPaint clears the active paint state — used by callers
+// outside the editor (e.g. right-click in the world view) so they
+// don't have to know to flip both the shader uniform and the
+// PaintActive flag.
+func (tr *TerrainEditor) CancelPaint() bool {
+	if !tr.PaintActive {
+		return false
+	}
+	tr.shader.SetShaderParameter("paint_active", false)
+	tr.PaintActive = false
+	return true
+}
+
+// HeightAt is a thin pass-through to the underlying tile so callers
+// (action_renderer, scenery placement) don't reach through to the
+// private TerrainTile to query the surface.
+func (tr *TerrainEditor) HeightAt(pos Vector3.XYZ) Float.X { return tr.tile.HeightAt(pos) }
+
+// NormalAt is a thin pass-through to the underlying tile.
+func (tr *TerrainEditor) NormalAt(pos Vector3.XYZ) Vector3.XYZ { return tr.tile.NormalAt(pos) }
 
 func (vr *TerrainEditor) Process(dt Float.X) {
 	for {
@@ -279,8 +286,6 @@ type TerrainTile struct {
 	shader      ShaderMaterial.Instance
 	side_shader ShaderMaterial.Instance
 
-	shape_owner int
-
 	client    *Client
 	generated bool
 	reloading bool
@@ -288,29 +293,33 @@ type TerrainTile struct {
 
 	heights []float32
 
-	plain_normal Image.Instance
-
-	// Store mesh and packed arrays for reuse
-	mesh        ArrayMesh.Instance
-	side_mesh   ArrayMesh.Instance
-	arrays      [Mesh.ArrayMax]any
-	arrays_side [Mesh.ArrayMax]any
+	// collision is the per-tile CollisionShape3D wrapping the
+	// HeightMapShape3D used for picking + physics; cached at
+	// generateBase so per-frame Reload doesn't have to walk
+	// children to find it again.
+	collision      CollisionShape3D.Instance
+	heightmapShape HeightMapShape3D.Instance
 
 	mapper map[musical.Design]int
 
-	// cached geometry
+	// cached geometry — top surface
 	vertices []Vector3.XYZ
 	normals  []Vector3.XYZ
 	uvs      []Vector2.XY
 	textures []float32
 	weights  []float32
 
+	// cached geometry — side walls (4 cardinal sides × 16 segments ×
+	// 6 verts per quad). Statically sized — the tile is always 16×16.
+	verticesSide []Vector3.XYZ
+	normalsSide  []Vector3.XYZ
+	uvsSide      []Vector2.XY
+
 	albedos     []Image.Instance
 	normal_maps []Image.Instance
 }
 
 func (tile *TerrainTile) Ready() {
-	tile.shape_owner = -1
 	tile.mapper = make(map[musical.Design]int)
 	tile.Reload()
 }
@@ -373,7 +382,7 @@ func (tile *TerrainTile) generateBase() {
 	// We set this up so that we can figure out which point on the terrain was clicked on input.
 	//
 	tile.heights = make([]float32, 17*17)
-	var collision_shape CollisionShape3D.Instance
+	collision_shape := CollisionShape3D.Nil
 	for i := 0; i < tile.AsNode().GetChildCount(); i++ {
 		child := tile.AsNode().GetChild(i)
 		if shape, ok := Object.As[CollisionShape3D.Instance](child); ok {
@@ -390,6 +399,8 @@ func (tile *TerrainTile) generateBase() {
 		SetMapWidth(17).
 		SetMapData(tile.heights)
 	collision_shape.SetShape(shape.AsShape3D())
+	tile.collision = collision_shape
+	tile.heightmapShape = shape
 	//
 	// Whenever there is a new texture added to the tile, we need to recreate these texture arrays.
 	//
@@ -510,15 +521,7 @@ func (tile *TerrainTile) Reload() {
 		for i := range 17 * 17 {
 			tile.heights[i] += float32(sample_height(i%17, i/17))
 		}
-		var collision_shape CollisionShape3D.Instance
-		for i := 0; i < tile.AsNode().GetChildCount(); i++ {
-			child := tile.AsNode().GetChild(i)
-			if shape, ok := Object.As[CollisionShape3D.Instance](child); ok {
-				collision_shape = shape
-				break
-			}
-		}
-		Object.To[HeightMapShape3D.Instance](collision_shape.Shape()).SetMapData(tile.heights)
+		tile.heightmapShape.SetMapData(tile.heights)
 		attributes := [Mesh.ArrayMax]any{
 			Mesh.ArrayVertex:  tile.vertices,
 			Mesh.ArrayTexUv:   tile.uvs,
@@ -561,26 +564,31 @@ func (tile *TerrainTile) reloadSides() {
 	index_base := 0
 
 	type sideParam struct {
-		isZFixed         bool
-		fixed            float32
-		fixedIndex       int
-		stride           int
-		flippedWinding   bool
-		normalAxis       int // 0 for X, 2 for Z
-		negateIfPositive bool
+		isZFixed       bool
+		fixed          float32
+		fixedIndex     int
+		flippedWinding bool
 	}
 
-	sides := []sideParam{
-		{true, 0, 0, 1, true, 2, true},      // South
-		{true, 16, 16, 1, false, 2, false},  // North
-		{false, 0, 0, 17, false, 0, true},   // West
-		{false, 16, 16, 17, true, 0, false}, // East
+	sides := [4]sideParam{
+		{true, 0, 0, true},    // South
+		{true, 16, 16, false}, // North
+		{false, 0, 0, false},  // West
+		{false, 16, 16, true}, // East
 	}
-	var (
-		vertices_side = make([]Vector3.XYZ, 4*16*6)
-		normals_side  = make([]Vector3.XYZ, 4*16*6)
-		uvs_side      = make([]Vector2.XY, 4*16*6)
-	)
+	const sideVertCount = 4 * 16 * 6
+	if cap(tile.verticesSide) < sideVertCount {
+		tile.verticesSide = make([]Vector3.XYZ, sideVertCount)
+		tile.normalsSide = make([]Vector3.XYZ, sideVertCount)
+		tile.uvsSide = make([]Vector2.XY, sideVertCount)
+	} else {
+		tile.verticesSide = tile.verticesSide[:sideVertCount]
+		tile.normalsSide = tile.normalsSide[:sideVertCount]
+		tile.uvsSide = tile.uvsSide[:sideVertCount]
+	}
+	vertices_side := tile.verticesSide
+	normals_side := tile.normalsSide
+	uvs_side := tile.uvsSide
 	for _, sp := range sides {
 		for i := 0; i < 16; i++ {
 			coord := i
@@ -659,12 +667,12 @@ func (tile *TerrainTile) reloadSides() {
 		}
 	}
 	// Prepare mesh arrays for side surface
-	tile.arrays_side = [Mesh.ArrayMax]any{
+	arrays_side := [Mesh.ArrayMax]any{
 		Mesh.ArrayVertex: vertices_side,
 		Mesh.ArrayNormal: normals_side,
 		Mesh.ArrayTexUv:  uvs_side,
 	}
-	Object.To[ArrayMesh.Instance](tile.Mesh.Mesh()).MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, tile.arrays_side[:], nil, nil,
+	Object.To[ArrayMesh.Instance](tile.Mesh.Mesh()).MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
 		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv,
 	)
 	tile.Mesh.SetSurfaceOverrideMaterial(1, tile.side_shader.AsMaterial())

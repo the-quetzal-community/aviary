@@ -12,6 +12,8 @@ import (
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector3"
+
+	"the.quetzal.community/aviary/internal/critter"
 )
 
 // controlVis is the saved state we restore on exit from "control"
@@ -69,6 +71,10 @@ type controlVis struct {
 	jumpActive bool
 	jumpTime   float32
 
+	// feetBuf is the per-tick scratch slice fed to
+	// CritterBody.SetAnimatedLegFeet so the gait pipeline doesn't
+	// allocate a fresh [N][2]Vec3 every PhysicsProcess.
+	feetBuf [][2]critter.Vec3
 }
 
 const (

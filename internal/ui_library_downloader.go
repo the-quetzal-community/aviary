@@ -21,6 +21,7 @@ import (
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/TextureRect"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"the.quetzal.community/aviary/internal/datasize"
 )
@@ -47,21 +48,29 @@ func (dl *LibraryDownloader) Ready() {
 	dl.bytes_downloaded = make(chan datasize.ByteSize, 1)
 	dl.done = make(chan struct{}, 1)
 	dl.Progress.AsCanvasItem().SetVisible(false)
-	req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/preview.pck", nil)
-	if err != nil {
-		Engine.Raise(err)
-		return
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		Engine.Raise(err)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		Engine.Raise(errors.New("failed to fetch preview.pck: " + resp.Status))
-		return
-	}
-	dl.setContentLength(resp)
+	// HEAD the .pck off-thread so a slow / unreachable host can't
+	// block the splash-screen Ready. setContentLength touches UI
+	// state so we marshal back to the main thread via Callable.Defer.
+	go func() {
+		req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/preview.pck", nil)
+		if err != nil {
+			Callable.Defer(Callable.New(func() { Engine.Raise(err) }))
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			Callable.Defer(Callable.New(func() { Engine.Raise(err) }))
+			return
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			Callable.Defer(Callable.New(func() {
+				Engine.Raise(errors.New("failed to fetch preview.pck: " + resp.Status))
+			}))
+			return
+		}
+		Callable.Defer(Callable.New(func() { dl.setContentLength(resp) }))
+	}()
 	dl.DownloadButton.AsBaseButton().OnPressed(func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()

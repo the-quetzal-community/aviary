@@ -4,7 +4,6 @@ import (
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Decal"
-	"graphics.gd/classdb/ImporterMeshInstance3D"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Resource"
@@ -15,8 +14,6 @@ import (
 type MaterialSharingMeshInstance3D struct {
 	MeshInstance3D.Extension[MaterialSharingMeshInstance3D]
 	classdb.Tool
-
-	imported bool
 
 	Identity string
 	Material string
@@ -36,19 +33,7 @@ type sharingEntry struct {
 
 var cacheAO = make(map[sharingKey]sharingEntry)
 
-func NewMaterialSharingMeshInstance3D(replace ImporterMeshInstance3D.Instance) *MaterialSharingMeshInstance3D {
-	clone := new(MaterialSharingMeshInstance3D)
-	clone.imported = true
-	clone.AsMeshInstance3D().SetMesh(replace.AsImporterMeshInstance3D().Mesh().GetMesh().AsMesh())
-	replace.AsNode().ReplaceBy(clone.AsNode())
-	replace.AsNode().QueueFree()
-	return clone
-}
-
 func (ms *MaterialSharingMeshInstance3D) Ready() {
-	if ms.imported {
-		return
-	}
 	key := sharingKey{
 		Identity: ms.Identity,
 		Material: ms.Material,
@@ -92,13 +77,6 @@ type MaterialSharingDecal struct {
 	classdb.Tool
 
 	Material string
-}
-
-func NewMaterialSharingDecal(replace ImporterMeshInstance3D.Instance) *MaterialSharingDecal {
-	clone := new(MaterialSharingDecal)
-	replace.AsNode().ReplaceBy(clone.AsNode())
-	replace.AsNode().QueueFree()
-	return clone
 }
 
 func (decal *MaterialSharingDecal) Ready() {

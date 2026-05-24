@@ -21,8 +21,6 @@ type CitizenEditor struct {
 	client *Client
 
 	loadOnce sync.Once
-	loadErr  error
-	loaded   bool
 	body     CitizenBody
 
 	last_slider_sculpt time.Time
@@ -79,7 +77,6 @@ func (ce *CitizenEditor) ensureLoaded() {
 	ce.loadOnce.Do(func() {
 		base, targets, err := LoadCitizenAssets()
 		if err != nil {
-			ce.loadErr = err
 			Engine.Raise(err)
 			return
 		}
@@ -87,12 +84,10 @@ func (ce *CitizenEditor) ensureLoaded() {
 		ce.AsNode3D().AsNode().AddChild(mi.AsNode())
 		body, err := AttachCitizenBody(mi, base, targets)
 		if err != nil {
-			ce.loadErr = err
 			Engine.Raise(err)
 			return
 		}
 		ce.body = body
-		ce.loaded = true
 	})
 }
 
@@ -336,7 +331,7 @@ func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, 
 // once instead of at world load, so opening to any other editor stays
 // snappy.
 func (ce *CitizenEditor) Sculpt(brush musical.Sculpt) error {
-	if !ce.loaded {
+	if ce.body.citizen == nil {
 		ce.pendingSculpts = append(ce.pendingSculpts, brush)
 		return nil
 	}

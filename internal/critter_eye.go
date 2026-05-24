@@ -46,8 +46,8 @@ type eyePart struct {
 	// fixate then dart. lookCurrent is the current pupil direction
 	// the shader sees; lookTarget is the destination of the
 	// current saccade; nextSaccadeAt is when to pick a new target.
-	lookCurrent  Vector3.XYZ
-	lookTarget   Vector3.XYZ
+	lookCurrent   Vector3.XYZ
+	lookTarget    Vector3.XYZ
 	nextSaccadeAt float32
 
 	// hintLocal is a unit-vector look target supplied by the editor
@@ -96,7 +96,7 @@ func newEyePart(phase float32) *eyePart {
 	// Mix the phase bits into both halves of the PCG seed so every
 	// new eye starts with a different schedule.
 	seed1 := uint64(math.Float32bits(phase))*6364136223846793005 + 1442695040888963407
-	seed2 := uint64(math.Float32bits(phase+1.234))*1234567891
+	seed2 := uint64(math.Float32bits(phase+1.234)) * 1234567891
 	src := rand.NewPCG(seed1, seed2)
 	e := &eyePart{
 		node:        root,

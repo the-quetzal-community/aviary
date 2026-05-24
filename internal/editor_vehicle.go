@@ -95,17 +95,13 @@ func (editor *VehicleEditor) UnhandledInput(event InputEvent.Instance) {
 		return
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
-		editor.client.entity_ids[editor.client.id]++
 		var mirror Vector3.XYZ
 		if editor.MirrorPreview.Visible() {
 			mirror = Vector3.Sub(editor.MirrorPreview.AsNode3D().Position(), editor.Preview.AsNode3D().Position())
 		}
 		editor.client.space.Change(musical.Change{
 			Author: editor.client.id,
-			Entity: musical.Entity{
-				Author: editor.client.id,
-				Number: editor.client.entity_ids[editor.client.id],
-			},
+			Entity: editor.client.NextEntity(),
 			Design: editor.client.MusicalDesign(editor.Preview.Design()),
 			Offset: editor.Preview.AsNode3D().Position(),
 			Angles: editor.Preview.AsNode3D().Rotation(),
@@ -119,7 +115,7 @@ func (editor *VehicleEditor) UnhandledInput(event InputEvent.Instance) {
 		}
 	}
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
-		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() {
+		if isDeletePress(event) {
 			node, ok := editor.client.selection.Instance()
 			if ok {
 				if entity, ok := editor.object_to_entity[Node3D.ID(node.ID())]; ok {
@@ -227,7 +223,7 @@ func (editor *VehicleEditor) Process(delta Float.X) {
 	}
 }
 
-func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
+func (editor *VehicleEditor) PhysicsProcess(_ Float.X) {
 	if editor.Preview.Design() != "" {
 
 		if Input.IsMouseButtonPressed(Input.MouseButtonRight) {
@@ -252,10 +248,9 @@ func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 			if editor.client.ui.mode == ModeDressing {
 				scale := editor.Preview.AsNode3D().Scale() // Capture existing scale
 
-				up := Vector3.Normalized(hover.Normal) // Ensure unit length
+				up := Vector3.Normalized(hover.Normal)
 
-				// Original preview basis construction
-				forward := Vector3.XYZ{0, 0, 1} // Adjust based on your needs
+				forward := Vector3.XYZ{0, 0, 1}
 				if Float.Abs(Vector3.Dot(up, forward)) > 0.99 {
 					forward = Vector3.XYZ{1, 0, 0}
 				}
@@ -264,20 +259,19 @@ func (editor *VehicleEditor) PhysicsProcess(delta Float.X) {
 				basis := Basis.XYZ{right, up, new_forward}
 				editor.Preview.AsNode3D().SetGlobalTransform(Transform3D.BasisOrigin{basis, editor.Preview.AsNode3D().GlobalPosition()})
 
-				// Mirrored preview basis construction
 				up_mirror := Vector3.Normalized(Vector3.XYZ{-up.X, up.Y, up.Z})
 				forward_mirror := Vector3.XYZ{-forward.X, forward.Y, forward.Z}
 				if Float.Abs(Vector3.Dot(up_mirror, forward_mirror)) > 0.99 {
-					forward_mirror = Vector3.XYZ{-1, 0, 0} // Mirrored arbitrary fallback
+					forward_mirror = Vector3.XYZ{-1, 0, 0}
 				}
 				right_mirror := Vector3.Normalized(Vector3.Cross(up_mirror, forward_mirror))
 				new_forward_mirror := Vector3.Normalized(Vector3.Cross(right_mirror, up_mirror))
 				basis_mirror := Basis.XYZ{right_mirror, up_mirror, new_forward_mirror}
 				editor.MirrorPreview.AsNode3D().SetGlobalTransform(Transform3D.BasisOrigin{basis_mirror, editor.MirrorPreview.AsNode3D().GlobalPosition()})
 
-				editor.Preview.AsNode3D().SetScale(scale)       // Restore scale
-				scale.X = -scale.X                              // Mirror scale on X axis
-				editor.MirrorPreview.AsNode3D().SetScale(scale) // Restore scale
+				editor.Preview.AsNode3D().SetScale(scale)
+				scale.X = -scale.X
+				editor.MirrorPreview.AsNode3D().SetScale(scale)
 			}
 		}
 	}

@@ -2,7 +2,6 @@ package internal
 
 import (
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,24 +55,11 @@ func (fe *FoliageEditor) ExitTree() {
 }
 
 func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
-	editing := brush.Slider
-	value := float64(brush.Amount)
-	_, prop, _ := strings.Cut(editing, "/")
-	rtype := reflect.TypeFor[Tree]()
-	for i := range rtype.NumField() {
-		field := rtype.Field(i)
-		if field.Tag.Get("gd") == prop {
-			switch field.Type.Kind() {
-			case reflect.Int:
-				reflect.ValueOf(fe.tree).Elem().Field(i).SetInt(int64(value))
-			case reflect.Float32, reflect.Float64:
-				reflect.ValueOf(fe.tree).Elem().Field(i).SetFloat(value)
-			}
-			fe.tree.recalculating = true
-			fe.tree.recalculate()
-			return nil
-		}
-	}
+	_, prop, _ := strings.Cut(brush.Slider, "/")
+	applyReflectSlider(fe.tree, reflect.TypeFor[Tree](), prop, float64(brush.Amount), func() {
+		fe.tree.recalculating = true
+		fe.tree.recalculate()
+	})
 	return nil
 }
 
@@ -119,20 +105,8 @@ func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
 
 func (fe *FoliageEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
 	_, prop, _ := strings.Cut(editing, "/")
-	rtype := reflect.TypeFor[Tree]()
-	for i := range rtype.NumField() {
-		field := rtype.Field(i)
-		if field.Tag.Get("gd") == prop {
-			init, _ = strconv.ParseFloat(field.Tag.Get("default"), 64)
-			ranges := strings.Split(field.Tag.Get("range"), ",")
-			from, _ = strconv.ParseFloat(ranges[0], 64)
-			upto, _ = strconv.ParseFloat(ranges[1], 64)
-			step := 0.001
-			if field.Type.Kind() == reflect.Int {
-				step = 1
-			}
-			return init, from, upto, step
-		}
+	if init, from, upto, step, ok := reflectSliderConfig(reflect.TypeFor[Tree](), prop); ok {
+		return init, from, upto, step
 	}
 	return 0, 0, 1, 0.01
 }

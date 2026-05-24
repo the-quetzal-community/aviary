@@ -57,15 +57,19 @@ type ribcageVis struct {
 	savedFocalRot   Euler.Radians
 	savedLensRot    Euler.Radians
 	savedProjection Camera3D.ProjectionType
+
+	// Per-frame scratch buffers reused by ribcageRebuildMesh and
+	// ribcageEmitLegs so the PhysicsProcess hot path doesn't allocate
+	// a fresh slice per polyline every tick.
+	spineBuf  []Vector3.XYZ
+	ribBuf    []Vector3.XYZ
+	legBuf    []Vector3.XYZ
+	circleBuf []Vector3.XYZ
 }
 
-// Side-view convention: we look at the critter from the +X side
-// (camera at world +X, looking toward −X). A yaw of +π/2 around Y
-// orbits the FocalPoint default camera (which sits at +Z relative
-// to the lens) over to the +X side, which puts the body's +Z axis
-// — i.e. the head/forward direction — on the LEFT half of the
-// screen. The previous draft used −π/2 (other side); switched on
-// user request.
+// Side-view convention: yaw the FocalPoint by +π/2 around Y so the
+// camera sits on +X looking toward −X, putting the body's +Z (head
+// end) on the LEFT half of the screen.
 const ribcageSideYaw Angle.Radians = math.Pi / 2
 
 // ribcageEnter installs the dark body override, snapshots the
@@ -274,7 +278,7 @@ func (ce *CritterEditor) ribcageRebuildMesh() {
 	if im == ImmediateMesh.Nil {
 		return
 	}
-	bones := ce.body.critter.Bones()
+	bones := ce.body.critter.BonesView()
 	if len(bones) < 2 {
 		return
 	}
@@ -288,7 +292,7 @@ func (ce *CritterEditor) ribcageRebuildMesh() {
 	}
 
 	// Spine ribbon through every bone position.
-	spinePts := make([]Vector3.XYZ, len(bones))
+	spinePts := resizeXYZ(&ce.ribcage.spineBuf, len(bones))
 	for i, b := range bones {
 		spinePts[i] = Vector3.XYZ{
 			X: Float.X(b.Pos.X),
@@ -320,7 +324,7 @@ func (ce *CritterEditor) ribcageRebuildMesh() {
 	//      keeps the entire arc inside the body tube even where
 	//      neighbouring bones taper.
 	const ribSegments = 16
-	ribPts := make([]Vector3.XYZ, ribSegments+1)
+	ribPts := resizeXYZ(&ce.ribcage.ribBuf, ribSegments+1)
 	for i := range bones {
 		g, ok := ribArcGeomAt(bones, i)
 		if !ok {
@@ -347,8 +351,8 @@ func (ce *CritterEditor) ribcageRebuildMesh() {
 // view. Pulled out of ribcageRebuildMesh so the two views can pick
 // what they draw without one trampling the other.
 func (ce *CritterEditor) ribcageEmitLegs(im ImmediateMesh.Instance) {
-	legs := ce.body.critter.Legs()
-	legPts := make([]Vector3.XYZ, 3)
+	legs := ce.body.critter.LegsView()
+	legPts := resizeXYZ(&ce.ribcage.legBuf, 3)
 	shift := Float.X(legHandleYShift)
 	for _, leg := range legs {
 		legPts[0] = Vector3.XYZ{X: 0, Y: Float.X(leg.Hip.Y) + shift, Z: Float.X(leg.Hip.Z)}
@@ -362,22 +366,21 @@ func (ce *CritterEditor) ribcageEmitLegs(im ImmediateMesh.Instance) {
 		// to that joint's radius. Doubles as the visual cue for the
 		// current thickness AND the click-target for resizing — drag
 		// the ring's edge to grow or shrink that joint.
-		emitCircle(im, legPts[0], leg.HipRadius, legRingHalfWidth)
-		emitCircle(im, legPts[1], leg.KneeRadius, legRingHalfWidth)
-		emitCircle(im, legPts[2], leg.FootRadius, legRingHalfWidth)
+		ce.emitCircle(im, legPts[0], leg.HipRadius, legRingHalfWidth)
+		ce.emitCircle(im, legPts[1], leg.KneeRadius, legRingHalfWidth)
+		ce.emitCircle(im, legPts[2], leg.FootRadius, legRingHalfWidth)
 	}
 }
 
 // emitCircle emits a thin ring in the X=0 plane centred on c with
-// the given radius. Implemented as a closed polyline with N
-// segments rendered through emitThickLine so the ring has visible
-// thickness on screen.
-func emitCircle(im ImmediateMesh.Instance, c Vector3.XYZ, radius float32, halfWidth Float.X) {
+// the given radius, reusing ribcage.circleBuf so the per-frame leg
+// overlay doesn't allocate a fresh polyline per ring.
+func (ce *CritterEditor) emitCircle(im ImmediateMesh.Instance, c Vector3.XYZ, radius float32, halfWidth Float.X) {
 	if radius <= 0 {
 		return
 	}
 	const segs = 32
-	pts := make([]Vector3.XYZ, segs+1)
+	pts := resizeXYZ(&ce.ribcage.circleBuf, segs+1)
 	for i := 0; i <= segs; i++ {
 		a := 2 * math.Pi * float64(i) / float64(segs)
 		pts[i] = Vector3.XYZ{
@@ -387,6 +390,19 @@ func emitCircle(im ImmediateMesh.Instance, c Vector3.XYZ, radius float32, halfWi
 		}
 	}
 	emitThickLine(im, pts, halfWidth)
+}
+
+// resizeXYZ grows *buf to hold at least n entries (reusing the
+// backing array if cap suffices) and returns the resliced view. Used
+// by the ribcage view's per-frame polylines to keep allocations off
+// the PhysicsProcess hot path.
+func resizeXYZ(buf *[]Vector3.XYZ, n int) []Vector3.XYZ {
+	if cap(*buf) < n {
+		*buf = make([]Vector3.XYZ, n)
+	} else {
+		*buf = (*buf)[:n]
+	}
+	return *buf
 }
 
 // emitSquareMarker emits a flat square (two triangles, as a strip)

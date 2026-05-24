@@ -2,7 +2,6 @@ package internal
 
 import (
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -76,21 +75,10 @@ func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
 		return nil
 	}
 	_, prop, _ := strings.Cut(editing, "/")
-	rtype := reflect.TypeFor[Rock]()
-	for i := range rtype.NumField() {
-		field := rtype.Field(i)
-		if field.Tag.Get("gd") == prop {
-			switch field.Type.Kind() {
-			case reflect.Int:
-				reflect.ValueOf(fe.rock).Elem().Field(i).SetInt(int64(value))
-			case reflect.Float32, reflect.Float64:
-				reflect.ValueOf(fe.rock).Elem().Field(i).SetFloat(value)
-			}
-			fe.rock.generating = true
-			fe.rock.generate()
-			return nil
-		}
-	}
+	applyReflectSlider(fe.rock, reflect.TypeFor[Rock](), prop, value, func() {
+		fe.rock.generating = true
+		fe.rock.generate()
+	})
 	return nil
 }
 
@@ -124,20 +112,8 @@ func (fe *BoulderEditor) SelectDesign(mode Mode, design string) {
 
 func (fe *BoulderEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
 	_, prop, _ := strings.Cut(editing, "/")
-	rtype := reflect.TypeFor[Rock]()
-	for i := range rtype.NumField() {
-		field := rtype.Field(i)
-		if field.Tag.Get("gd") == prop {
-			init, _ = strconv.ParseFloat(field.Tag.Get("default"), 64)
-			ranges := strings.Split(field.Tag.Get("range"), ",")
-			from, _ = strconv.ParseFloat(ranges[0], 64)
-			upto, _ = strconv.ParseFloat(ranges[1], 64)
-			step := 0.001
-			if field.Type.Kind() == reflect.Int {
-				step = 1
-			}
-			return init, from, upto, step
-		}
+	if init, from, upto, step, ok := reflectSliderConfig(reflect.TypeFor[Rock](), prop); ok {
+		return init, from, upto, step
 	}
 	return 1, 0, 5, 0.01
 }

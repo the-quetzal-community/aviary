@@ -44,13 +44,9 @@ func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
 			if editor.Preview.Design() != "" {
-				editor.client.entity_ids[editor.client.id]++
 				editor.client.space.Change(musical.Change{
 					Author: editor.client.id,
-					Entity: musical.Entity{
-						Author: editor.client.id,
-						Number: editor.client.entity_ids[editor.client.id],
-					},
+					Entity: editor.client.NextEntity(),
 					Design: editor.client.MusicalDesign(editor.Preview.Design()),
 					Offset: editor.Preview.AsNode3D().Position(),
 					Angles: editor.Preview.AsNode3D().Rotation(),
@@ -64,7 +60,7 @@ func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 }
 
-func (editor *SceneryEditor) PhysicsProcess(delta Float.X) {
+func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 	if editor.Preview.Design() != "" {
 		if hover := MousePicker(editor.AsNode3D()); Object.Is[*TerrainTile](hover.Collider) {
 			editor.Preview.AsNode3D().SetGlobalPosition(hover.Position)

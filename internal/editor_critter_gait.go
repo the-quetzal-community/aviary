@@ -105,6 +105,30 @@ const (
 type gaitLegRender struct {
 	node MeshInstance3D.Instance
 	mesh ArrayMesh.Instance
+	// Per-side scratch buffers reused across uploadCritterMesh calls
+	// so the 60 Hz upload path doesn't allocate fresh slices each
+	// PhysicsProcess tick.
+	vertsBuf   []Vector3.XYZ
+	normalsBuf []Vector3.XYZ
+}
+
+// upload copies a critter.Mesh into the cached ArrayMesh, reusing
+// the per-side scratch slices for vert/normal conversion.
+func (r *gaitLegRender) upload(m critter.Mesh) {
+	r.vertsBuf = resizeXYZ(&r.vertsBuf, len(m.Verts))
+	for j, v := range m.Verts {
+		r.vertsBuf[j] = Vector3.XYZ{X: Float.X(v.X), Y: Float.X(v.Y), Z: Float.X(v.Z)}
+	}
+	r.normalsBuf = resizeXYZ(&r.normalsBuf, len(m.Normals))
+	for j, n := range m.Normals {
+		r.normalsBuf[j] = Vector3.XYZ{X: Float.X(n.X), Y: Float.X(n.Y), Z: Float.X(n.Z)}
+	}
+	r.mesh.ClearSurfaces()
+	var arrays [Mesh.ArrayMax]any
+	arrays[Mesh.ArrayVertex] = r.vertsBuf
+	arrays[Mesh.ArrayNormal] = r.normalsBuf
+	arrays[Mesh.ArrayIndex] = m.Indices
+	r.mesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }
 
 // setupGaitLegs spawns 2 MeshInstance3Ds per data leg (right, left)
@@ -119,9 +143,9 @@ func (ce *CritterEditor) setupGaitLegs(cv *controlVis) {
 	container := Node3D.New()
 	ce.body.mesh.AsNode().AddChild(container.AsNode())
 	cv.legContainer = container
-	legs := ce.body.critter.Legs()
-	cv.legRenders = make([][2]gaitLegRender, len(legs))
-	for i := range legs {
+	legCount := ce.body.critter.LegCount()
+	cv.legRenders = make([][2]gaitLegRender, legCount)
+	for i := 0; i < legCount; i++ {
 		for s := 0; s < 2; s++ {
 			mi := MeshInstance3D.New()
 			am := ArrayMesh.New()
@@ -172,7 +196,7 @@ func (ce *CritterEditor) uploadGaitLegs(cv *controlVis) {
 	if ce.body.critter == nil || cv.legContainer == Node3D.Nil {
 		return
 	}
-	legs := ce.body.critter.Legs()
+	legs := ce.body.critter.LegsView()
 	if len(legs) != len(cv.legRenders) {
 		ce.teardownGaitLegs(cv)
 		ce.setupGaitLegs(cv)
@@ -193,17 +217,20 @@ func (ce *CritterEditor) uploadGaitLegs(cv *controlVis) {
 	// wants is feet planted on the ground while the body crouches
 	// and leaps over them.
 	bodyDY := bodyAnimationY(cv)
-	feet := make([][2]critter.Vec3, len(legs))
+	if cap(cv.feetBuf) < len(legs) {
+		cv.feetBuf = make([][2]critter.Vec3, len(legs))
+	} else {
+		cv.feetBuf = cv.feetBuf[:len(legs)]
+	}
 	for i, leg := range legs {
 		for s := 0; s < 2; s++ {
 			phase := gaitPhase(cv.gaitTime, i, len(legs), s)
 			posed := computeGaitPose(leg, phase, cv.gaitActive, s == 1, bodyDY)
-			feet[i][s] = posed.Foot
-			m := ce.body.critter.BuildLegMesh(posed, 6, 8, false)
-			uploadCritterMesh(cv.legRenders[i][s].mesh, m)
+			cv.feetBuf[i][s] = posed.Foot
+			cv.legRenders[i][s].upload(ce.body.critter.BuildLegMesh(posed, 6, 8, false))
 		}
 	}
-	ce.body.SetAnimatedLegFeet(feet)
+	ce.body.SetAnimatedLegFeet(cv.feetBuf)
 }
 
 // gaitPhase returns the cycle phase ∈ [0, 1) for one rendered leg.
@@ -471,9 +498,9 @@ func bodyAnimationY(cv *controlVis) float32 {
 // endpoints, so the crouch, airborne, and landing pieces glue
 // together without any extra smoothing.
 //
-//   crouch:    dip down to −jumpCrouchDepth, return to 0
-//   airborne:  rise to +jumpHeight, return to 0
-//   landing:   dip down to −jumpCrouchDepth, return to 0
+//	crouch:    dip down to −jumpCrouchDepth, return to 0
+//	airborne:  rise to +jumpHeight, return to 0
+//	landing:   dip down to −jumpCrouchDepth, return to 0
 func jumpYOffset(t float32) float32 {
 	if t < 0 || t > 1 {
 		return 0
@@ -515,28 +542,6 @@ func updateGaitState(cv *controlVis, moving bool, delta float32) {
 	// after adding the per-leg offset, so this is purely numerical
 	// hygiene.
 	cv.gaitTime -= float32(math.Floor(float64(cv.gaitTime)))
-}
-
-// uploadCritterMesh copies a critter.Mesh (CPU-side verts/normals/
-// indices) into the given ArrayMesh, replacing its single surface.
-// Same conversion pattern as rebuildLegs in critter_body.go — kept
-// local so the gait path doesn't have to reach into private body
-// internals.
-func uploadCritterMesh(am ArrayMesh.Instance, m critter.Mesh) {
-	verts := make([]Vector3.XYZ, len(m.Verts))
-	for j, v := range m.Verts {
-		verts[j] = Vector3.XYZ{X: Float.X(v.X), Y: Float.X(v.Y), Z: Float.X(v.Z)}
-	}
-	normals := make([]Vector3.XYZ, len(m.Normals))
-	for j, n := range m.Normals {
-		normals[j] = Vector3.XYZ{X: Float.X(n.X), Y: Float.X(n.Y), Z: Float.X(n.Z)}
-	}
-	am.ClearSurfaces()
-	var arrays [Mesh.ArrayMax]any
-	arrays[Mesh.ArrayVertex] = verts
-	arrays[Mesh.ArrayNormal] = normals
-	arrays[Mesh.ArrayIndex] = m.Indices
-	am.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }
 
 func vecDist(a, b critter.Vec3) float32 {

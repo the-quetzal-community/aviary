@@ -1,12 +1,9 @@
 package internal
 
 import (
-	"strings"
-
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
-	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
@@ -17,7 +14,6 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector2"
-	"graphics.gd/variant/Vector2i"
 )
 
 /*
@@ -27,7 +23,6 @@ type UI struct {
 	Control.Extension[UI] `gd:"AviaryUI"`
 	classdb.Tool
 
-	preview chan Path.ToResource
 	texture chan Path.ToResource
 
 	Editor *DesignExplorer
@@ -44,12 +39,7 @@ type UI struct {
 
 	Cloudy *FlightPlanner
 
-	themes      []string
-	theme_index int
-
 	client *Client
-
-	lastDisplay Vector2i.XY
 
 	mode Mode
 }
@@ -67,36 +57,40 @@ func (ui *UI) SetMode(mode Mode) {
 		return
 	}
 	const half = 4
-	switch ui.mode {
-	case ModeGeometry:
-		ui.ModeGeometry.AsControl().SetSize(Vector2.New(24, 24))
-		pos := ui.ModeGeometry.AsControl().Position()
-		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
-	case ModeMaterial:
-		ui.ModeMaterial.AsControl().SetSize(Vector2.New(24, 24))
-		pos := ui.ModeMaterial.AsControl().Position()
-		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
-	case ModeDressing:
-		ui.ModeDressing.AsControl().SetSize(Vector2.New(24, 24))
-		pos := ui.ModeDressing.AsControl().Position()
-		ui.ModeDressing.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(half, half)))
+	// Mode tabs share the shrink/grow animation; the only per-mode
+	// asymmetry is dressing's slightly larger grown size (36 vs 32).
+	shrinkSize := Vector2.New(24, 24)
+	grownSize := func(m Mode) Vector2.XY {
+		if m == ModeDressing {
+			return Vector2.New(36, 36)
+		}
+		return Vector2.New(32, 32)
 	}
-	switch mode {
-	case ModeGeometry:
-		pos := ui.ModeGeometry.AsControl().Position()
-		ui.ModeGeometry.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
-		ui.ModeGeometry.AsControl().SetSize(Vector2.New(32, 32))
-	case ModeMaterial:
-		pos := ui.ModeMaterial.AsControl().Position()
-		ui.ModeMaterial.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
-		ui.ModeMaterial.AsControl().SetSize(Vector2.New(32, 32))
-	case ModeDressing:
-		pos := ui.ModeDressing.AsControl().Position()
-		ui.ModeDressing.AsControl().SetPosition(Vector2.Add(pos, Vector2.New(-half, -half)))
-		ui.ModeDressing.AsControl().SetSize(Vector2.New(36, 36))
+	if prev := ui.modeButton(ui.mode); prev != nil {
+		prev.AsControl().SetSize(shrinkSize)
+		prev.AsControl().SetPosition(Vector2.Add(prev.AsControl().Position(), Vector2.New(half, half)))
+	}
+	if next := ui.modeButton(mode); next != nil {
+		next.AsControl().SetPosition(Vector2.Add(next.AsControl().Position(), Vector2.New(-half, -half)))
+		next.AsControl().SetSize(grownSize(mode))
 	}
 	ui.mode = mode
 	ui.Editor.Refresh(ui.client.Editing, "", ui.mode)
+}
+
+// modeButton maps a Mode to the corresponding TextureButton on the UI
+// so SetMode's shrink/grow animation can iterate the three tabs
+// without a switch-per-arm.
+func (ui *UI) modeButton(m Mode) *TextureButton.Instance {
+	switch m {
+	case ModeGeometry:
+		return &ui.ModeGeometry
+	case ModeMaterial:
+		return &ui.ModeMaterial
+	case ModeDressing:
+		return &ui.ModeDressing
+	}
+	return nil
 }
 
 func (ui *UI) Input(event InputEvent.Instance) {
@@ -136,19 +130,6 @@ func (ui *UI) Ready() {
 			SetSize(Vector2.New(32, 32))
 	}))
 
-	ui.themes = append(ui.themes, "")
-	Dir := DirAccess.Open("res://library")
-	if Dir == (DirAccess.Instance{}) {
-		return
-	}
-	var count int
-	for name := range Dir.Iter() {
-		if strings.Contains(name, ".") {
-			continue
-		}
-		ui.themes = append(ui.themes, name)
-		count++
-	}
 	ui.ExpansionIndicator.
 		AsBaseButton().SetToggleMode(true).
 		AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer).
@@ -168,10 +149,6 @@ func (ui *UI) Ready() {
 
 func (ui *UI) scaling() {
 	display := DisplayServer.WindowGetSize(0)
-	// If not set (first time), initialize it
-	if ui.lastDisplay.X == 0 && ui.lastDisplay.Y == 0 {
-		ui.lastDisplay = display
-	}
 
 	// Calculate uniform scale factor based on height ratio (360 base height at 2160 screen height)
 	var scale_factor Float.X = Float.X(display.Y) / 2160.0
@@ -208,9 +185,6 @@ func (ui *UI) scaling() {
 	theme_size := ui.ViewSelector.AsControl().Size()
 	theme_pos.X = (Float.X(display.X)/2 - (theme_size.X * theme_scale.X * Float.X(len(ui.ViewSelector.views))))
 	ui.ViewSelector.AsControl().SetPosition(theme_pos)
-
-	// Update last display for next resize
-	ui.lastDisplay = display
 }
 
 func (ui *UI) scale(control Control.Instance, base_screen_width, base_screen_height, min_scale Float.X) {

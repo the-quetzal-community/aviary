@@ -126,6 +126,11 @@ type CritterBody struct {
 	// no gait override is active — the OnLeg branch falls back to
 	// leg.Foot.
 	animatedFeet [][2]critter.Vec3
+
+	// matricesBuf is the per-bone skin-matrix scratch buffer reused
+	// each RepositionPartsAnimated tick so the variable-Hz Process
+	// path doesn't allocate a fresh slice every frame.
+	matricesBuf []Transform3D.BasisOrigin
 }
 
 // PartAnchor parameterises one attached part's position on the
@@ -607,7 +612,6 @@ func (b *CritterBody) rebuild() {
 		b.concaveShape.SetData(b.faceBuf)
 	}
 
-	b.rebuildSkeleton()
 	b.repositionParts()
 	b.rebuildLegs()
 }
@@ -715,17 +719,23 @@ func (b *CritterBody) RepositionPartsAnimated() {
 		b.repositionParts()
 		return
 	}
-	bones := b.critter.Bones()
-	boneCount := len(bones)
+	boneCount := b.critter.BoneCount()
 	if boneCount == 0 {
 		return
 	}
-	matrices := make([]Transform3D.BasisOrigin, boneCount)
+	if cap(b.matricesBuf) < boneCount {
+		b.matricesBuf = make([]Transform3D.BasisOrigin, boneCount)
+	} else {
+		b.matricesBuf = b.matricesBuf[:boneCount]
+	}
+	matrices := b.matricesBuf
 	for i := 0; i < boneCount; i++ {
 		global := b.skeleton.GetBoneGlobalPose(i)
 		bind := b.skin.GetBindPose(i)
 		matrices[i] = Transform3D.Mul(global, bind)
 	}
+	legCount := b.critter.LegCount()
+	var legs []critter.Leg
 	for id, anchor := range b.partAnchors {
 		node, ok := id.Instance()
 		if !ok {
@@ -733,14 +743,16 @@ func (b *CritterBody) RepositionPartsAnimated() {
 			continue
 		}
 		if anchor.OnLeg {
-			legs := b.critter.Legs()
-			if anchor.LegFoot < 0 || anchor.LegFoot >= len(legs) {
+			if anchor.LegFoot < 0 || anchor.LegFoot >= legCount {
 				continue
 			}
 			var foot critter.Vec3
 			if anchor.LegFoot < len(b.animatedFeet) && anchor.LegSide >= 0 && anchor.LegSide <= 1 {
 				foot = b.animatedFeet[anchor.LegFoot][anchor.LegSide]
 			} else {
+				if legs == nil {
+					legs = b.critter.LegsView()
+				}
 				foot = legs[anchor.LegFoot].Foot
 				if anchor.LegSide == 1 {
 					foot.X = -foot.X
@@ -764,7 +776,7 @@ func (b *CritterBody) RepositionPartsAnimated() {
 		if boneCount <= 1 {
 			boneA, boneB, wA, wB = 0, 0, 1, 0
 		} else {
-			idx, local := splitT(anchor.T, boneCount-1)
+			idx, local := critter.MapToSegment(anchor.T, boneCount-1)
 			boneA = idx
 			boneB = idx + 1
 			if boneB >= boneCount {
@@ -803,26 +815,6 @@ func (b *CritterBody) RepositionPartsAnimated() {
 	}
 }
 
-// splitT maps a normalised parameter t∈[0,1] to a (segment index,
-// local position) pair across `segments` equal-length segments —
-// duplicates critter.mapToSegment so we don't have to export the
-// package-private helper just for this single caller.
-func splitT(t float32, segments int) (idx int, local float32) {
-	if t <= 0 {
-		return 0, 0
-	}
-	if t >= 1 {
-		return segments - 1, 1
-	}
-	scaled := t * float32(segments)
-	idx = int(scaled)
-	if idx >= segments {
-		idx = segments - 1
-	}
-	local = scaled - float32(idx)
-	return idx, local
-}
-
 // SetBreathe puffs the chest area outward by `amount` (a small
 // fraction — 0.02 means 2 % radial expansion). amount=0 returns to
 // rest. Only mutates the chest bones' pose SCALE so head-look
@@ -838,8 +830,7 @@ func (b *CritterBody) SetBreathe(amount float32) {
 	if b.skeleton == Skeleton3D.Nil || b.critter == nil {
 		return
 	}
-	bones := b.critter.Bones()
-	n := len(bones)
+	n := b.critter.BoneCount()
 	if n < 2 {
 		return
 	}
@@ -870,38 +861,25 @@ func (b *CritterBody) SetHeadLookYaw(yaw float32) {
 	if b.skeleton == Skeleton3D.Nil || b.critter == nil {
 		return
 	}
-	bones := b.critter.Bones()
-	n := len(bones)
+	n := b.critter.BoneCount()
 	if n < 2 {
 		return
 	}
-	// Affect the last min(3, n) bones — enough for a visible neck
+	// Affect the last min(3, n-1) bones — enough for a visible neck
 	// arc on a 5-bone default critter, but never the whole spine
 	// (which would turn the head-look into a body swivel).
 	count := 3
 	if count > n-1 {
 		count = n - 1
 	}
-	if count < 1 {
-		count = 1
-	}
-	// Linearly increasing weights toward the head so the arc bends
-	// more at the head end. Sum to 1 across the affected bones.
-	var weightSum float32
-	weights := make([]float32, count)
-	for i := 0; i < count; i++ {
-		weights[i] = float32(i + 1)
-		weightSum += weights[i]
-	}
-	for i := range weights {
-		weights[i] /= weightSum
-	}
+	// Linearly increasing weights summing to 1 across the affected
+	// bones; the head end bends the most.
+	weights := headLookWeights[count-1]
 	for i := 0; i < count; i++ {
 		boneIdx := n - count + i
 		// Y-axis yaw quaternion: q = (0, sin(θ/2), 0, cos(θ/2)).
-		// Using SetBonePoseRotation (not SetBonePose) leaves the
-		// bone's position + scale untouched — so SetBreathe's chest
-		// scale on the same bone keeps working in parallel.
+		// SetBonePoseRotation leaves position + scale untouched so
+		// SetBreathe's chest scale on the same bone composes.
 		theta := float64(yaw * weights[i])
 		half := theta * 0.5
 		s := Float.X(math.Sin(half))
@@ -910,6 +888,15 @@ func (b *CritterBody) SetHeadLookYaw(yaw float32) {
 			I: 0, J: s, K: 0, X: c,
 		})
 	}
+}
+
+// headLookWeights[count-1] is the weight vector for `count` affected
+// bones (count ∈ 1..3). Linearly increasing, sum to 1. Precomputed
+// to avoid the per-frame alloc + division loop in SetHeadLookYaw.
+var headLookWeights = [3][]float32{
+	{1.0},
+	{1.0 / 3, 2.0 / 3},
+	{1.0 / 6, 2.0 / 6, 3.0 / 6},
 }
 
 // boneIndexStr formats a small non-negative int as decimal without
@@ -941,7 +928,7 @@ func (b *CritterBody) rebuildLegs() {
 	if b.critter == nil || b.mesh == MeshInstance3D.Nil {
 		return
 	}
-	legs := b.critter.Legs()
+	legs := b.critter.LegsView()
 	// Trim excess.
 	for i := len(legs); i < len(b.legNodes); i++ {
 		if b.legNodes[i] != MeshInstance3D.Nil {
@@ -973,22 +960,30 @@ func (b *CritterBody) rebuildLegs() {
 	const segmentsAround = 8
 	for i, leg := range legs {
 		m := b.critter.BuildLegMesh(leg, ringsPerSegment, segmentsAround, !b.legOneSided)
-		am := b.legArrayMeshes[i]
-		verts := make([]Vector3.XYZ, len(m.Verts))
-		for j, v := range m.Verts {
-			verts[j] = Vector3.XYZ{X: Float.X(v.X), Y: Float.X(v.Y), Z: Float.X(v.Z)}
-		}
-		normals := make([]Vector3.XYZ, len(m.Normals))
-		for j, n := range m.Normals {
-			normals[j] = Vector3.XYZ{X: Float.X(n.X), Y: Float.X(n.Y), Z: Float.X(n.Z)}
-		}
-		am.ClearSurfaces()
-		var arrays [Mesh.ArrayMax]any
-		arrays[Mesh.ArrayVertex] = verts
-		arrays[Mesh.ArrayNormal] = normals
-		arrays[Mesh.ArrayIndex] = m.Indices
-		am.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
+		UploadCritterMesh(b.legArrayMeshes[i], m)
 	}
+}
+
+// UploadCritterMesh copies a critter.Mesh (CPU-side verts/normals/
+// indices) into the given ArrayMesh, replacing its single surface.
+// Shared by the body's leg renders, the gait pipeline's animated
+// leg renders, and the leg-placement ghost preview so they all
+// follow the same upload format.
+func UploadCritterMesh(am ArrayMesh.Instance, m critter.Mesh) {
+	verts := make([]Vector3.XYZ, len(m.Verts))
+	for j, v := range m.Verts {
+		verts[j] = Vector3.XYZ{X: Float.X(v.X), Y: Float.X(v.Y), Z: Float.X(v.Z)}
+	}
+	normals := make([]Vector3.XYZ, len(m.Normals))
+	for j, n := range m.Normals {
+		normals[j] = Vector3.XYZ{X: Float.X(n.X), Y: Float.X(n.Y), Z: Float.X(n.Z)}
+	}
+	am.ClearSurfaces()
+	var arrays [Mesh.ArrayMax]any
+	arrays[Mesh.ArrayVertex] = verts
+	arrays[Mesh.ArrayNormal] = normals
+	arrays[Mesh.ArrayIndex] = m.Indices
+	am.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }
 
 // repositionParts walks every recorded anchor and snaps the
@@ -1038,7 +1033,7 @@ func (b *CritterBody) positionPart(node Node3D.Instance, anchor PartAnchor) {
 		return
 	}
 	if anchor.OnLeg {
-		legs := b.critter.Legs()
+		legs := b.critter.LegsView()
 		if anchor.LegFoot < 0 || anchor.LegFoot >= len(legs) {
 			// Leg was removed since the part was anchored. Leave the
 			// node where it last was rather than snapping it to the
@@ -1047,8 +1042,7 @@ func (b *CritterBody) positionPart(node Node3D.Instance, anchor PartAnchor) {
 			// will at least still be able to find and delete them.
 			return
 		}
-		leg := legs[anchor.LegFoot]
-		foot := leg.Foot
+		foot := legs[anchor.LegFoot].Foot
 		if anchor.LegSide == 1 {
 			foot.X = -foot.X
 		}
@@ -1140,8 +1134,7 @@ func (b *CritterBody) SetAnimatedLegFeet(footLocals [][2]critter.Vec3) {
 	if b.critter == nil {
 		return
 	}
-	legs := b.critter.Legs()
-	if len(footLocals) != len(legs) {
+	if len(footLocals) != b.critter.LegCount() {
 		return
 	}
 	b.animatedFeet = footLocals

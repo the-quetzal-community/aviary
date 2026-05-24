@@ -18,7 +18,6 @@ import (
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
-	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
@@ -241,13 +240,10 @@ type spineRig struct {
 // scan (which masks out layer 2) and the body's MousePicker
 // (which doesn't care — default mask is all layers).
 type spineHandle struct {
-	node     Node3D.Instance
-	body     StaticBody3D.Instance
-	shape    CollisionShape3D.Instance
-	sphere   SphereShape3D.Instance
-	tag      handleTag
-	boneIdx  int // for boneHandle / radiusHandle, the bone index
-	endpoint int // for grow/shrink nubs: +1 = head end, -1 = tail end
+	node    Node3D.Instance
+	body    StaticBody3D.Instance
+	tag     handleTag
+	boneIdx int // for boneHandle / radiusHandle, the bone index
 }
 
 // handleTag identifies what a handle does so the raycast dispatcher
@@ -307,17 +303,9 @@ const (
 	dragActivatePixels = float32(6)
 )
 
-// Views advertises two view modes to the ViewSelector dropdown:
-//
-//   - "place"  — default mode, click on the body to drop muzzles /
-//     antlers / other parts (the original critter
-//     editor behaviour). No spine handles drawn.
-//   - "spine"  — bone editor: drag handles to move /
-//     resize segments, click grow/shrink nubs to
-//     extend or shorten the chain.
-//
-// The ViewSelector lets the user flip between the two without
-// losing state.
+// Views advertises the editor's modes to the ViewSelector dropdown:
+// explore (place parts), ribcage (spine + rib edit), limbone (leg
+// edit), control (WASD-walk preview).
 func (*CritterEditor) Views() []string {
 	return []string{"explore", "ribcage", "limbone", "control"}
 }
@@ -475,7 +463,6 @@ func (ce *CritterEditor) ensureLoaded() {
 		mi.AsNode3D().SetPosition(Vector3.New(0, 0.3, 0))
 		body, err := AttachCritterBody(mi, critter.New())
 		if err != nil {
-			ce.loadErr = err
 			Engine.Raise(err)
 			return
 		}
@@ -895,39 +882,9 @@ func (ce *CritterEditor) updateLegGhostAt(hip critter.Vec3) {
 	ce.uploadLegGhostMesh(leg)
 }
 
-// updateLegGhost rebuilds the ghost's mesh data from the default
-// leg pose for the given attach bone. Kept for callers that still
-// drive the preview by bone index rather than hit position.
-func (ce *CritterEditor) updateLegGhost(attach int) {
-	if ce.legGhostArrayMesh == ArrayMesh.Nil || ce.body.critter == nil {
-		return
-	}
-	leg, ok := ce.body.critter.LegRestPoseAt(attach)
-	if !ok {
-		return
-	}
-	ce.uploadLegGhostMesh(leg)
-}
-
-// uploadLegGhostMesh skins the ghost ArrayMesh from a Leg's rest
-// pose. Shared between updateLegGhost and updateLegGhostAt so the
-// two preview paths produce identical geometry.
+// uploadLegGhostMesh skins the ghost ArrayMesh from a Leg's rest pose.
 func (ce *CritterEditor) uploadLegGhostMesh(leg critter.Leg) {
-	m := ce.body.critter.BuildLegMesh(leg, 6, 8, true)
-	verts := make([]Vector3.XYZ, len(m.Verts))
-	for j, v := range m.Verts {
-		verts[j] = Vector3.XYZ{X: Float.X(v.X), Y: Float.X(v.Y), Z: Float.X(v.Z)}
-	}
-	normals := make([]Vector3.XYZ, len(m.Normals))
-	for j, n := range m.Normals {
-		normals[j] = Vector3.XYZ{X: Float.X(n.X), Y: Float.X(n.Y), Z: Float.X(n.Z)}
-	}
-	ce.legGhostArrayMesh.ClearSurfaces()
-	var arrays [Mesh.ArrayMax]any
-	arrays[Mesh.ArrayVertex] = verts
-	arrays[Mesh.ArrayNormal] = normals
-	arrays[Mesh.ArrayIndex] = m.Indices
-	ce.legGhostArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
+	UploadCritterMesh(ce.legGhostArrayMesh, ce.body.critter.BuildLegMesh(leg, 6, 8, true))
 }
 
 // emitLegSculpt is the outbound counterpart to applyLegSculptBrush:
@@ -958,7 +915,7 @@ func (ce *CritterEditor) nearestLegFoot() (legIdx, side int, world Vector3.XYZ, 
 	if cam == Camera3D.Nil {
 		return 0, 0, Vector3.XYZ{}, false
 	}
-	legs := ce.body.critter.Legs()
+	legs := ce.body.critter.LegsView()
 	if len(legs) == 0 {
 		return 0, 0, Vector3.XYZ{}, false
 	}
@@ -1117,7 +1074,7 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 		}
 	}
 	if kev, ok := Object.As[InputEventKey.Instance](event); ok {
-		if kev.AsInputEvent().IsPressed() && (kev.Keycode() == Input.KeyDelete || kev.Keycode() == Input.KeyBackspace) && !kev.AsInputEvent().IsEcho() {
+		if isDeletePress(kev) {
 			if ce.client == nil {
 				return
 			}
@@ -1423,7 +1380,7 @@ func (ce *CritterEditor) ribArcUnderMouse() (boneIdx int, ok bool) {
 	}
 	cy := float32(hit.Y - bodyOrigin.Y)
 	cz := float32(hit.Z - bodyOrigin.Z)
-	bones := ce.body.critter.Bones()
+	bones := ce.body.critter.BonesView()
 	// Tolerance in world units: a bit wider than the rib's visible
 	// thickness (~0.024 from ribHalfWidth = 0.012) so the user
 	// doesn't have to hit pixel-perfectly, but tight enough not to
@@ -1481,38 +1438,7 @@ func (ce *CritterEditor) legHandleUnderMouse() (legIdx int, joint critter.LegJoi
 	if ce.body.critter == nil {
 		return 0, 0, false
 	}
-	bodyOrigin := ce.body.mesh.AsNode3D().GlobalPosition()
-	hit, hitOk := ce.mouseOnXZeroPlane(bodyOrigin)
-	if !hitOk {
-		return 0, 0, false
-	}
-	cy := float32(hit.Y - bodyOrigin.Y)
-	cz := float32(hit.Z - bodyOrigin.Z)
-	bestDist := legHandlePickRadius
-	best := -1
-	var bestJ critter.LegJoint
-	legs := ce.body.critter.Legs()
-	joints := [3]critter.LegJoint{critter.LegHip, critter.LegKnee, critter.LegFoot}
-	for i, leg := range legs {
-		points := [3]critter.Vec3{leg.Hip, leg.Knee, leg.Foot}
-		for k, p := range points {
-			// Match the legHandleYShift the renderer applies so the
-			// click target sits on the visible handle, not on the
-			// underlying joint position.
-			dy := cy - (p.Y + legHandleYShift)
-			dz := cz - p.Z
-			d := float32(math.Sqrt(float64(dy*dy + dz*dz)))
-			if d < bestDist {
-				bestDist = d
-				best = i
-				bestJ = joints[k]
-			}
-		}
-	}
-	if best < 0 {
-		return 0, 0, false
-	}
-	return best, bestJ, true
+	return ce.legPick(legHandlePickRadius, func(d, _ float32) float32 { return d })
 }
 
 // legRingUnderMouse returns (legIdx, joint, ok) when the cursor
@@ -1523,6 +1449,19 @@ func (ce *CritterEditor) legHandleUnderMouse() (legIdx int, joint critter.LegJoi
 // itself still moves the joint; only clicks on the ring edge land
 // here.
 func (ce *CritterEditor) legRingUnderMouse() (legIdx int, joint critter.LegJoint, ok bool) {
+	return ce.legPick(legRingPickTolerance, func(d, r float32) float32 {
+		if d > r {
+			return d - r
+		}
+		return r - d
+	})
+}
+
+// legPick walks every (leg, joint) pair and returns the one whose
+// score function gives the smallest value under `tolerance`. Shared
+// by legHandleUnderMouse (score = distance to joint) and
+// legRingUnderMouse (score = |distance − radius|).
+func (ce *CritterEditor) legPick(tolerance float32, score func(d, r float32) float32) (legIdx int, joint critter.LegJoint, ok bool) {
 	if ce.body.critter == nil {
 		return 0, 0, false
 	}
@@ -1533,26 +1472,23 @@ func (ce *CritterEditor) legRingUnderMouse() (legIdx int, joint critter.LegJoint
 	}
 	cy := float32(hit.Y - bodyOrigin.Y)
 	cz := float32(hit.Z - bodyOrigin.Z)
-	bestDist := legRingPickTolerance
+	bestScore := tolerance
 	best := -1
 	var bestJ critter.LegJoint
-	legs := ce.body.critter.Legs()
+	legs := ce.body.critter.LegsView()
 	joints := [3]critter.LegJoint{critter.LegHip, critter.LegKnee, critter.LegFoot}
 	for i, leg := range legs {
 		points := [3]critter.Vec3{leg.Hip, leg.Knee, leg.Foot}
 		radii := [3]float32{leg.HipRadius, leg.KneeRadius, leg.FootRadius}
 		for k, p := range points {
 			// Match the legHandleYShift the renderer applies so the
-			// ring's pick zone tracks the visible ring.
+			// pick zone tracks the visible handle/ring.
 			dy := cy - (p.Y + legHandleYShift)
 			dz := cz - p.Z
 			d := float32(math.Sqrt(float64(dy*dy + dz*dz)))
-			edge := d - radii[k]
-			if edge < 0 {
-				edge = -edge
-			}
-			if edge < bestDist {
-				bestDist = edge
+			s := score(d, radii[k])
+			if s < bestScore {
+				bestScore = s
 				best = i
 				bestJ = joints[k]
 			}
@@ -1632,13 +1568,9 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 	// recognises "procedural://" prefixes via isKeepImporterPath and
 	// skips the Resource.Load attempt, but still registers the URI
 	// in design_to_string so tryAttachChange can branch on it.
-	ce.client.entity_ids[ce.client.id]++
 	change := musical.Change{
 		Author: ce.client.id,
-		Entity: musical.Entity{
-			Author: ce.client.id,
-			Number: ce.client.entity_ids[ce.client.id],
-		},
+		Entity: ce.client.NextEntity(),
 		Design: ce.client.MusicalDesign(design),
 		Offset: Vector3.XYZ{X: Float.X(anchor.T), Y: Float.X(anchor.Theta), Z: Float.X(anchor.Offset)},
 		Editor: "critter",
@@ -1663,13 +1595,11 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 }
 
 // setProceduralPreview swaps the PreviewRenderer's content for a
-// procedurally-built node and tags it with the design sentinel
-// so the standard hover-preview + click-commit code paths treat
-// it identically to a PackedScene-backed part. p MUST be a
-// pointer — PreviewRenderer is a value type on CritterEditor so
-// passing it by value silently discards the design assignment
-// (an earlier draft did exactly that and the hover code, which
-// gates on p.Design() != "", never fired).
+// procedurally-built node and tags it with the design sentinel so
+// the standard hover-preview + click-commit paths treat it like a
+// PackedScene-backed part. `p` must be a pointer — PreviewRenderer
+// is a value on CritterEditor and a by-value copy would discard the
+// design assignment.
 func (ce *CritterEditor) setProceduralPreview(p *PreviewRenderer, design string, body Node3D.Instance) {
 	if p.AsNode().GetChildCount() > 0 {
 		Object.To[Node3D.Instance](p.AsNode().GetChild(0)).AsNode().QueueFree()
@@ -2066,9 +1996,6 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 					r,
 				)
 			case dragRadius:
-				if ce.dragging.bone < 0 || ce.dragging.bone >= ce.body.critter.BoneCount() {
-					return
-				}
 				// Radius drag is now driven by the rib arc itself:
 				// new radius = (start radius) + (cursor distance
 				// from bone now − cursor distance at click), with
@@ -2077,8 +2004,10 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 				// → arc grows; drag toward the bone → arc shrinks.
 				// Anchored to start values so the response is
 				// linear in world units, not accumulated per frame.
-				bones := ce.body.critter.Bones()
-				bone := bones[ce.dragging.bone]
+				bone, ok := ce.body.critter.BoneAt(ce.dragging.bone)
+				if !ok {
+					return
+				}
 				bdy := Float.X(bone.Pos.Y) + bodyOrigin.Y
 				bdz := Float.X(bone.Pos.Z) + bodyOrigin.Z
 				dY := hit.Y - bdy
@@ -2353,14 +2282,14 @@ func (ce *CritterEditor) refreshSpineRig() {
 	bones := ce.body.critter.Bones()
 	rig.boneHandles = make([]spineHandle, len(bones))
 	for i := range bones {
-		rig.boneHandles[i] = ce.spawnHandle(container, boneHandleRadius, Color.RGBA{R: 0.95, G: 0.7, B: 0.2, A: 1}, tagBone, i, 0)
+		rig.boneHandles[i] = ce.spawnHandle(container, boneHandleRadius, Color.RGBA{R: 0.95, G: 0.7, B: 0.2, A: 1}, tagBone, i)
 	}
 	// Radius edits are driven by the rib arcs directly (see
 	// ribArcUnderMouse) — no separate handle to spawn.
-	rig.growHead = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 0.3, G: 1.0, B: 0.4, A: 1}, tagGrowHead, -1, +1)
-	rig.growTail = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 0.3, G: 1.0, B: 0.4, A: 1}, tagGrowTail, -1, -1)
-	rig.shrinkHead = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 1.0, G: 0.3, B: 0.3, A: 1}, tagShrinkHead, -1, +1)
-	rig.shrinkTail = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 1.0, G: 0.3, B: 0.3, A: 1}, tagShrinkTail, -1, -1)
+	rig.growHead = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 0.3, G: 1.0, B: 0.4, A: 1}, tagGrowHead, -1)
+	rig.growTail = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 0.3, G: 1.0, B: 0.4, A: 1}, tagGrowTail, -1)
+	rig.shrinkHead = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 1.0, G: 0.3, B: 0.3, A: 1}, tagShrinkHead, -1)
+	rig.shrinkTail = ce.spawnHandle(container, growNubRadius, Color.RGBA{R: 1.0, G: 0.3, B: 0.3, A: 1}, tagShrinkTail, -1)
 
 	ce.spineRig = rig
 	ce.layoutSpineRig()
@@ -2370,7 +2299,7 @@ func (ce *CritterEditor) refreshSpineRig() {
 // a sibling StaticBody3D + SphereShape3D on the spineHandleLayer
 // so the editor's own raycast can find it. Returns the populated
 // spineHandle struct so layoutSpineRig can move it each frame.
-func (ce *CritterEditor) spawnHandle(parent Node3D.Instance, radius float32, color Color.RGBA, tag handleTag, boneIdx int, endpoint int) spineHandle {
+func (ce *CritterEditor) spawnHandle(parent Node3D.Instance, radius float32, color Color.RGBA, tag handleTag, boneIdx int) spineHandle {
 	root := Node3D.New()
 	parent.AsNode().AddChild(root.AsNode())
 	mesh := MeshInstance3D.New()
@@ -2399,13 +2328,10 @@ func (ce *CritterEditor) spawnHandle(parent Node3D.Instance, radius float32, col
 	body.AsNode().AddChild(shape.AsNode())
 	root.AsNode().AddChild(body.AsNode())
 	return spineHandle{
-		node:     root,
-		body:     body,
-		shape:    shape,
-		sphere:   sphereShape,
-		tag:      tag,
-		boneIdx:  boneIdx,
-		endpoint: endpoint,
+		node:    root,
+		body:    body,
+		tag:     tag,
+		boneIdx: boneIdx,
 	}
 }
 
@@ -2416,7 +2342,7 @@ func (ce *CritterEditor) layoutSpineRig() {
 	if ce.spineRig == nil || ce.body.critter == nil {
 		return
 	}
-	bones := ce.body.critter.Bones()
+	bones := ce.body.critter.BonesView()
 	if len(bones) != len(ce.spineRig.boneHandles) {
 		// Chain length changed — full rebuild.
 		ce.refreshSpineRig()

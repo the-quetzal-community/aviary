@@ -17,7 +17,6 @@ import (
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
-	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
@@ -64,7 +63,6 @@ type DesignExplorer struct {
 	client *Client
 	editor Editor
 	tabbed []*GridFlowContainer // current tabbed containers
-	cached map[Node3D.ID]map[string][]*GridFlowContainer
 	slider map[string]map[string]HSlider.ID
 
 	author                      string
@@ -72,10 +70,9 @@ type DesignExplorer struct {
 	themes_available_for_editor map[editorMode]map[string]struct{}
 
 	// state that enables the design drawer to open and close.
-	drawExpanded  atomic.Bool
-	drawExpansion Float.X
-	locked        bool
-	queued        func()
+	drawExpanded atomic.Bool
+	locked       bool
+	queued       func()
 
 	last_slider_state sliderState
 }
@@ -174,7 +171,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		ui.Tabs.AsNode().RemoveChild(node)
 		node.QueueFree()
 	}
-	if ui.AsNode().GetChildCount() == 0 {
+	if ui.Tabs.AsNode().GetChildCount() == 0 {
 		ui.AsCanvasItem().SetVisible(false)
 		expansion.AsCanvasItem().SetVisible(false)
 	}
@@ -422,7 +419,6 @@ func (ui *DesignExplorer) openDrawer() {
 	})
 	expansion, _ := ui.ExpansionIndicator.Instance()
 	expansion.AsCanvasItem().SetVisible(false)
-	// Remove ui.drawExpansion = amount (no longer needed)
 }
 
 func (ui *DesignExplorer) closeDrawer() {

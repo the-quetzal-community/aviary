@@ -114,15 +114,33 @@ func defaultBones() []Bone {
 
 // Bones returns a copy of the current bone chain — safe to walk or
 // hand to a renderer without worrying about subsequent edits
-// mutating the slice underneath.
+// mutating the slice underneath. Use BonesView for read-only loops
+// that don't need to outlive the next mutation.
 func (c *Critter) Bones() []Bone {
 	out := make([]Bone, len(c.bones))
 	copy(out, c.bones)
 	return out
 }
 
+// BonesView returns the underlying bone slice for read-only access.
+// Caller must NOT mutate or retain across mutations — the slice is
+// invalidated by any AppendHead/AppendTail/RemoveHead/RemoveTail/
+// MoveBone/SetBoneRadius. Hot-path callers (per-frame renders, IK)
+// use this to avoid the per-call alloc+copy of Bones().
+func (c *Critter) BonesView() []Bone { return c.bones }
+
 // BoneCount is the current number of bones in the spine chain.
 func (c *Critter) BoneCount() int { return len(c.bones) }
+
+// BoneAt returns one bone by index (zero-copy). ok=false on
+// out-of-range. Hot-path read access without allocating the full
+// bone slice.
+func (c *Critter) BoneAt(i int) (Bone, bool) {
+	if i < 0 || i >= len(c.bones) {
+		return Bone{}, false
+	}
+	return c.bones[i], true
+}
 
 // MoveBone sets bone i's rest position. Returns true if the bone
 // existed (and the value actually changed). Out-of-range indices
@@ -153,12 +171,18 @@ func (c *Critter) SetBoneRadius(i int, r float32) bool {
 
 // Legs returns a copy of the current leg list — safe to walk or
 // hand to a renderer without subsequent edits mutating the slice
-// underneath.
+// underneath. Use LegsView for read-only loops that don't need to
+// outlive the next mutation.
 func (c *Critter) Legs() []Leg {
 	out := make([]Leg, len(c.legs))
 	copy(out, c.legs)
 	return out
 }
+
+// LegsView returns the underlying leg slice for read-only access.
+// Caller must NOT mutate or retain across mutations — invalidated
+// by AppendLeg/RemoveLeg/SetLegJoint/SetLegRadius/etc.
+func (c *Critter) LegsView() []Leg { return c.legs }
 
 // LegCount is the current number of legs.
 func (c *Critter) LegCount() int { return len(c.legs) }
@@ -249,25 +273,6 @@ func (c *Critter) AppendLegAtPos(hip Vec3) int {
 	}
 	c.legs = append(c.legs, leg)
 	return len(c.legs) - 1
-}
-
-// LegRestPoseAt returns the default leg rest pose for a leg
-// socketed to the given spine bone, without actually appending the
-// leg. Used by the editor's placement preview to render a ghost
-// leg at the would-be attach point before the user commits. Clamps
-// the attach index into the valid range; returns ok=false on an
-// empty spine.
-func (c *Critter) LegRestPoseAt(attach int) (Leg, bool) {
-	if len(c.bones) == 0 {
-		return Leg{}, false
-	}
-	if attach < 0 {
-		attach = 0
-	}
-	if attach >= len(c.bones) {
-		attach = len(c.bones) - 1
-	}
-	return defaultLegPose(c.bones[attach], attach), true
 }
 
 // NearestBone returns the index of the spine bone closest to the

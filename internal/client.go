@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -117,8 +116,6 @@ type Client struct {
 	network networking.Connectivity
 	updates chan []byte // channel for updates from the server
 	println chan string
-
-	saving atomic.Bool
 
 	id     musical.Author
 	record musical.WorkID
@@ -418,8 +415,8 @@ func parseVersion(version string) (major, minor, patch int) {
 		return 0, 0, 0
 	}
 	fmt.Sscan(splits[0], &major)
-	fmt.Sscan(splits[0], &minor)
-	fmt.Sscan(splits[0], &patch)
+	fmt.Sscan(splits[1], &minor)
+	fmt.Sscan(splits[2], &patch)
 	return
 }
 
@@ -630,11 +627,12 @@ func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
 
 	if world.member && time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
-		angles := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalRotation()
+		camNode := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D()
+		angles := camNode.GlobalRotation()
 		angles.X = -angles.X
 		angles.Y += Angle.Pi
 		view := musical.LookAt{
-			Offset: Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalPosition(),
+			Offset: camNode.GlobalPosition(),
 			Angles: angles,
 			Author: world.id,
 			Timing: world.time.Now(),
@@ -660,7 +658,12 @@ func (world *Client) Process(dt Float.X) {
 	default:
 	}
 
-	for i := 0; i < len(world.queue); i++ {
+	// Drain whatever's queued at the start of this frame. Re-evaluating
+	// len every iteration risks livelock under producer spam, and a
+	// bare <- after a stale len read would block; snapshot the depth
+	// and stop there.
+	n := len(world.queue)
+	for i := 0; i < n; i++ {
 		(<-world.queue)()
 	}
 
@@ -797,9 +800,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
-				if world.TerrainEditor.PaintActive {
-					world.TerrainEditor.shader.SetShaderParameter("paint_active", false)
-					world.TerrainEditor.PaintActive = false
+				if world.TerrainEditor.CancelPaint() {
 					break
 				}
 				if world.selection != 0 {
@@ -855,7 +856,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				}
 			}()
 		}
-		if event.AsInputEvent().IsPressed() && (event.Keycode() == Input.KeyDelete || event.Keycode() == Input.KeyBackspace) && !event.AsInputEvent().IsEcho() && world.Editing == Editing.Scenery {
+		if isDeletePress(event) && world.Editing == Editing.Scenery {
 			node, ok := world.selection.Instance()
 			if ok {
 				if entity, ok := world.object_to_entity[Node3D.ID(node.ID())]; ok {

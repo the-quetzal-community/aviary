@@ -52,7 +52,7 @@ func (c *Critter) sampleSpineAt(t float32) sample {
 	}
 	pre := extrapolate(controls[1], controls[0])
 	post := extrapolate(controls[n-2], controls[n-1])
-	idx, local := mapToSegment(t, n-1)
+	idx, local := MapToSegment(t, n-1)
 	var p0, p3 Vec3
 	if idx == 0 {
 		p0 = pre
@@ -134,7 +134,7 @@ func (c *Critter) BuildMesh(samplesAlong, segmentsAround int) Mesh {
 			ringWeights[i] = [2]float32{1, 0}
 			continue
 		}
-		idx, local := mapToSegment(t, boneCount-1)
+		idx, local := MapToSegment(t, boneCount-1)
 		ringBones[i] = [2]int32{int32(idx), int32(idx + 1)}
 		ringWeights[i] = [2]float32{1 - local, local}
 	}
@@ -393,10 +393,12 @@ func (c *Critter) BuildLegMesh(leg Leg, ringsPerSegment, segmentsAround int, mir
 	return Mesh{Verts: verts, Normals: meshNormals, Indices: indices}
 }
 
-// mapToSegment converts a global t ∈ [0,1] along a poly-curve of
+// MapToSegment converts a global t ∈ [0,1] along a poly-curve of
 // `segments` segments into (idx, local) where idx is the segment
 // index in [0, segments-1] and local is t within that segment.
-func mapToSegment(t float32, segments int) (idx int, local float32) {
+// Exported so RepositionPartsAnimated can weight parts onto the same
+// bones BuildMesh used.
+func MapToSegment(t float32, segments int) (idx int, local float32) {
 	if t <= 0 {
 		return 0, 0
 	}

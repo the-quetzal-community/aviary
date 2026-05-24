@@ -17,6 +17,7 @@ import (
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/ImageTexture"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/SceneTree"
@@ -68,11 +69,7 @@ func (fl *FlightPlanner) Reload() {
 						Engine.Raise(err)
 						return
 					}
-					fresh := NewClientLoading(musical.WorkID(record))
-					for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
-						child.QueueFree()
-					}
-					SceneTree.Add(fresh)
+					fl.replaceTree(NewClientLoading(musical.WorkID(record)))
 				}).
 				AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).AsNode(),
 			)
@@ -124,11 +121,7 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 						Engine.Raise(err)
 						return
 					}
-					fresh := NewClientLoading(musical.WorkID(record))
-					for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
-						child.QueueFree()
-					}
-					SceneTree.Add(fresh)
+					fl.replaceTree(NewClientLoading(musical.WorkID(record)))
 				}).
 				AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
 			select {
@@ -141,6 +134,20 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 			}
 		}))
 	}
+}
+
+func (fl *FlightPlanner) replaceTree(fresh *Client) {
+	replaceSceneTree(fl.AsNode(), fresh)
+}
+
+// replaceSceneTree tears down every root child and swaps in a fresh
+// Client. Shared by the flight planner's load/join/new-save buttons
+// and the cloud login's session-swap path.
+func replaceSceneTree(anchor Node.Instance, fresh *Client) {
+	for _, child := range SceneTree.Get(anchor).Root().AsNode().GetChildren() {
+		child.QueueFree()
+	}
+	SceneTree.Add(fresh)
 }
 
 func (fl *FlightPlanner) Ready() {
@@ -158,11 +165,7 @@ func (fl *FlightPlanner) Ready() {
 			Engine.Raise(err)
 			return
 		}
-		fresh := NewClientLoading(record)
-		for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
-			child.QueueFree()
-		}
-		SceneTree.Add(fresh)
+		fl.replaceTree(NewClientLoading(record))
 	})
 	fl.Code.OnTextChanged(func() {
 		text := fl.Code.Text()
@@ -194,11 +197,7 @@ func (fl *FlightPlanner) Ready() {
 		case ">":
 			Object.To[BaseButton.Instance](key).OnPressed(func() {
 				fresh := NewClientJoining()
-				for _, child := range SceneTree.Get(fl.AsNode()).Root().AsNode().GetChildren() {
-					child.QueueFree()
-				}
-				SceneTree.Add(fresh)
-
+				fl.replaceTree(fresh)
 				go fresh.apiJoin(networking.Code(fl.Code.Text()))
 			})
 		default:

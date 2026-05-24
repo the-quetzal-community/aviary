@@ -132,6 +132,10 @@ type CitizenDressing struct {
 	// even for 1-field .mhclo anchors that have no offset. Static —
 	// clothing topology doesn't change with body deformation.
 	restNormals []citizen.Vec3
+	// fitBuf is the per-refit scratch slice handed back to MHClo.Fit
+	// so each rebuild reuses the existing backing array instead of
+	// allocating a fresh []Vec3 every sculpt frame.
+	fitBuf []citizen.Vec3
 }
 
 // AttachCitizenBody creates a fresh ArrayMesh from the parsed base mesh,
@@ -261,10 +265,6 @@ func (b *CitizenBody) writeShrunkVertexBuf(body []citizen.Vec3) {
 		b.vertexBuf[i] = Vector3.XYZ{X: Float.X(x), Y: Float.X(y), Z: Float.X(z)}
 	}
 }
-
-// (updateShrinkDirs is now merged into updateCulledIndices — coverage,
-// shrink direction, and the index cull all come from the same
-// proximity scan so every covered body vert gets a direction.)
 
 // clothRestNormals computes smooth per-vertex outward normals from a
 // clothing item's rest-pose geometry (the .obj verts and the
@@ -773,7 +773,8 @@ func loadDressingMaterial(objPath string) StandardMaterial3D.Instance {
 // refit recomputes this clothing's vertex positions from the current
 // body vertices and rebuilds its surface in place.
 func (d *CitizenDressing) refit(body []citizen.Vec3) {
-	fitted := d.mhclo.Fit(body, nil)
+	d.fitBuf = d.mhclo.Fit(body, d.fitBuf)
+	fitted := d.fitBuf
 	if len(d.buf) != len(fitted) {
 		d.buf = make([]Vector3.XYZ, len(fitted))
 	}

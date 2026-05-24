@@ -292,7 +292,6 @@ func loadStaticObjNode(objPath string) Node3D.Instance {
 		root.AsNode().AddChild(body.AsNode())
 	}
 
-	fmt.Println("critter dressing: loaded", objPath, "verts=", len(verts), "tris=", len(base.Indices)/3)
 	return root
 }
 
