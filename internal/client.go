@@ -330,8 +330,13 @@ func (world *Client) Ready() {
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.TerrainEditor.texture = make(chan Path.ToResource, 1)
 	world.TerrainEditor.client = world
+	// Child Ready runs before parent Ready, so any chunk created in
+	// TerrainEditor.Ready (the starter tile) was wired with a nil
+	// client — propagate now that ours is known.
+	for _, tile := range world.TerrainEditor.tiles {
+		tile.client = world
+	}
 	world.VehicleEditor.client = world
-	world.TerrainEditor.tile.client = world
 	world.FoliageEditor.client = world
 	world.MineralEditor.client = world
 	world.SceneryEditor.client = world

@@ -56,26 +56,33 @@ func (ui *UI) SetMode(mode Mode) {
 	if ui.mode == mode {
 		return
 	}
-	const half = 4
-	// Mode tabs share the shrink/grow animation; the only per-mode
-	// asymmetry is dressing's slightly larger grown size (36 vs 32).
-	shrinkSize := Vector2.New(24, 24)
-	grownSize := func(m Mode) Vector2.XY {
-		if m == ModeDressing {
-			return Vector2.New(36, 36)
-		}
-		return Vector2.New(32, 32)
-	}
 	if prev := ui.modeButton(ui.mode); prev != nil {
-		prev.AsControl().SetSize(shrinkSize)
-		prev.AsControl().SetPosition(Vector2.Add(prev.AsControl().Position(), Vector2.New(half, half)))
+		resizeAroundCenter(prev.AsControl(), shrunkSize)
 	}
 	if next := ui.modeButton(mode); next != nil {
-		next.AsControl().SetPosition(Vector2.Add(next.AsControl().Position(), Vector2.New(-half, -half)))
-		next.AsControl().SetSize(grownSize(mode))
+		resizeAroundCenter(next.AsControl(), grownSize(mode))
 	}
 	ui.mode = mode
 	ui.Editor.Refresh(ui.client.Editing, "", ui.mode)
+}
+
+var shrunkSize = Vector2.New[float32](24, 24)
+
+func grownSize(m Mode) Vector2.XY {
+	if m == ModeDressing {
+		return Vector2.New[float32](36, 36)
+	}
+	return Vector2.New[float32](32, 32)
+}
+
+// resizeAroundCenter sets a Control's size while shifting its position so the
+// visible center stays put. The target is clamped to the combined minimum size
+// so Godot's size enforcement doesn't desync from the position shift.
+func resizeAroundCenter(c Control.Instance, target Vector2.XY) {
+	target = Vector2.Max(target, c.GetCombinedMinimumSize())
+	delta := Vector2.MulX(Vector2.Mul(Vector2.Sub(target, c.Size()), c.Scale()), 0.5)
+	c.SetPosition(Vector2.Sub(c.Position(), delta))
+	c.SetSize(target)
 }
 
 // modeButton maps a Mode to the corresponding TextureButton on the UI
@@ -124,10 +131,17 @@ func (ui *UI) Ready() {
 		ui.SetMode(ModeDressing)
 	})
 	Callable.Defer(Callable.New(func() {
-		pos := ui.ModeGeometry.AsControl().Position()
-		ui.ModeGeometry.AsControl().
-			SetPosition(Vector2.Add(pos, Vector2.New(-4, -4))).
-			SetSize(Vector2.New(32, 32))
+		for _, m := range []Mode{ModeGeometry, ModeMaterial, ModeDressing} {
+			b := ui.modeButton(m)
+			if b == nil {
+				continue
+			}
+			target := shrunkSize
+			if m == ui.mode {
+				target = grownSize(m)
+			}
+			resizeAroundCenter(b.AsControl(), target)
+		}
 	}))
 
 	ui.ExpansionIndicator.

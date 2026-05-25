@@ -139,10 +139,15 @@ func (ui *CloudControl) Input(event InputEvent.Instance) {
 func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
 	ui.Gizmo = gizmo
 	child := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(gizmo)))
-	PropertyTweener.Make(ui.GizmoIndicator.AsNode().CreateTween(), ui.GizmoIndicator.AsObject(), "position", Vector2.Sub(
-		Vector2.Add(ui.GizmoTypes.AsControl().Position(), child.Position()),
-		Vector2.New(3, 3),
-	), 0.1).SetEase(Tween.EaseOut)
+	types := ui.GizmoTypes.AsControl()
+	indicator := ui.GizmoIndicator.AsControl()
+	childCenter := Vector2.Add(
+		types.Position(),
+		Vector2.Mul(Vector2.Add(child.Position(), Vector2.MulX(child.Size(), 0.5)), types.Scale()),
+	)
+	indicatorHalf := Vector2.MulX(Vector2.Mul(indicator.Size(), indicator.Scale()), 0.5)
+	target := Vector2.Sub(childCenter, indicatorHalf)
+	PropertyTweener.Make(indicator.AsNode().CreateTween(), indicator.AsObject(), "position", target, 0.1).SetEase(Tween.EaseOut)
 }
 
 func (ui *CloudControl) Ready() {

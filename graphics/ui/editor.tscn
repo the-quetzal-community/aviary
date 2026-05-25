@@ -203,10 +203,12 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -1.0
-offset_top = -360.0
-offset_right = -1.0
+offset_top = 72.0
+offset_right = 1919.0
+offset_bottom = 432.0
 grow_horizontal = 2
 grow_vertical = 0
+scale = Vector2(0.5, 0.5)
 theme = ExtResource("1_hi2iw")
 theme_override_constants/separation = 0
 
@@ -251,6 +253,7 @@ offset_top = -42.0
 offset_right = 210.0
 grow_horizontal = 2
 grow_vertical = 0
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(210, 42)
 mouse_filter = 1
 theme_override_colors/font_color = Color(0, 0, 0, 1)
@@ -285,10 +288,11 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -20.0
-offset_right = 20.0
+offset_left = 192.0
+offset_right = 232.0
 offset_bottom = 40.0
 grow_horizontal = 2
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(20, 0.09)
 
 [node name="Pointer" type="TextureRect" parent="ViewSelector" unique_id=1142122943]
@@ -315,52 +319,56 @@ offset_left = 8.9975
 offset_top = 4.00561
 offset_right = 400.997
 offset_bottom = 135.006
+scale = Vector2(0.5, 0.5)
 mouse_filter = 2
 
 [node name="Triangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
 color = Color(0.27728483, 0.27728483, 0.27728483, 1)
 layout_mode = 0
-offset_left = 103.88081
-offset_top = 191.06485
-offset_right = 266.89996
-offset_bottom = 330.3
-scale = Vector2(-0.3822345, -0.3822345)
+offset_left = 175.83398
+offset_top = 266.10977
+offset_right = 383.1838
+offset_bottom = 443.20792
+scale = Vector2(-0.58189374, -0.58189374)
 
 [node name="ModeGeometry" type="TextureButton" parent="CloudControl" unique_id=683549109]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(24, 32)
 layout_mode = 0
-offset_left = 14.917009
-offset_top = 109.0243
-offset_right = 46.917007
-offset_bottom = 141.02429
+offset_left = 43.910156
+offset_top = 144.02744
+offset_right = 75.91016
+offset_bottom = 176.02744
+scale = Vector2(1.522347, 1.522347)
 texture_normal = ExtResource("11_ny7lf")
 ignore_texture_size = true
-stretch_mode = 4
+stretch_mode = 5
 
 [node name="ModeMaterial" type="TextureButton" parent="CloudControl" unique_id=647403131]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(24, 32)
 layout_mode = 0
-offset_left = 83.920135
-offset_top = 128.05238
-offset_right = 107.920135
-offset_bottom = 168.05241
+offset_left = 141.91388
+offset_top = 138.08853
+offset_right = 172.60808
+offset_bottom = 179.01413
+scale = Vector2(1.522347, 1.522347)
 texture_normal = ExtResource("11_8sq1u")
 ignore_texture_size = true
-stretch_mode = 4
+stretch_mode = 5
 
 [node name="ModeDressing" type="TextureButton" parent="CloudControl" unique_id=1791096523]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(28, 32)
 layout_mode = 0
-offset_left = 57.89705
-offset_top = 165.03613
-offset_right = 85.89705
-offset_bottom = 205.03613
+offset_left = 89.86023
+offset_top = 224.05609
+offset_right = 125.62695
+offset_bottom = 264.93234
+scale = Vector2(1.522347, 1.522347)
 texture_normal = ExtResource("13_n8yra")
 ignore_texture_size = true
-stretch_mode = 4
+stretch_mode = 5
 
 [node name="JoinCode" type="Panel" parent="CloudControl" unique_id=1572169024]
 layout_mode = 1
@@ -565,16 +573,27 @@ offset_right = 118.979
 offset_bottom = 65.0543
 texture = SubResource("GradientTexture2D_75vv8")
 
+[node name="GizmoIndicator" type="TextureRect" parent="CloudControl" unique_id=423126648]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 76.80594
+offset_top = 311.0479
+offset_right = 2931.8389
+offset_bottom = 3305.856
+scale = Vector2(0.02946642, 0.02946642)
+texture = ExtResource("21_bs2fd")
+
 [node name="GizmoTypes" type="VBoxContainer" parent="CloudControl" unique_id=340909491]
 layout_mode = 1
 anchors_preset = 4
 anchor_top = 0.5
 anchor_bottom = 0.5
-offset_left = 48.865837
-offset_top = 149.53033
-offset_right = 90.86584
-offset_bottom = 365.5304
+offset_left = 84.80156
+offset_top = 252.5528
+offset_right = 126.80156
+offset_bottom = 552.02997
 grow_vertical = 2
+scale = Vector2(1.6152885, 1.6152885)
 theme_override_constants/separation = 16
 
 [node name="TextureButton" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=1816913608]
@@ -605,16 +624,6 @@ texture_normal = ExtResource("28_nterg")
 ignore_texture_size = true
 stretch_mode = 4
 
-[node name="GizmoIndicator" type="TextureRect" parent="CloudControl" unique_id=423126648]
-unique_name_in_owner = true
-layout_mode = 0
-offset_left = 45.867096
-offset_top = 213.0287
-offset_right = 1645.8671
-offset_bottom = 1813.0287
-scale = Vector2(0.02946642, 0.02946642)
-texture = ExtResource("21_bs2fd")
-
 [node name="Cloudy" parent="." unique_id=1665134801 instance=ExtResource("11_75vv8")]
 visible = false
 z_index = 2
@@ -628,6 +637,7 @@ anchor_right = 1.0
 offset_left = -200.0
 offset_bottom = 200.0
 grow_horizontal = 0
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(208.68042, -3.5928783)
 
 [node name="Triangle" type="Triangle" parent="EditorIndicator" unique_id=212828080]
@@ -645,7 +655,7 @@ pivot_offset = Vector2(100, 100)
 z_index = -1
 layout_mode = 0
 offset_left = 71.194275
-offset_top = -946.0598
+offset_top = -1124.817
 offset_right = 200.32867
 offset_bottom = 0.41210938
 theme = ExtResource("1_hi2iw")
