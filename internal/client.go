@@ -47,6 +47,8 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/WorldEnvironment"
+	"graphics.gd/classdb/XRController3D"
+	"graphics.gd/classdb/XROrigin3D"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Color"
@@ -180,6 +182,15 @@ type Client struct {
 	member bool // true when we have been assigned an author ID
 
 	ui *UI
+
+	// xr is true once setupXR has confirmed an OpenXR runtime is
+	// initialized and switched the viewport into headset rendering.
+	// While true, the desktop input/move paths short-circuit and the
+	// 2D Control overlay is hidden — VR-side UI lives elsewhere.
+	xr       bool
+	xrOrigin XROrigin3D.Instance
+	xrLeft   XRController3D.Instance
+	xrRight  XRController3D.Instance
 }
 
 // canUseGizmoManipulation reports whether the current global gizmo mode
@@ -600,6 +611,11 @@ func (world *Client) Ready() {
 		AsNode3D().RotateObjectLocal(Vector3.New(0, 1, 0), Angle.Pi)
 
 	fmt.Println("Client setup complete")
+
+	// Attempt to bring up OpenXR. No-op on desktop without an XR
+	// runtime; on Quest/Horizon OS this swaps the viewport into
+	// stereo headset rendering and hides the 2D editor overlay.
+	world.setupXR()
 }
 
 const speed = 8
@@ -900,6 +916,12 @@ func (world *Client) Process(dt Float.X) {
 	// these keys; without the gate, the world would also translate
 	// the focal point under our feet each frame.
 	if world.controlLockMovement {
+		return
+	}
+	// In XR the headset drives the view; thumbstick locomotion is a
+	// follow-up. Until then, keyboard-driven focal-point translation
+	// would fight the headset pose.
+	if world.xr {
 		return
 	}
 
