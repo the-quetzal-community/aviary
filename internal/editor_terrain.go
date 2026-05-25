@@ -445,15 +445,18 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 		return
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
-		if !tr.PaintActive && (tr.BrushActive && tr.BrushAmount > 0 && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased()) {
-			tr.client.space.Sculpt(musical.Sculpt{
-				Author: tr.client.id,
-				Target: tr.BrushTarget,
-				Radius: tr.BrushRadius,
-				Amount: tr.BrushAmount,
-				Commit: true,
-			})
+		if !tr.PaintActive && tr.BrushActive && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased() {
+			if tr.BrushAmount != 0 {
+				tr.client.space.Sculpt(musical.Sculpt{
+					Author: tr.client.id,
+					Target: tr.BrushTarget,
+					Radius: tr.BrushRadius,
+					Amount: tr.BrushAmount,
+					Commit: true,
+				})
+			}
 			tr.BrushAmount = 0.0
+			tr.BrushDeltaV = 0.0
 			tr.BrushActive = false
 		}
 		if event.ButtonIndex() == Input.MouseButtonRight && tr.PaintActive {
