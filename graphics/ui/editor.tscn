@@ -31,6 +31,7 @@
 [ext_resource type="Texture2D" uid="uid://bme16r67ciq1p" path="res://ui/scales.svg" id="28_nterg"]
 [ext_resource type="Texture2D" uid="uid://bbuujrcrjflt8" path="res://ui/citizen.svg" id="29_hwdbu"]
 [ext_resource type="Texture2D" uid="uid://ckhyr2lsi0att" path="res://ui/critter.svg" id="30_6p2ph"]
+[ext_resource type="Texture2D" uid="uid://bc0aster1ed1t" path="res://ui/coaster.svg" id="31_coast"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_i6rcl"]
 bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
@@ -694,6 +695,10 @@ texture_normal = ExtResource("29_hwdbu")
 [node name="Critter" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=1037751350]
 layout_mode = 2
 texture_normal = ExtResource("30_6p2ph")
+
+[node name="Coaster" type="TextureButton" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=1700000001]
+layout_mode = 2
+texture_normal = ExtResource("31_coast")
 
 [node name="Control" type="Control" parent="EditorIndicator/EditorSelector/EditorTypes" unique_id=630442614]
 custom_minimum_size = Vector2(0, 20)

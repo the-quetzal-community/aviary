@@ -31,6 +31,7 @@ func main() {
 	classdb.Register[internal.CitizenEditor]()
 	classdb.Register[internal.CritterEditor]()
 	classdb.Register[internal.ShelterEditor]()
+	classdb.Register[internal.CoasterEditor]()
 
 	classdb.Register[internal.GridFlowContainer]()
 	classdb.Register[internal.ViewSelector]()
