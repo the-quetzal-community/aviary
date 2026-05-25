@@ -32,6 +32,7 @@
 [ext_resource type="Texture2D" uid="uid://bbuujrcrjflt8" path="res://ui/citizen.svg" id="29_hwdbu"]
 [ext_resource type="Texture2D" uid="uid://ckhyr2lsi0att" path="res://ui/critter.svg" id="30_6p2ph"]
 [ext_resource type="Texture2D" uid="uid://bc0aster1ed1t" path="res://ui/coaster.svg" id="31_coast"]
+[ext_resource type="Texture2D" path="res://ui/trash.svg" id="32_trash"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_i6rcl"]
 bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
@@ -745,3 +746,19 @@ offset_right = 160.39362
 offset_bottom = 123.52404
 texture = ExtResource("15_ny7lf")
 expand_mode = 1
+
+[node name="TrashButton" type="TextureButton" parent="." unique_id=1700001000]
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -180.0
+offset_top = 220.0
+offset_right = -20.0
+offset_bottom = 380.0
+grow_horizontal = 0
+scale = Vector2(0.5, 0.5)
+texture_normal = ExtResource("32_trash")
+ignore_texture_size = true
+stretch_mode = 5

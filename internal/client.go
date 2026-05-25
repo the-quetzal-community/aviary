@@ -250,6 +250,118 @@ func (world *Client) selectedEntityForGizmo() (musical.Entity, Node3D.Instance, 
 	return musical.Entity{}, Node3D.Nil, false
 }
 
+// CanDeleteSelection reports whether DeleteSelection would do anything
+// right now. Used by the trash-can button to decide visibility without
+// committing to a delete.
+func (world *Client) CanDeleteSelection() bool {
+	if world.selection == 0 || world.space == nil {
+		return false
+	}
+	raw, ok := world.selection.Instance()
+	if !ok {
+		return false
+	}
+	node, ok := Object.As[Node3D.Instance](raw)
+	if !ok {
+		return false
+	}
+	id := Node3D.ID(node.ID())
+	switch world.Editing {
+	case Editing.Scenery:
+		_, ok = world.object_to_entity[id]
+	case Editing.Shelter:
+		_, ok = world.ShelterEditor.object_to_entity[id]
+		if !ok {
+			if parent := node.GetParentNode3d(); parent != Node3D.Nil {
+				_, ok = world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]
+			}
+		}
+	case Editing.Vehicle:
+		_, ok = world.VehicleEditor.object_to_entity[id]
+	case Editing.Critter:
+		_, ok = world.CritterEditor.partToEntity[id]
+	default:
+		return false
+	}
+	return ok
+}
+
+// DeleteSelection removes the currently selected entity by routing the
+// request through the editor that owns it. Called by both the keyboard
+// Delete/Backspace handler and the trash-can UI button so they share
+// one canonical path. Returns true if a delete was actually issued.
+func (world *Client) DeleteSelection() bool {
+	if world.selection == 0 || world.space == nil {
+		return false
+	}
+	raw, ok := world.selection.Instance()
+	if !ok {
+		return false
+	}
+	node, ok := Object.As[Node3D.Instance](raw)
+	if !ok {
+		return false
+	}
+	id := Node3D.ID(node.ID())
+
+	var ch musical.Change
+	ch.Author = world.id
+	ch.Remove = true
+	ch.Commit = true
+
+	switch world.Editing {
+	case Editing.Scenery:
+		entity, has := world.object_to_entity[id]
+		if !has {
+			return false
+		}
+		ch.Entity = entity
+	case Editing.Shelter:
+		entity, has := world.ShelterEditor.object_to_entity[id]
+		if !has {
+			parent := node.GetParentNode3d()
+			if parent == Node3D.Nil {
+				return false
+			}
+			entity, has = world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]
+			if !has {
+				return false
+			}
+		}
+		ch.Entity = entity
+		ch.Editor = "shelter"
+	case Editing.Vehicle:
+		entity, has := world.VehicleEditor.object_to_entity[id]
+		if !has {
+			return false
+		}
+		ch.Entity = entity
+		ch.Editor = "vehicle"
+	case Editing.Critter:
+		entity, has := world.CritterEditor.partToEntity[id]
+		if !has {
+			return false
+		}
+		ch.Entity = entity
+		ch.Editor = "critter"
+	default:
+		return false
+	}
+
+	if err := world.space.Change(ch); err != nil {
+		Engine.Raise(err)
+		return false
+	}
+	world.selection = 0
+	world.gizmoDrag.active = false
+	world.gizmoDrag.hasMirrorPlane = false
+	world.gizmoDrag.design = musical.Design{}
+	world.gizmoDrag.twistInitialY = 0
+	world.gizmoDrag.twistInitialAngle = 0
+	world.gizmoDrag.twistPlaneY = 0
+	return true
+}
+
 func NewClient() *Client {
 	var client = &Client{
 		clientReady: sync.WaitGroup{},
@@ -1088,24 +1200,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}()
 		}
 		if isDeletePress(event) && world.Editing == Editing.Scenery {
-			node, ok := world.selection.Instance()
-			if ok {
-				if entity, ok := world.object_to_entity[Node3D.ID(node.ID())]; ok {
-					world.space.Change(musical.Change{
-						Author: world.id,
-						Entity: entity,
-						Remove: true,
-						Commit: true,
-					})
-				}
-			}
-			world.selection = 0
-			world.gizmoDrag.active = false
-			world.gizmoDrag.hasMirrorPlane = false
-			world.gizmoDrag.design = musical.Design{}
-			world.gizmoDrag.twistInitialY = 0
-			world.gizmoDrag.twistInitialAngle = 0
-			world.gizmoDrag.twistPlaneY = 0
+			world.DeleteSelection()
 		}
 	}
 }

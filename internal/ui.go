@@ -39,6 +39,12 @@ type UI struct {
 
 	Cloudy *FlightPlanner
 
+	// TrashButton is a touch-friendly entry point for deleting the
+	// current selection. Hidden whenever DeleteSelection would be a
+	// no-op (no selection, or editor that does not support per-
+	// selection delete).
+	TrashButton TextureButton.Instance
+
 	client *Client
 
 	mode Mode
@@ -100,6 +106,16 @@ func (ui *UI) modeButton(m Mode) *TextureButton.Instance {
 	return nil
 }
 
+func (ui *UI) Process(_ Float.X) {
+	if ui.client == nil {
+		return
+	}
+	want := ui.client.CanDeleteSelection()
+	if ui.TrashButton.AsCanvasItem().Visible() != want {
+		ui.TrashButton.AsCanvasItem().SetVisible(want)
+	}
+}
+
 func (ui *UI) Input(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() {
@@ -148,6 +164,11 @@ func (ui *UI) Ready() {
 		AsBaseButton().SetToggleMode(true).
 		AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer).
 		AsControl().SetMouseFilter(Control.MouseFilterPass)
+	ui.TrashButton.AsBaseButton().OnPressed(func() {
+		if ui.client != nil {
+			ui.client.DeleteSelection()
+		}
+	})
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
 		ui.Cloudy.AsCanvasItem().SetVisible(!ui.Cloudy.AsCanvasItem().Visible())
 		if ui.Cloudy.AsCanvasItem().Visible() {
@@ -192,6 +213,7 @@ func (ui *UI) scaling() {
 	ui.scale(ui.ViewSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	ui.scale(ui.TrashButton.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 
 	// ViewSelector needs to be centered to the top center
 	theme_pos := ui.ViewSelector.AsControl().Position()
