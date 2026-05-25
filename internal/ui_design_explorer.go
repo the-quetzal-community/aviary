@@ -346,7 +346,16 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					)
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
+					// Prefer a .region sidecar over a raw .png when both
+					// exist — the sidecar describes a sub-region of a
+					// shared atlas material, while the raw .png is the
+					// legacy pre-cropped form.
+					base := strings.TrimSuffix(string(resource), ".png")
+					region_path := library_path + "/" + tab + "/" + base + ".region"
 					resource := library_path + "/" + tab + "/" + resource
+					if FileAccess.FileExists(region_path) {
+						resource = region_path
+					}
 					elements.AsNode().AddChild(TextureButton.New().
 						SetTextureNormal(texture).
 						SetIgnoreTextureSize(true).

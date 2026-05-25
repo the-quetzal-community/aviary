@@ -40,7 +40,12 @@ func backpack(src_pck, dst_pck string) error {
 		// stays on-demand via CommunityResourceLoader's downloader.
 		isImportedIcon := strings.HasSuffix(path, ".ctex") &&
 			strings.HasPrefix(path, ".godot/imported/icon.")
-		if _, ok := exist[path]; ok || !(strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap") || isKennyScene || isImportedIcon) || strings.HasPrefix(path, "preview/") {
+		// Sidecar files that describe a sub-region of a shared atlas
+		// material (see editor_foliage.go). These are tiny JSON blobs
+		// the design explorer reads up-front, so they belong in
+		// preview.pck rather than being streamed from library.pck.
+		isRegion := strings.HasSuffix(path, ".region")
+		if _, ok := exist[path]; ok || !(strings.HasSuffix(path, ".import") || strings.HasSuffix(path, ".remap") || isKennyScene || isImportedIcon || isRegion) || strings.HasPrefix(path, "preview/") {
 			delete(index, path)
 		}
 	}

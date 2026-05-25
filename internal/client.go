@@ -1505,7 +1505,7 @@ func (tc *TimingCoordinator) Process(delta Float.X) {
 // built parts (eyes, …) through the same Import/Change machinery
 // without an actual resource backing them.
 func isKeepImporterPath(p string) bool {
-	return strings.HasSuffix(p, ".obj") || strings.HasSuffix(p, ".mhclo") || strings.HasPrefix(p, "procedural://")
+	return strings.HasSuffix(p, ".obj") || strings.HasSuffix(p, ".mhclo") || strings.HasSuffix(p, ".region") || strings.HasPrefix(p, "procedural://")
 }
 
 func (tc *TimingCoordinator) Follow(t musical.Timing) {
