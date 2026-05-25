@@ -133,6 +133,18 @@ type Client struct {
 
 	selection Node3D.ID
 
+	// gizmoDrag tracks an in-progress object manipulation started while
+	// the 2D gizmo toolbar (or Shift hotkey) has GizmoShift selected.
+	// We use a horizontal drag plane (constant Y) for the initial
+	// implementation so objects slide at their original height.
+	gizmoDrag struct {
+		active     bool
+		entity     musical.Entity
+		startPos   Vector3.XYZ
+		dragPlaneY Float.X
+		startGrab  Vector3.XYZ // world point on the plane under the mouse when drag began
+	}
+
 	time TimingCoordinator
 
 	last_LookAt      musical.LookAt
@@ -147,6 +159,25 @@ type Client struct {
 	member bool // true when we have been assigned an author ID
 
 	ui *UI
+}
+
+// canUseGizmoTransform reports whether the current global gizmo mode
+// (toolbar or hotkey) plus the active editor context should allow the
+// simple translate/rotate/scale gizmos to manipulate the current
+// selection. For now this is restricted to the "static placed design"
+// editors as requested.
+func (world *Client) canUseGizmoTransform() bool {
+	if world.ui == nil || world.ui.CloudControl == nil {
+		return false
+	}
+	if world.ui.CloudControl.Gizmo != GizmoShift {
+		return false
+	}
+	switch world.Editing {
+	case Editing.Scenery, Editing.Vehicle, Editing.Shelter:
+		return true
+	}
+	return false
 }
 
 func NewClient() *Client {
@@ -540,8 +571,10 @@ func (world musicalImpl) Change(con musical.Change) error {
 
 			exists.
 				SetPosition(con.Offset).
-				SetRotation(con.Angles).
-				SetScale(Vector3.New(0.1, 0.1, 0.1))
+				SetRotation(con.Angles)
+			// Do not stomp scale here. The creation path applies the
+			// conventional 0.1 factor; subsequent transform edits (gizmo
+			// moves, etc.) must preserve whatever scale the instance has.
 			return
 		}
 		var node Node3D.Instance
@@ -727,6 +760,12 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			world.FocalPoint.AsNode3D().Rotate(Vector3.New(0, 1, 0), -Angle.Radians(relative.X*0.005))
 			world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(relative.Y*0.005))
 		}
+		// While the gizmo move tool (Shift or toolbar) is active for one of
+		// the supported editors and the user is holding left mouse, treat
+		// motion as dragging the currently selected object.
+		if Input.IsMouseButtonPressed(Input.MouseButtonLeft) && world.gizmoDrag.active && world.canUseGizmoTransform() {
+			world.updateGizmoDrag()
+		}
 	}
 	if gesture, ok := Object.As[InputEventScreenDrag.Instance](event); ok {
 		if gesture.Index() != 0 {
@@ -779,31 +818,58 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				query.SetCollisionMask(int(^uint32(1 << 1)))
 				var intersect = space_state.IntersectRay(query)
 
-				if world.selection != 0 {
+				hadSelection := world.selection != 0
+				if hadSelection {
 					node, ok := world.selection.Instance()
 					if ok {
 						Select(node.AsNode(), false)
 					}
 				}
 
-				if Object.Is[*TerrainTile](intersect.Collider) {
-					world.selection = 0
-				} else {
-					node, ok := Object.As[Node.Instance](intersect.Collider)
-					if ok {
-						// node.Owner() returns Nil for colliders that
-						// weren't loaded from a scene file — including
-						// any procedurally-spawned StaticBody3D in an
-						// editor (critter body, spine handles, …).
-						// Calling .ID() on Nil segfaults; treat it as
-						// "not a selectable entity" instead.
+				// Normal raycast-based selection.
+				didHitSelectable := false
+				if !Object.Is[*TerrainTile](intersect.Collider) {
+					if node, ok := Object.As[Node.Instance](intersect.Collider); ok {
 						owner := node.Owner()
-						if owner == Node.Nil {
-							world.selection = 0
-						} else {
+						if owner != Node.Nil {
 							node = owner
 							world.selection = Node3D.ID(node.ID())
 							Select(node, true)
+							didHitSelectable = true
+						}
+					}
+				}
+
+				// For the simple movable editors (scenery/vehicle/shelter) + GizmoShift,
+				// a left press that doesn't hit the current selection should NOT clear it.
+				// This lets the user click anywhere on screen to start a move drag once
+				// something is already selected.
+				if !didHitSelectable {
+					if world.canUseGizmoTransform() && hadSelection {
+						// Keep the previous selection; the arming code below will start
+						// a drag using the current mouse position as the grab point.
+					} else {
+						world.selection = 0
+						world.gizmoDrag.active = false
+					}
+				}
+
+				// Arm gizmo drag (only for the editors we support right now).
+				if world.canUseGizmoTransform() && world.selection != 0 {
+					if node, ok := world.selection.Instance(); ok {
+						if ent, has := world.object_to_entity[Node3D.ID(node.ID())]; has {
+							pos := node.AsNode3D().Position()
+							world.gizmoDrag.active = true
+							world.gizmoDrag.entity = ent
+							world.gizmoDrag.startPos = pos
+							world.gizmoDrag.dragPlaneY = pos.Y
+
+							o, d := MouseRay(world.AsNode3D())
+							if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
+								world.gizmoDrag.startGrab = hit
+							} else {
+								world.gizmoDrag.startGrab = pos
+							}
 						}
 					}
 				}
@@ -836,6 +902,17 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 							}
 						}
 					}
+				}
+			}
+
+			// Left button released: finalize any in-progress gizmo drag with a
+			// committed musical Change so the edit is recorded in the .mus3 log.
+			if mouse.ButtonIndex() == Input.MouseButtonLeft && !mouse.AsInputEvent().IsPressed() {
+				if world.gizmoDrag.active {
+					if world.canUseGizmoTransform() {
+						world.commitGizmoDrag()
+					}
+					world.gizmoDrag.active = false
 				}
 			}
 		}
@@ -876,7 +953,77 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					})
 				}
 			}
+			world.selection = 0
+			world.gizmoDrag.active = false
 		}
+	}
+}
+
+// updateGizmoDrag is called on mouse motion (or could be polled) while a
+// GizmoShift drag is active. It intersects the current mouse ray against
+// the horizontal drag plane captured at drag start and emits a preview
+// (Commit:false) musical Change so both the local node and any peers
+// immediately see the object move.
+func (world *Client) updateGizmoDrag() {
+	if !world.gizmoDrag.active || world.selection == 0 {
+		return
+	}
+	o, d := MouseRay(world.AsNode3D())
+	planePoint := Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.dragPlaneY, world.gizmoDrag.startPos.Z)
+	hit, ok := IntersectRayPlane(o, d, planePoint, Vector3.New(0, 1, 0))
+	if !ok {
+		return
+	}
+	delta := Vector3.Sub(hit, world.gizmoDrag.startGrab)
+	newPos := Vector3.Add(world.gizmoDrag.startPos, delta)
+
+	node, ok := world.selection.Instance()
+	if !ok {
+		return
+	}
+	// Preserve whatever rotation/scale the object currently has.
+	rot := node.AsNode3D().Rotation()
+
+	if err := world.space.Change(musical.Change{
+		Author: world.id,
+		Entity: world.gizmoDrag.entity,
+		Offset: newPos,
+		Angles: rot,
+		Commit: false, // live preview during drag
+	}); err != nil {
+		// Non-fatal during drag; the musical layer may be in a transitional state.
+		_ = err
+	}
+}
+
+// commitGizmoDrag writes one final Change with Commit:true using the
+// object's *current* live transform (which has been driven by the preview
+// changes). This ensures the edit is durably recorded in the musical log.
+func (world *Client) commitGizmoDrag() {
+	if !world.gizmoDrag.active || world.selection == 0 {
+		return
+	}
+	node, ok := world.selection.Instance()
+	if !ok {
+		return
+	}
+	// Re-fetch the entity in case it changed (defensive).
+	ent := world.gizmoDrag.entity
+	if e, stillHave := world.object_to_entity[Node3D.ID(node.ID())]; stillHave {
+		ent = e
+	}
+
+	pos := node.AsNode3D().Position()
+	rot := node.AsNode3D().Rotation()
+
+	if err := world.space.Change(musical.Change{
+		Author: world.id,
+		Entity: ent,
+		Offset: pos,
+		Angles: rot,
+		Commit: true,
+	}); err != nil {
+		Engine.Raise(err)
 	}
 }
 
