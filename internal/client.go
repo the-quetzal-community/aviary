@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"math"
+
 	"github.com/google/uuid"
 	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
@@ -156,6 +158,12 @@ type Client struct {
 		// the mirror copy (using the correct Design) if the user moves
 		// back away from the axis after the mirror was temporarily removed.
 		design musical.Design
+
+		// --- Twist / local-Y rotation state (for GizmoTwist) ---
+		activeGizmo       Gizmo         // the gizmo mode active when this drag started
+		twistInitialY     Angle.Radians // original .Y component of the object's Euler rotation
+		twistPlaneY       Float.X       // Y level of the virtual horizontal plane used for angle calculation
+		twistInitialAngle Float.X       // atan2 angle of the initial mouse projection relative to object center
 	}
 
 	time TimingCoordinator
@@ -174,16 +182,17 @@ type Client struct {
 	ui *UI
 }
 
-// canUseGizmoTransform reports whether the current global gizmo mode
-// (toolbar or hotkey) plus the active editor context should allow the
-// simple translate/rotate/scale gizmos to manipulate the current
-// selection. For now this is restricted to the "static placed design"
-// editors as requested.
-func (world *Client) canUseGizmoTransform() bool {
+// canUseGizmoManipulation reports whether the current global gizmo mode
+// (toolbar or hotkey) plus the active editor context allows gizmo-based
+// manipulation (translate via GizmoShift or twist/rotate-Y via GizmoTwist)
+// of the current selection. Restricted to the three "static placed design"
+// editors for now.
+func (world *Client) canUseGizmoManipulation() bool {
 	if world.ui == nil || world.ui.CloudControl == nil {
 		return false
 	}
-	if world.ui.CloudControl.Gizmo != GizmoShift {
+	g := world.ui.CloudControl.Gizmo
+	if g != GizmoShift && g != GizmoTwist {
 		return false
 	}
 	switch world.Editing {
@@ -191,6 +200,11 @@ func (world *Client) canUseGizmoTransform() bool {
 		return true
 	}
 	return false
+}
+
+// canUseGizmoTransform is the old name, kept for a few call sites during transition.
+func (world *Client) canUseGizmoTransform() bool {
+	return world.canUseGizmoManipulation() && world.ui.CloudControl.Gizmo == GizmoShift
 }
 
 // selectedEntityForGizmo returns the musical.Entity (if any) that corresponds
@@ -819,7 +833,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		// While the gizmo move tool (Shift or toolbar) is active for one of
 		// the supported editors and the user is holding left mouse, treat
 		// motion as dragging the currently selected object.
-		if Input.IsMouseButtonPressed(Input.MouseButtonLeft) && world.gizmoDrag.active && world.canUseGizmoTransform() {
+		if Input.IsMouseButtonPressed(Input.MouseButtonLeft) && world.gizmoDrag.active && world.canUseGizmoManipulation() {
 			world.updateGizmoDrag()
 		}
 	}
@@ -901,30 +915,46 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				// This lets the user click anywhere on screen to start a move drag once
 				// something is already selected.
 				if !didHitSelectable {
-					if world.canUseGizmoTransform() && hadSelection {
-						// Keep the previous selection; the arming code below will start
-						// a drag using the current mouse position as the grab point.
+					if world.canUseGizmoManipulation() && hadSelection {
+						// Keep the previous selection for gizmo manipulation (move or twist).
+						// Re-apply the highlight because we unconditionally deselected
+						// at the top of the handler. This prevents the "click to rotate
+						// deselects the object" issue, especially noticeable in shelter.
+						if node, ok := world.selection.Instance(); ok {
+							Select(node.AsNode(), true)
+						}
 					} else {
 						world.selection = 0
 						world.gizmoDrag.active = false
 						world.gizmoDrag.hasMirrorPlane = false
 						world.gizmoDrag.design = musical.Design{}
+						world.gizmoDrag.twistInitialY = 0
+						world.gizmoDrag.twistInitialAngle = 0
+						world.gizmoDrag.twistPlaneY = 0
 					}
 				}
 
 				// Arm gizmo drag (only for the editors we support right now).
 				// We use selectedEntityForGizmo so this also works for Vehicle
 				// and Shelter, which maintain their own entity maps.
-				if world.canUseGizmoTransform() {
+				if world.canUseGizmoManipulation() {
 					if ent, node, ok := world.selectedEntityForGizmo(); ok {
 						pos := node.AsNode3D().Position()
+
+						// Record which gizmo mode started this drag so we finish the
+						// interaction even if the user releases the temporary hotkey.
+						world.gizmoDrag.activeGizmo = world.ui.CloudControl.Gizmo
 						world.gizmoDrag.active = true
 						world.gizmoDrag.entity = ent
 						world.gizmoDrag.startPos = pos
 						world.gizmoDrag.dragPlaneY = pos.Y
-						world.gizmoDrag.hasMirrorPlane = false // will be set below if applicable
+						world.gizmoDrag.hasMirrorPlane = false
 						world.gizmoDrag.mirrorPlanePoint = Vector3.Zero
 						world.gizmoDrag.mirrorPlaneNormal = Vector3.Zero
+						world.gizmoDrag.design = musical.Design{}
+						world.gizmoDrag.twistInitialY = 0
+						world.gizmoDrag.twistPlaneY = 0
+						world.gizmoDrag.twistInitialAngle = 0
 
 						o, d := MouseRay(world.AsNode3D())
 						if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
@@ -964,6 +994,24 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 							}
 						designCaptured:
 						}
+
+						// --- Twist (local Y rotation) arming ---
+						if world.gizmoDrag.activeGizmo == GizmoTwist {
+							rot := node.AsNode3D().Rotation()
+							world.gizmoDrag.twistInitialY = rot.Y
+							world.gizmoDrag.twistPlaneY = pos.Y
+
+							// Project current mouse onto the same horizontal plane we use for move.
+							// The angle of this vector around the object gives us a stable reference.
+							o, d := MouseRay(world.AsNode3D())
+							if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
+								dx := hit.X - pos.X
+								dz := hit.Z - pos.Z
+								world.gizmoDrag.twistInitialAngle = Float.X(Angle.Atan2(Angle.Radians(dz), Angle.Radians(dx)))
+							} else {
+								world.gizmoDrag.twistInitialAngle = 0
+							}
+						}
 					}
 				}
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
@@ -1002,12 +1050,15 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			// committed musical Change so the edit is recorded in the .mus3 log.
 			if mouse.ButtonIndex() == Input.MouseButtonLeft && !mouse.AsInputEvent().IsPressed() {
 				if world.gizmoDrag.active {
-					if world.canUseGizmoTransform() {
+					if world.canUseGizmoManipulation() {
 						world.commitGizmoDrag()
 					}
 					world.gizmoDrag.active = false
 					world.gizmoDrag.hasMirrorPlane = false
 					world.gizmoDrag.design = musical.Design{}
+					world.gizmoDrag.twistInitialY = 0
+					world.gizmoDrag.twistInitialAngle = 0
+					world.gizmoDrag.twistPlaneY = 0
 				}
 			}
 		}
@@ -1052,6 +1103,9 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			world.gizmoDrag.active = false
 			world.gizmoDrag.hasMirrorPlane = false
 			world.gizmoDrag.design = musical.Design{}
+			world.gizmoDrag.twistInitialY = 0
+			world.gizmoDrag.twistInitialAngle = 0
+			world.gizmoDrag.twistPlaneY = 0
 		}
 	}
 }
@@ -1132,6 +1186,57 @@ func (world *Client) updateGizmoDrag() {
 		}
 	}
 
+	// --- Twist (local Y rotation) handling ---
+	if world.gizmoDrag.activeGizmo == GizmoTwist {
+		// Recompute current hit on the rotation plane
+		o, d := MouseRay(world.AsNode3D())
+		if hit, ok := IntersectRayPlane(o, d, Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.twistPlaneY, world.gizmoDrag.startPos.Z), Vector3.New(0, 1, 0)); ok {
+			dx := hit.X - world.gizmoDrag.startPos.X
+			dz := hit.Z - world.gizmoDrag.startPos.Z
+			curAngle := Float.X(Angle.Atan2(Angle.Radians(dz), Angle.Radians(dx)))
+
+			// Invert delta so mouse movement feels natural (left/right matches
+			// the visual rotation direction most users expect).
+			delta := world.gizmoDrag.twistInitialAngle - curAngle
+
+			newY := world.gizmoDrag.twistInitialY + Angle.Radians(delta)
+
+			// Note: shelter snapping is now only applied on release (see commitGizmoDrag)
+			// so the live drag feels responsive. Final value will snap to 90° grid.
+
+			rot := node.AsNode3D().Rotation()
+			rot.Y = newY
+
+			twistCh := musical.Change{
+				Author: world.id,
+				Entity: ent,
+				Offset: world.gizmoDrag.startPos, // keep original position during pure twist
+				Angles: rot,
+				Commit: false,
+			}
+			switch world.Editing {
+			case Editing.Vehicle:
+				twistCh.Editor = "vehicle"
+				twistCh.Design = world.gizmoDrag.design
+
+				// Preserve the existing mirror offset (if any) so remirror()
+				// does not interpret the lack of Mirror field as "remove the twin".
+				// This mirrors the logic we use for move drags.
+				if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+					if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+						mirrorPos := mirrorNode.AsNode3D().Position()
+						mainPos := node.AsNode3D().Position()
+						twistCh.Mirror = Vector3.Sub(mirrorPos, mainPos)
+					}
+				}
+			case Editing.Shelter:
+				twistCh.Editor = "shelter"
+			}
+			_ = world.space.Change(twistCh)
+		}
+		return // twist handled, don't fall into the translation path
+	}
+
 	if err := world.space.Change(ch); err != nil {
 		// Non-fatal during drag.
 		_ = err
@@ -1201,6 +1306,47 @@ func (world *Client) commitGizmoDrag() {
 				ch.Mirror = Vector3.Sub(mirrorPos, mainPos)
 			}
 		}
+	}
+
+	// For a pure twist drag, the live node rotation (updated by the preview
+	// Changes) is already correct. Just commit it.
+	if world.gizmoDrag.activeGizmo == GizmoTwist {
+		rot := node.AsNode3D().Rotation()
+
+		if world.Editing == Editing.Shelter {
+			// On release, snap the final rotation to the nearest 90° increment
+			// relative to the orientation at the start of this drag.
+			step := math.Pi / 2
+			deltaFromStart := rot.Y - world.gizmoDrag.twistInitialY
+			snapped := math.Round(float64(deltaFromStart)/step) * step
+			rot.Y = world.gizmoDrag.twistInitialY + Angle.Radians(snapped)
+		}
+
+		twistCh := musical.Change{
+			Author: world.id,
+			Entity: ent,
+			Offset: pos, // position unchanged during pure twist
+			Angles: rot,
+			Commit: true,
+		}
+		switch world.Editing {
+		case Editing.Vehicle:
+			twistCh.Editor = "vehicle"
+			twistCh.Design = world.gizmoDrag.design
+
+			// Preserve mirror offset on final commit too.
+			if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+				if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+					mirrorPos := mirrorNode.AsNode3D().Position()
+					mainPos := node.AsNode3D().Position()
+					twistCh.Mirror = Vector3.Sub(mirrorPos, mainPos)
+				}
+			}
+		case Editing.Shelter:
+			twistCh.Editor = "shelter"
+		}
+		_ = world.space.Change(twistCh)
+		return
 	}
 
 	if err := world.space.Change(ch); err != nil {
