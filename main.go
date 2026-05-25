@@ -19,6 +19,7 @@ func main() {
 	classdb.Register[internal.Tree](internal.NewTree)
 	classdb.Register[internal.Rock](internal.NewRock)
 	classdb.Register[internal.TerrainTile]()
+	classdb.Register[internal.TerrainTileArrow]()
 	classdb.Register[internal.Client]()
 	classdb.Register[internal.UI]()
 	classdb.Register[internal.Triangle](internal.NewTriangle)

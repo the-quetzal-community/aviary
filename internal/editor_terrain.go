@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"graphics.gd/classdb/ArrayMesh"
+	"graphics.gd/classdb/BoxShape3D"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/CollisionShape3D"
+	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HeightMapShape3D"
 	"graphics.gd/classdb/Image"
@@ -19,9 +21,11 @@ import (
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
+	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/StaticBody3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
+	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
@@ -33,12 +37,39 @@ import (
 	"the.quetzal.community/aviary/internal/musical"
 )
 
+// tileCoord identifies one chunk in the infinite grid of terrain
+// tiles. The tile at coord (cx, cz) is centred at world position
+// (cx * terrainDefaultSize, 0, cz * terrainDefaultSize) and covers
+// the world AABB [coord*size - size/2, coord*size + size/2] in both
+// X and Z.
+type tileCoord struct {
+	X, Z int
+}
+
 // TerrainEditor is responsible for rendering and managing the terrain in the 3D environment.
 type TerrainEditor struct {
 	Node3D.Extension[TerrainEditor] `gd:"TerrainEditor"`
 	musical.Stubbed
 
-	tile *TerrainTile
+	// tiles is the live set of terrain chunks indexed by their grid
+	// coord. Tiles are auto-created the first time a sculpt's brush
+	// AABB touches them (see tilesIntersecting). The "starter" tile
+	// at (0, 0) is allocated in Ready so the world has something to
+	// click on before the first sculpt.
+	tiles map[tileCoord]*TerrainTile
+
+	// arrowsVisible toggles every existing extend-the-world arrow
+	// when entering/leaving the terrain editor — arrows shouldn't be
+	// clickable from the coaster or scenery editors.
+	arrowsVisible bool
+
+	// mapper, albedos, normal_maps are shared across all tiles so the
+	// shader's Texture2DArray layer index for a given paint Design is
+	// consistent everywhere it gets painted. Mutated in Sculpt's
+	// upload step; tiles read mapper[Design] when sampling textures.
+	mapper      map[musical.Design]int
+	albedos     []Image.Instance
+	normal_maps []Image.Instance
 
 	shader        ShaderMaterial.Instance
 	shader_buried ShaderMaterial.Instance
@@ -62,11 +93,95 @@ type TerrainEditor struct {
 	client *Client
 }
 
+// cardinalDirs are the four neighbour offsets used by the chunk
+// machinery — both when spawning "extend the world" arrows and when
+// pruning the matching arrow on an existing neighbour as a new tile
+// fills its side.
+var cardinalDirs = [4]tileCoord{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+
+// tileAt returns the tile at the given grid coord, creating it on
+// demand. New tiles are positioned in world space at coord*size and
+// share the editor's shader instances so the brush highlight + paint
+// textures stay consistent across chunks. After creating a tile we
+// also clear the "extend" arrow on each existing neighbour that
+// pointed toward this coord, and spawn arrows on the new tile's open
+// sides.
+func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
+	if tile, ok := tr.tiles[coord]; ok {
+		return tile
+	}
+	tile := new(TerrainTile)
+	tile.coord = coord
+	tile.client = tr.client
+	tile.editor = tr
+	tile.shader = tr.shader
+	tile.side_shader = tr.shader_buried
+	tile.brushEvents = tr.brushEvents
+	tile.arrows = make(map[tileCoord]*TerrainTileArrow)
+	tr.tiles[coord] = tile
+	tr.AsNode().AddChild(tile.AsNode())
+	tile.AsNode3D().SetPosition(Vector3.New(
+		Float.X(coord.X*terrainDefaultSize),
+		0,
+		Float.X(coord.Z*terrainDefaultSize),
+	))
+	// Remove arrows on existing neighbours that pointed at us.
+	for _, dir := range cardinalDirs {
+		neighbour, ok := tr.tiles[tileCoord{coord.X + dir.X, coord.Z + dir.Z}]
+		if !ok || neighbour == tile {
+			continue
+		}
+		neighbour.removeArrow(tileCoord{-dir.X, -dir.Z})
+	}
+	// Spawn arrows for our own open sides.
+	tile.spawnArrows()
+	return tile
+}
+
+// tilesIntersecting returns every tile whose AABB intersects the
+// given world-space brush sphere, creating tiles on demand. Sculpts
+// straddling a tile boundary apply to all overlapping chunks so the
+// brush effect is continuous across the seam.
+//
+// Tile (cx, _) covers world X in [cx*size - half, cx*size + half].
+// Solving for overlap with [target.X - radius, target.X + radius]
+// gives cx ∈ [ceil((minX - half) / size), floor((maxX + half) / size)].
+func (tr *TerrainEditor) tilesIntersecting(target Vector3.XYZ, radius Float.X) []*TerrainTile {
+	size := Float.X(terrainDefaultSize)
+	half := size / 2
+	minX, maxX := target.X-radius, target.X+radius
+	minZ, maxZ := target.Z-radius, target.Z+radius
+	minCx := int(Float.Ceil((minX - half) / size))
+	maxCx := int(Float.Floor((maxX + half) / size))
+	minCz := int(Float.Ceil((minZ - half) / size))
+	maxCz := int(Float.Floor((maxZ + half) / size))
+	var tiles []*TerrainTile
+	for cx := minCx; cx <= maxCx; cx++ {
+		for cz := minCz; cz <= maxCz; cz++ {
+			tiles = append(tiles, tr.tileAt(tileCoord{cx, cz}))
+		}
+	}
+	return tiles
+}
+
+// tileForWorld returns the tile whose AABB contains the given world
+// position, or nil if no tile has yet been instantiated there. Used
+// by HeightAt/NormalAt so scenery, action_renderer and the like land
+// on the right chunk.
+func (tr *TerrainEditor) tileForWorld(pos Vector3.XYZ) *TerrainTile {
+	size := Float.X(terrainDefaultSize)
+	half := size / 2
+	cx := int(Float.Floor((pos.X + half) / size))
+	cz := int(Float.Floor((pos.Z + half) / size))
+	return tr.tiles[tileCoord{cx, cz}]
+}
+
 func (fe *TerrainEditor) Name() string { return "terrain" }
 
 func (fe *TerrainEditor) EnableEditor() {
 	fe.shader.SetShaderParameter("brush_active", true)
 	fe.shader_buried.SetShaderParameter("brush_active", true)
+	fe.setArrowsVisible(true)
 }
 
 func (fe *TerrainEditor) ChangeEditor() {
@@ -79,6 +194,18 @@ func (fe *TerrainEditor) ChangeEditor() {
 		SetShaderParameter("brush_active", false)
 	fe.BrushActive = false
 	fe.PaintActive = false
+	fe.setArrowsVisible(false)
+}
+
+// setArrowsVisible toggles every existing chunk's extend arrows and
+// remembers the state so tiles spawned later get the matching default.
+func (tr *TerrainEditor) setArrowsVisible(v bool) {
+	tr.arrowsVisible = v
+	for _, tile := range tr.tiles {
+		for _, arrow := range tile.arrows {
+			arrow.AsNode3D().SetVisible(v)
+		}
+	}
 }
 
 func (*TerrainEditor) Views() []string          { return nil }
@@ -150,11 +277,54 @@ func (tr *TerrainEditor) Ready() {
 
 	tr.BrushRadius = 2.0
 
-	tr.tile = new(TerrainTile)
-	tr.tile.shader = tr.shader
-	tr.tile.side_shader = tr.shader_buried
-	tr.tile.brushEvents = tr.brushEvents
-	tr.AsNode().AddChild(tr.tile.AsNode())
+	tr.tiles = make(map[tileCoord]*TerrainTile)
+	tr.mapper = make(map[musical.Design]int)
+	tr.albedos = []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
+	tr.normal_maps = []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
+	tr.uploadTextureArrays()
+	// Spawn the starter tile so the world is clickable before any
+	// sculpt arrives.
+	tr.tileAt(tileCoord{0, 0})
+}
+
+// uploadTextureArrays rebuilds the Texture2DArray (and bumpmap
+// counterpart) from editor-level albedos/normal_maps and pushes them
+// to the shared shader. Called both at startup and when a new paint
+// Design first appears via uploadDesign.
+func (tr *TerrainEditor) uploadTextureArrays() {
+	terrains := Texture2DArray.New()
+	terrains.AsImageTextureLayered().CreateFromImages(tr.albedos)
+	bumpmaps := Texture2DArray.New()
+	bumpmaps.AsImageTextureLayered().CreateFromImages(tr.normal_maps)
+	tr.shader.
+		SetShaderParameter("texture_albedo", terrains).
+		SetShaderParameter("texture_normal", bumpmaps)
+}
+
+// uploadDesign assigns the given paint Design a layer index in the
+// shared texture array, loading the texture (and its `_normal` sibling
+// if one exists) the first time it appears. Returns the layer index;
+// 0 is reserved for the default base layer.
+func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
+	if idx, ok := tr.mapper[design]; ok {
+		return idx
+	}
+	texture, ok := tr.client.textures[design].Instance()
+	if !ok {
+		return 0
+	}
+	idx := len(tr.albedos)
+	tr.mapper[design] = idx
+	tr.albedos = append(tr.albedos, texture.GetImage())
+	ext := path.Ext(texture.AsResource().ResourcePath())
+	normal_path := strings.TrimSuffix(texture.AsResource().ResourcePath(), ext) + "_normal" + ext
+	if FileAccess.FileExists(normal_path) {
+		tr.normal_maps = append(tr.normal_maps, Resource.Load[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
+	} else {
+		tr.normal_maps = append(tr.normal_maps, Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
+	}
+	tr.uploadTextureArrays()
+	return idx
 }
 
 func (tr *TerrainEditor) Paint() {
@@ -181,13 +351,26 @@ func (tr *TerrainEditor) CancelPaint() bool {
 	return true
 }
 
-// HeightAt is a thin pass-through to the underlying tile so callers
-// (action_renderer, scenery placement) don't reach through to the
-// private TerrainTile to query the surface.
-func (tr *TerrainEditor) HeightAt(pos Vector3.XYZ) Float.X { return tr.tile.HeightAt(pos) }
+// HeightAt looks up the terrain height at the given world position
+// by finding the chunk containing it. Returns 0 if no tile has been
+// instantiated at that location yet.
+func (tr *TerrainEditor) HeightAt(pos Vector3.XYZ) Float.X {
+	tile := tr.tileForWorld(pos)
+	if tile == nil {
+		return 0
+	}
+	return tile.HeightAt(pos)
+}
 
-// NormalAt is a thin pass-through to the underlying tile.
-func (tr *TerrainEditor) NormalAt(pos Vector3.XYZ) Vector3.XYZ { return tr.tile.NormalAt(pos) }
+// NormalAt looks up the terrain normal at the given world position.
+// Returns world-up if no tile has been instantiated there.
+func (tr *TerrainEditor) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
+	tile := tr.tileForWorld(pos)
+	if tile == nil {
+		return Vector3.XYZ{Y: 1}
+	}
+	return tile.NormalAt(pos)
+}
 
 func (vr *TerrainEditor) Process(dt Float.X) {
 	for {
@@ -242,7 +425,9 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 	}
-	vr.tile.Sculpt(brush)
+	for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
+		tile.Sculpt(brush)
+	}
 	return nil
 }
 
@@ -277,6 +462,11 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 }
 
+// terrainDefaultSize is the cell count along each side of every
+// terrain chunk. Chunks tile the world on a (size × size) grid and
+// are spawned lazily as sculpts land in them.
+const terrainDefaultSize = 16
+
 type TerrainTile struct {
 	StaticBody3D.Extension[TerrainTile] `gd:"AviaryTerrainTile"`
 
@@ -287,9 +477,20 @@ type TerrainTile struct {
 	side_shader ShaderMaterial.Instance
 
 	client    *Client
+	editor    *TerrainEditor // back-pointer for shared mapper/albedos
+	coord     tileCoord      // grid position; world center = coord * size
 	generated bool
 	reloading bool
 	sculpts   []musical.Sculpt
+
+	// arrows tracks the "extend the world" markers for the four
+	// cardinal sides that don't yet have a neighbour. Keyed by the
+	// unit direction (e.g. (1,0) for the +X side).
+	arrows map[tileCoord]*TerrainTileArrow
+
+	// size is the cell count along each side. The tile is size×size
+	// cells, with heights stored on a (size+1)×(size+1) grid.
+	size int
 
 	heights []float32
 
@@ -300,8 +501,6 @@ type TerrainTile struct {
 	collision      CollisionShape3D.Instance
 	heightmapShape HeightMapShape3D.Instance
 
-	mapper map[musical.Design]int
-
 	// cached geometry — top surface
 	vertices []Vector3.XYZ
 	normals  []Vector3.XYZ
@@ -309,18 +508,17 @@ type TerrainTile struct {
 	textures []float32
 	weights  []float32
 
-	// cached geometry — side walls (4 cardinal sides × 16 segments ×
-	// 6 verts per quad). Statically sized — the tile is always 16×16.
+	// cached geometry — side walls (4 cardinal sides × size segments
+	// × 6 verts per quad).
 	verticesSide []Vector3.XYZ
 	normalsSide  []Vector3.XYZ
 	uvsSide      []Vector2.XY
-
-	albedos     []Image.Instance
-	normal_maps []Image.Instance
 }
 
 func (tile *TerrainTile) Ready() {
-	tile.mapper = make(map[musical.Design]int)
+	if tile.size == 0 {
+		tile.size = terrainDefaultSize
+	}
 	tile.Reload()
 }
 
@@ -332,34 +530,47 @@ func (tile *TerrainTile) Sculpt(brush musical.Sculpt) {
 // generateBase mesh, textures and the collision shape, these will change whenever a [musical.Sculpt] arrives.
 func (tile *TerrainTile) generateBase() {
 	tile.generated = true
+	if tile.size == 0 {
+		tile.size = terrainDefaultSize
+	}
+	n := tile.size // cells along each side
+	hm := n + 1    // heightmap dim (per-vertex grid)
+	half := Float.X(n) / 2
 	//
-	// the actual mesh is a 16x16 plane grid, each cell has a texture associated with it that is known by each
-	// neighboring vertex and blended together using the weights we setup here (the weights identify where in
-	// the cell that the vertex is, and therefore which textures to take into consideration).
+	// The mesh is an n×n plane grid; each cell has a texture associated with each neighbouring vertex
+	// and is blended together using the weights set up here (weights identify where in the cell each
+	// vertex sits and therefore which textures contribute).
 	//
+	// Allocate or keep the heights buffer first so the vertex Y can
+	// be seeded from any pre-existing terrain (Resize hands us a
+	// resampled heights buffer).
+	if tile.heights == nil || len(tile.heights) != hm*hm {
+		tile.heights = make([]float32, hm*hm)
+	}
 	var mesh = ArrayMesh.New()
-	tile.vertices = make([]Vector3.XYZ, 16*16*6)
-	tile.normals = make([]Vector3.XYZ, 16*16*6)
-	tile.uvs = make([]Vector2.XY, 16*16*6)
-	tile.textures = make([]float32, 16*16*6*4)
-	tile.weights = make([]float32, 16*16*6*4)
+	tile.vertices = make([]Vector3.XYZ, n*n*6)
+	tile.normals = make([]Vector3.XYZ, n*n*6)
+	tile.uvs = make([]Vector2.XY, n*n*6)
+	tile.textures = make([]float32, n*n*6*4)
+	tile.weights = make([]float32, n*n*6*4)
+	inv := Float.X(1) / Float.X(n)
 	add := func(index int, x, y int, w1, w2, w3, w4 Float.X) {
-		tile.vertices[index] = Vector3.XYZ{Float.X(x), 0, Float.X(y)}
+		tile.vertices[index] = Vector3.XYZ{Float.X(x), Float.X(tile.heights[x+y*hm]), Float.X(y)}
 		tile.normals[index] = Vector3.XYZ{0, 1, 0}
-		tile.uvs[index] = Vector2.XY{Float.X(x) / 16, Float.X(y) / 16}
+		tile.uvs[index] = Vector2.XY{Float.X(x) * inv, Float.X(y) * inv}
 		tile.weights[index*4] = float32(w1)
 		tile.weights[index*4+1] = float32(w2)
 		tile.weights[index*4+2] = float32(w3)
 		tile.weights[index*4+3] = float32(w4)
 	}
-	for x := range 16 {
-		for y := range 16 {
-			add(6*(x+16*y)+0, x, y, 1, 0, 0, 0)     // top left
-			add(6*(x+16*y)+1, x+1, y, 0, 1, 0, 0)   // top right
-			add(6*(x+16*y)+2, x, y+1, 0, 0, 1, 0)   // bottom left
-			add(6*(x+16*y)+3, x+1, y, 0, 1, 0, 0)   // top right
-			add(6*(x+16*y)+4, x+1, y+1, 0, 0, 0, 1) // bottom right
-			add(6*(x+16*y)+5, x, y+1, 0, 0, 1, 0)   // bottom left
+	for x := 0; x < n; x++ {
+		for y := 0; y < n; y++ {
+			add(6*(x+n*y)+0, x, y, 1, 0, 0, 0)     // top left
+			add(6*(x+n*y)+1, x+1, y, 0, 1, 0, 0)   // top right
+			add(6*(x+n*y)+2, x, y+1, 0, 0, 1, 0)   // bottom left
+			add(6*(x+n*y)+3, x+1, y, 0, 1, 0, 0)   // top right
+			add(6*(x+n*y)+4, x+1, y+1, 0, 0, 0, 1) // bottom right
+			add(6*(x+n*y)+5, x, y+1, 0, 0, 1, 0)   // bottom left
 		}
 	}
 	attributes := [Mesh.ArrayMax]any{
@@ -376,12 +587,11 @@ func (tile *TerrainTile) generateBase() {
 	)
 	tile.Mesh.
 		SetMesh(mesh.AsMesh()).
-		AsNode3D().SetPosition(Vector3.New(-8, 0, -8))
+		AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
 	tile.Mesh.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
 	//
-	// We set this up so that we can figure out which point on the terrain was clicked on input.
+	// Set up the collision shape, which is what mouse picking and physics queries hit.
 	//
-	tile.heights = make([]float32, 17*17)
 	collision_shape := CollisionShape3D.Nil
 	for i := 0; i < tile.AsNode().GetChildCount(); i++ {
 		child := tile.AsNode().GetChild(i)
@@ -395,24 +605,13 @@ func (tile *TerrainTile) generateBase() {
 		tile.AsNode().AddChild(collision_shape.AsNode())
 	}
 	shape := HeightMapShape3D.New().
-		SetMapDepth(17).
-		SetMapWidth(17).
+		SetMapDepth(hm).
+		SetMapWidth(hm).
 		SetMapData(tile.heights)
 	collision_shape.SetShape(shape.AsShape3D())
 	tile.collision = collision_shape
 	tile.heightmapShape = shape
-	//
-	// Whenever there is a new texture added to the tile, we need to recreate these texture arrays.
-	//
-	tile.albedos = []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
-	tile.normal_maps = []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
-	terrains := Texture2DArray.New()
-	terrains.AsImageTextureLayered().CreateFromImages(tile.albedos)
-	bumpmaps := Texture2DArray.New()
-	bumpmaps.AsImageTextureLayered().CreateFromImages(tile.normal_maps)
-	tile.shader.
-		SetShaderParameter("texture_albedo", terrains).
-		SetShaderParameter("texture_normal", bumpmaps)
+	// Texture arrays are owned by the editor (shared across tiles).
 	tile.reloadSides()
 }
 
@@ -427,38 +626,23 @@ func (tile *TerrainTile) Reload() {
 	tile.reloading = true
 	Callable.Defer(Callable.New(func() {
 		tile.reloading = false
-		//
-		// we need to recreate the texture arrays if there are any new textures.
-		//
-		var old_count = len(tile.albedos)
-		for _, sculpt := range tile.sculpts {
-			if _, exists := tile.mapper[sculpt.Design]; exists || sculpt.Design == (musical.Design{}) {
-				continue
-			}
-			texture, ok := tile.client.textures[sculpt.Design].Instance()
-			if ok {
-				tile.mapper[sculpt.Design] = len(tile.albedos)
-				tile.albedos = append(tile.albedos, texture.GetImage())
-				ext := path.Ext(texture.AsResource().ResourcePath())
-				normal_path := strings.TrimSuffix(texture.AsResource().ResourcePath(), ext) + "_normal" + ext
-				if FileAccess.FileExists(normal_path) {
-					tile.normal_maps = append(tile.normal_maps, Resource.Load[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
-				} else {
-					tile.normal_maps = append(tile.normal_maps, Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
+		// Ensure every paint Design in the pending sculpts has a
+		// layer index in the editor's shared texture array.
+		if tile.editor != nil {
+			for _, sculpt := range tile.sculpts {
+				if sculpt.Design == (musical.Design{}) {
+					continue
 				}
+				tile.editor.uploadDesign(sculpt.Design)
 			}
 		}
-		if len(tile.albedos) != old_count {
-			terrains := Texture2DArray.New()
-			terrains.AsImageTextureLayered().CreateFromImages(tile.albedos)
-			bumpmaps := Texture2DArray.New()
-			bumpmaps.AsImageTextureLayered().CreateFromImages(tile.normal_maps)
-			tile.shader.
-				SetShaderParameter("texture_albedo", terrains).
-				SetShaderParameter("texture_normal", bumpmaps)
-		}
+		n := tile.size
+		hm := n + 1
+		half := Float.X(n) / 2
 		offset := Vector3.XYZ{
-			-8, 0, -8,
+			Float.X(tile.coord.X*n) - half,
+			0,
+			Float.X(tile.coord.Z*n) - half,
 		}
 		var sample_texture = func(x, y int) int {
 			pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
@@ -471,7 +655,10 @@ func (tile *TerrainTile) Reload() {
 				dy := pos.Z - sculpt.Target.Z
 				dist := Float.Sqrt(dx*dx + dy*dy)
 				if dist <= sculpt.Radius {
-					return tile.mapper[sculpt.Design]
+					if tile.editor == nil {
+						return 0
+					}
+					return tile.editor.mapper[sculpt.Design]
 				}
 			}
 			return 0
@@ -492,9 +679,10 @@ func (tile *TerrainTile) Reload() {
 			}
 			return max(-2, height)
 		}
+		inv := Float.X(1) / Float.X(n)
 		update := func(index int, cell_x, cell_y int, x, y int) {
 			tile.vertices[index].Y += sample_height(x, y)
-			tile.uvs[index] = Vector2.XY{Float.X(x) / 16, Float.X(y) / 16}
+			tile.uvs[index] = Vector2.XY{Float.X(x) * inv, Float.X(y) * inv}
 			if sample := sample_texture(cell_x, cell_y); sample != 0 {
 				tile.textures[index*4+0] = float32(sample) // top left
 			}
@@ -508,18 +696,18 @@ func (tile *TerrainTile) Reload() {
 				tile.textures[index*4+3] = float32(sample) // bottom right
 			}
 		}
-		for x := range 16 {
-			for y := range 16 {
-				update(6*(x+16*y)+0, x, y, x, y)     // top left
-				update(6*(x+16*y)+1, x, y, x+1, y)   // top right
-				update(6*(x+16*y)+2, x, y, x, y+1)   // bottom left
-				update(6*(x+16*y)+3, x, y, x+1, y)   // top right
-				update(6*(x+16*y)+4, x, y, x+1, y+1) // bottom right
-				update(6*(x+16*y)+5, x, y, x, y+1)   // bottom left
+		for x := 0; x < n; x++ {
+			for y := 0; y < n; y++ {
+				update(6*(x+n*y)+0, x, y, x, y)     // top left
+				update(6*(x+n*y)+1, x, y, x+1, y)   // top right
+				update(6*(x+n*y)+2, x, y, x, y+1)   // bottom left
+				update(6*(x+n*y)+3, x, y, x+1, y)   // top right
+				update(6*(x+n*y)+4, x, y, x+1, y+1) // bottom right
+				update(6*(x+n*y)+5, x, y, x, y+1)   // bottom left
 			}
 		}
-		for i := range 17 * 17 {
-			tile.heights[i] += float32(sample_height(i%17, i/17))
+		for i := 0; i < hm*hm; i++ {
+			tile.heights[i] += float32(sample_height(i%hm, i/hm))
 		}
 		tile.heightmapShape.SetMapData(tile.heights)
 		attributes := [Mesh.ArrayMax]any{
@@ -559,6 +747,8 @@ func (tile *TerrainTile) Reload() {
 // reloadSides updates the side meshes to match the current terrain heights.
 func (tile *TerrainTile) reloadSides() {
 	tile_size := float32(1.0) // Adjust for texture tiling scale
+	n := tile.size
+	hm := n + 1
 
 	// Sides mesh data
 	index_base := 0
@@ -571,12 +761,12 @@ func (tile *TerrainTile) reloadSides() {
 	}
 
 	sides := [4]sideParam{
-		{true, 0, 0, true},    // South
-		{true, 16, 16, false}, // North
-		{false, 0, 0, false},  // West
-		{false, 16, 16, true}, // East
+		{true, 0, 0, true},           // South
+		{true, float32(n), n, false}, // North
+		{false, 0, 0, false},         // West
+		{false, float32(n), n, true}, // East
 	}
-	const sideVertCount = 4 * 16 * 6
+	sideVertCount := 4 * n * 6
 	if cap(tile.verticesSide) < sideVertCount {
 		tile.verticesSide = make([]Vector3.XYZ, sideVertCount)
 		tile.normalsSide = make([]Vector3.XYZ, sideVertCount)
@@ -590,15 +780,15 @@ func (tile *TerrainTile) reloadSides() {
 	normals_side := tile.normalsSide
 	uvs_side := tile.uvsSide
 	for _, sp := range sides {
-		for i := 0; i < 16; i++ {
+		for i := 0; i < n; i++ {
 			coord := i
 			var h_near, h_far float32
 			if sp.isZFixed {
-				h_near = tile.heights[coord+sp.fixedIndex*17]
-				h_far = tile.heights[coord+1+sp.fixedIndex*17]
+				h_near = tile.heights[coord+sp.fixedIndex*hm]
+				h_far = tile.heights[coord+1+sp.fixedIndex*hm]
 			} else {
-				h_near = tile.heights[sp.fixedIndex+coord*17]
-				h_far = tile.heights[sp.fixedIndex+(coord+1)*17]
+				h_near = tile.heights[sp.fixedIndex+coord*hm]
+				h_far = tile.heights[sp.fixedIndex+(coord+1)*hm]
 			}
 			h_near += 2.2
 			h_far += 2.2
@@ -680,25 +870,28 @@ func (tile *TerrainTile) reloadSides() {
 
 // HeightAt returns the height of the terrain mesh at the given position, taking into account the mesh.
 func (tile *TerrainTile) HeightAt(pos Vector3.XYZ) Float.X {
+	n := tile.size
+	hm := n + 1
+	maxF := Float.X(n)
 	local := Vector3.Sub(pos, tile.Mesh.AsNode3D().GlobalPosition())
 	x := local.X
 	z := local.Z
-	x = max(0.0, min(16.0, x))
-	z = max(0.0, min(16.0, z))
+	x = max(0.0, min(maxF, x))
+	z = max(0.0, min(maxF, z))
 	x0 := int(x)
 	z0 := int(z)
 	x1 := x0 + 1
 	z1 := z0 + 1
-	if x1 > 16 {
-		x1 = 16
+	if x1 > n {
+		x1 = n
 	}
-	if z1 > 16 {
-		z1 = 16
+	if z1 > n {
+		z1 = n
 	}
-	h00 := Float.X(tile.heights[x0+z0*17])
-	h10 := Float.X(tile.heights[x1+z0*17])
-	h01 := Float.X(tile.heights[x0+z1*17])
-	h11 := Float.X(tile.heights[x1+z1*17])
+	h00 := Float.X(tile.heights[x0+z0*hm])
+	h10 := Float.X(tile.heights[x1+z0*hm])
+	h01 := Float.X(tile.heights[x0+z1*hm])
+	h11 := Float.X(tile.heights[x1+z1*hm])
 	sx := x - Float.X(x0)
 	sz := z - Float.X(z0)
 	h0 := h00*(1-sx) + h10*sx
@@ -708,25 +901,28 @@ func (tile *TerrainTile) HeightAt(pos Vector3.XYZ) Float.X {
 
 // NormalAt returns the surface normal of the terrain mesh at the given position.
 func (tile *TerrainTile) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
+	size := tile.size
+	hm := size + 1
+	maxF := Float.X(size)
 	local := Vector3.Sub(pos, tile.Mesh.AsNode3D().GlobalPosition())
-	x := local.X + 8
-	z := local.Z + 8
-	x = max(0.0, min(16.0, x))
-	z = max(0.0, min(16.0, z))
+	x := local.X
+	z := local.Z
+	x = max(0.0, min(maxF, x))
+	z = max(0.0, min(maxF, z))
 	x0 := int(x)
 	z0 := int(z)
 	x1 := x0 + 1
 	z1 := z0 + 1
-	if x1 > 16 {
-		x1 = 16
+	if x1 > size {
+		x1 = size
 	}
-	if z1 > 16 {
-		z1 = 16
+	if z1 > size {
+		z1 = size
 	}
-	h00 := Float.X(tile.heights[x0+z0*17])
-	h10 := Float.X(tile.heights[x1+z0*17])
-	h01 := Float.X(tile.heights[x0+z1*17])
-	h11 := Float.X(tile.heights[x1+z1*17])
+	h00 := Float.X(tile.heights[x0+z0*hm])
+	h10 := Float.X(tile.heights[x1+z0*hm])
+	h01 := Float.X(tile.heights[x0+z1*hm])
+	h11 := Float.X(tile.heights[x1+z1*hm])
 	sx := x - Float.X(x0)
 	sz := z - Float.X(z0)
 	fx := (1-sz)*(h10-h00) + sz*(h11-h01)
@@ -778,4 +974,107 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 		default:
 		}
 	}
+}
+
+// spawnArrows creates an extend-the-world arrow on each of the four
+// cardinal sides that doesn't already have a neighbour tile. Called
+// once when a tile is first created.
+func (tile *TerrainTile) spawnArrows() {
+	for _, dir := range cardinalDirs {
+		if _, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]; ok {
+			continue
+		}
+		tile.addArrow(dir)
+	}
+}
+
+func (tile *TerrainTile) addArrow(dir tileCoord) {
+	arrow := new(TerrainTileArrow)
+	arrow.tile = tile
+	arrow.direction = dir
+	half := Float.X(terrainDefaultSize) / 2
+	// Position the arrow just past the open edge, lifted to sit
+	// clearly above the terrain so it's clickable even if the seam is
+	// raised by sculpting.
+	arrow_pos := Vector3.New(
+		Float.X(dir.X)*(half+1),
+		2,
+		Float.X(dir.Z)*(half+1),
+	)
+	tile.AsNode().AddChild(arrow.AsNode())
+	arrow.AsNode3D().SetPosition(arrow_pos)
+	// Rotate so the cone's tip points along `dir`. The mesh inside is
+	// pre-rotated to point along -Z; we yaw by π for +Z and 0 for -Z
+	// so the final world-space direction matches the unit vector.
+	var yaw Angle.Radians
+	switch dir {
+	case tileCoord{1, 0}:
+		yaw = -Angle.Pi / 2
+	case tileCoord{-1, 0}:
+		yaw = Angle.Pi / 2
+	case tileCoord{0, 1}:
+		yaw = Angle.Pi
+	case tileCoord{0, -1}:
+		yaw = 0
+	}
+	arrow.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, yaw)
+	arrow.AsNode3D().SetVisible(tile.editor.arrowsVisible)
+	tile.arrows[dir] = arrow
+}
+
+func (tile *TerrainTile) removeArrow(dir tileCoord) {
+	arrow, ok := tile.arrows[dir]
+	if !ok {
+		return
+	}
+	arrow.AsNode().QueueFree()
+	delete(tile.arrows, dir)
+}
+
+// TerrainTileArrow is a click-to-extend marker spawned by a tile on
+// each cardinal side that doesn't yet have a neighbour. Clicking the
+// arrow asks the editor to instantiate the adjacent chunk and the
+// arrow self-destructs.
+type TerrainTileArrow struct {
+	StaticBody3D.Extension[TerrainTileArrow] `gd:"AviaryTerrainTileArrow"`
+
+	tile      *TerrainTile
+	direction tileCoord
+}
+
+func (a *TerrainTileArrow) Ready() {
+	cone := CylinderMesh.New().
+		SetTopRadius(0).
+		SetBottomRadius(1.0).
+		SetHeight(2.5)
+	material := StandardMaterial3D.New().AsBaseMaterial3D().
+		SetAlbedoColor(Color.RGBA{R: 0.35, G: 0.85, B: 0.35, A: 1})
+	cone.AsPrimitiveMesh().SetMaterial(material.AsMaterial())
+	mesh := MeshInstance3D.New().SetMesh(cone.AsMesh())
+	// Cone's apex points +Y by default; rotate so it points along the
+	// tile's local +Z (which we'll then re-orient outward via the
+	// parent's yaw).
+	mesh.AsNode3D().Rotate(Vector3.XYZ{1, 0, 0}, -Angle.Pi/2)
+	a.AsNode().AddChild(mesh.AsNode())
+	col := CollisionShape3D.New()
+	box := BoxShape3D.New().SetSize(Vector3.New(2.5, 2.5, 2.5))
+	col.SetShape(box.AsShape3D())
+	a.AsNode().AddChild(col.AsNode())
+}
+
+func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Instance, _, _ Vector3.XYZ, _ int) {
+	mouse, ok := Object.As[InputEventMouseButton.Instance](event)
+	if !ok {
+		return
+	}
+	if mouse.ButtonIndex() != Input.MouseButtonLeft || !mouse.AsInputEvent().IsPressed() {
+		return
+	}
+	if a.tile == nil || a.tile.editor == nil {
+		return
+	}
+	a.tile.editor.tileAt(tileCoord{
+		X: a.tile.coord.X + a.direction.X,
+		Z: a.tile.coord.Z + a.direction.Z,
+	})
 }
