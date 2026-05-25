@@ -143,6 +143,19 @@ type Client struct {
 		startPos   Vector3.XYZ
 		dragPlaneY Float.X
 		startGrab  Vector3.XYZ // world point on the plane under the mouse when drag began
+
+		// For Vehicle mirrored parts: the symmetry plane (point + normal)
+		// captured at the start of the gizmo drag. This lets us keep the
+		// mirror as a true reflection when the user moves the main part,
+		// rather than rigidly translating the old offset.
+		hasMirrorPlane    bool
+		mirrorPlanePoint  Vector3.XYZ
+		mirrorPlaneNormal Vector3.XYZ
+
+		// Captured at drag start for vehicles so we can re-instantiate
+		// the mirror copy (using the correct Design) if the user moves
+		// back away from the axis after the mirror was temporarily removed.
+		design musical.Design
 	}
 
 	time TimingCoordinator
@@ -178,6 +191,49 @@ func (world *Client) canUseGizmoTransform() bool {
 		return true
 	}
 	return false
+}
+
+// selectedEntityForGizmo returns the musical.Entity (if any) that corresponds
+// to the current world.selection, looking first in the global map and then
+// falling back to the per-editor maps for Vehicle and Shelter (which keep
+// their own tracking and short-circuit the generic registration path in
+// musicalImpl.Change).
+func (world *Client) selectedEntityForGizmo() (musical.Entity, Node3D.Instance, bool) {
+	if world.selection == 0 {
+		return musical.Entity{}, Node3D.Nil, false
+	}
+	raw, ok := world.selection.Instance()
+	if !ok {
+		return musical.Entity{}, Node3D.Nil, false
+	}
+	node, ok := Object.As[Node3D.Instance](raw)
+	if !ok {
+		return musical.Entity{}, Node3D.Nil, false
+	}
+	id := Node3D.ID(node.ID())
+
+	if e, has := world.object_to_entity[id]; has {
+		return e, node, true
+	}
+
+	switch world.Editing {
+	case Editing.Vehicle:
+		if e, has := world.VehicleEditor.object_to_entity[id]; has {
+			return e, node, true
+		}
+	case Editing.Shelter:
+		if e, has := world.ShelterEditor.object_to_entity[id]; has {
+			return e, node, true
+		}
+		// Mirror the fallback used in ShelterEditor's delete handling.
+		parent := node.GetParentNode3d()
+		if parent != Node3D.Nil {
+			if e, has := world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]; has {
+				return e, parent, true
+			}
+		}
+	}
+	return musical.Entity{}, Node3D.Nil, false
 }
 
 func NewClient() *Client {
@@ -851,25 +907,62 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					} else {
 						world.selection = 0
 						world.gizmoDrag.active = false
+						world.gizmoDrag.hasMirrorPlane = false
+						world.gizmoDrag.design = musical.Design{}
 					}
 				}
 
 				// Arm gizmo drag (only for the editors we support right now).
-				if world.canUseGizmoTransform() && world.selection != 0 {
-					if node, ok := world.selection.Instance(); ok {
-						if ent, has := world.object_to_entity[Node3D.ID(node.ID())]; has {
-							pos := node.AsNode3D().Position()
-							world.gizmoDrag.active = true
-							world.gizmoDrag.entity = ent
-							world.gizmoDrag.startPos = pos
-							world.gizmoDrag.dragPlaneY = pos.Y
+				// We use selectedEntityForGizmo so this also works for Vehicle
+				// and Shelter, which maintain their own entity maps.
+				if world.canUseGizmoTransform() {
+					if ent, node, ok := world.selectedEntityForGizmo(); ok {
+						pos := node.AsNode3D().Position()
+						world.gizmoDrag.active = true
+						world.gizmoDrag.entity = ent
+						world.gizmoDrag.startPos = pos
+						world.gizmoDrag.dragPlaneY = pos.Y
+						world.gizmoDrag.hasMirrorPlane = false // will be set below if applicable
+						world.gizmoDrag.mirrorPlanePoint = Vector3.Zero
+						world.gizmoDrag.mirrorPlaneNormal = Vector3.Zero
 
-							o, d := MouseRay(world.AsNode3D())
-							if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
-								world.gizmoDrag.startGrab = hit
-							} else {
-								world.gizmoDrag.startGrab = pos
+						o, d := MouseRay(world.AsNode3D())
+						if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
+							world.gizmoDrag.startGrab = hit
+						} else {
+							world.gizmoDrag.startGrab = pos
+						}
+
+						// For vehicles: if this part has a mirror twin, capture the
+						// symmetry plane defined by the current main+mirror positions.
+						// This plane is kept fixed for the duration of the drag so
+						// that subsequent moves keep the mirror as a proper reflection
+						// (and remove it when the part crosses near the axis).
+						if world.Editing == Editing.Vehicle {
+							if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+								if mnode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+									mpos := mnode.AsNode3D().Position()
+									delta := Vector3.Sub(mpos, pos)
+									if Vector3.Length(delta) > 0.05 {
+										world.gizmoDrag.mirrorPlanePoint = Vector3.Add(pos, Vector3.MulX(delta, 0.5))
+										world.gizmoDrag.mirrorPlaneNormal = Vector3.Normalized(delta)
+										world.gizmoDrag.hasMirrorPlane = true
+									}
+								}
 							}
+
+							// Capture the Design that owns this main entity so we can
+							// re-create the mirror part from the correct packed scene
+							// if the user drags back away from the axis after we removed it.
+							for d, ids := range world.VehicleEditor.design_to_entity {
+								for _, id := range ids {
+									if id == node.ID() {
+										world.gizmoDrag.design = d
+										goto designCaptured
+									}
+								}
+							}
+						designCaptured:
 						}
 					}
 				}
@@ -913,6 +1006,8 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						world.commitGizmoDrag()
 					}
 					world.gizmoDrag.active = false
+					world.gizmoDrag.hasMirrorPlane = false
+					world.gizmoDrag.design = musical.Design{}
 				}
 			}
 		}
@@ -955,6 +1050,8 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			world.selection = 0
 			world.gizmoDrag.active = false
+			world.gizmoDrag.hasMirrorPlane = false
+			world.gizmoDrag.design = musical.Design{}
 		}
 	}
 }
@@ -964,8 +1061,15 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 // the horizontal drag plane captured at drag start and emits a preview
 // (Commit:false) musical Change so both the local node and any peers
 // immediately see the object move.
+//
+// For Vehicle and Shelter we set the Editor field so the Change routes to
+// their specialized handlers (which do mirroring, floor grouping, etc.).
 func (world *Client) updateGizmoDrag() {
-	if !world.gizmoDrag.active || world.selection == 0 {
+	if !world.gizmoDrag.active {
+		return
+	}
+	ent, node, ok := world.selectedEntityForGizmo()
+	if !ok || node == Node3D.Nil {
 		return
 	}
 	o, d := MouseRay(world.AsNode3D())
@@ -977,21 +1081,59 @@ func (world *Client) updateGizmoDrag() {
 	delta := Vector3.Sub(hit, world.gizmoDrag.startGrab)
 	newPos := Vector3.Add(world.gizmoDrag.startPos, delta)
 
-	node, ok := world.selection.Instance()
-	if !ok {
-		return
+	if world.Editing == Editing.Shelter {
+		// Match the grid snapping used during shelter placement previews
+		// (most objects snap to integer grid on X/Z).
+		newPos.X = Float.Round(newPos.X)
+		newPos.Z = Float.Round(newPos.Z)
 	}
-	// Preserve whatever rotation/scale the object currently has.
+
+	// Preserve whatever rotation the object currently has.
 	rot := node.AsNode3D().Rotation()
 
-	if err := world.space.Change(musical.Change{
+	ch := musical.Change{
 		Author: world.id,
-		Entity: world.gizmoDrag.entity,
+		Entity: ent,
 		Offset: newPos,
 		Angles: rot,
 		Commit: false, // live preview during drag
-	}); err != nil {
-		// Non-fatal during drag; the musical layer may be in a transitional state.
+	}
+	switch world.Editing {
+	case Editing.Vehicle:
+		ch.Editor = "vehicle"
+		ch.Design = world.gizmoDrag.design
+	case Editing.Shelter:
+		ch.Editor = "shelter"
+	}
+
+	// Vehicle mirror handling: if we captured a symmetry plane at drag
+	// start, reflect the target main position over it. This makes the
+	// mirror stay on the opposite side of the axis (instead of rigidly
+	// following with a fixed offset). If the part is moved close to the
+	// axis, we clear the Mirror so the handler removes the twin.
+	if world.Editing == Editing.Vehicle {
+		if world.gizmoDrag.hasMirrorPlane {
+			target := newPos
+			v := Vector3.Sub(target, world.gizmoDrag.mirrorPlanePoint)
+			d := Vector3.Dot(v, world.gizmoDrag.mirrorPlaneNormal)
+			reflected := Vector3.Sub(target, Vector3.MulX(world.gizmoDrag.mirrorPlaneNormal, 2*d))
+			ch.Mirror = Vector3.Sub(reflected, target)
+
+			if Float.Abs(d) < 0.25 || Vector3.Length(ch.Mirror) < 0.25 {
+				ch.Mirror = Vector3.Zero
+			}
+		} else if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+			// Fallback (no plane captured): keep old relative behavior
+			if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+				mirrorPos := mirrorNode.AsNode3D().Position()
+				mainPos := node.AsNode3D().Position()
+				ch.Mirror = Vector3.Sub(mirrorPos, mainPos)
+			}
+		}
+	}
+
+	if err := world.space.Change(ch); err != nil {
+		// Non-fatal during drag.
 		_ = err
 	}
 }
@@ -999,30 +1141,69 @@ func (world *Client) updateGizmoDrag() {
 // commitGizmoDrag writes one final Change with Commit:true using the
 // object's *current* live transform (which has been driven by the preview
 // changes). This ensures the edit is durably recorded in the musical log.
+//
+// We set Editor for Vehicle/Shelter so the update goes through their
+// specialized Change handlers.
 func (world *Client) commitGizmoDrag() {
-	if !world.gizmoDrag.active || world.selection == 0 {
+	if !world.gizmoDrag.active {
 		return
 	}
-	node, ok := world.selection.Instance()
-	if !ok {
+	ent, node, ok := world.selectedEntityForGizmo()
+	if !ok || node == Node3D.Nil {
 		return
-	}
-	// Re-fetch the entity in case it changed (defensive).
-	ent := world.gizmoDrag.entity
-	if e, stillHave := world.object_to_entity[Node3D.ID(node.ID())]; stillHave {
-		ent = e
 	}
 
 	pos := node.AsNode3D().Position()
 	rot := node.AsNode3D().Rotation()
 
-	if err := world.space.Change(musical.Change{
+	if world.Editing == Editing.Shelter {
+		// Match the grid snapping used during shelter placement previews.
+		pos.X = Float.Round(pos.X)
+		pos.Z = Float.Round(pos.Z)
+	}
+
+	ch := musical.Change{
 		Author: world.id,
 		Entity: ent,
 		Offset: pos,
 		Angles: rot,
 		Commit: true,
-	}); err != nil {
+	}
+	switch world.Editing {
+	case Editing.Vehicle:
+		ch.Editor = "vehicle"
+		ch.Design = world.gizmoDrag.design
+	case Editing.Shelter:
+		ch.Editor = "shelter"
+	}
+
+	// Vehicle mirror handling: if we captured a symmetry plane at drag
+	// start, reflect the target main position over it. This makes the
+	// mirror stay on the opposite side of the axis (instead of rigidly
+	// following with a fixed offset). If the part is moved close to the
+	// axis, we clear the Mirror so the handler removes the twin.
+	if world.Editing == Editing.Vehicle {
+		if world.gizmoDrag.hasMirrorPlane {
+			target := pos
+			v := Vector3.Sub(target, world.gizmoDrag.mirrorPlanePoint)
+			d := Vector3.Dot(v, world.gizmoDrag.mirrorPlaneNormal)
+			reflected := Vector3.Sub(target, Vector3.MulX(world.gizmoDrag.mirrorPlaneNormal, 2*d))
+			ch.Mirror = Vector3.Sub(reflected, target)
+
+			if Float.Abs(d) < 0.25 || Vector3.Length(ch.Mirror) < 0.25 {
+				ch.Mirror = Vector3.Zero
+			}
+		} else if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+			// Fallback (no plane captured): keep old relative behavior
+			if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+				mirrorPos := mirrorNode.AsNode3D().Position()
+				mainPos := node.AsNode3D().Position()
+				ch.Mirror = Vector3.Sub(mirrorPos, mainPos)
+			}
+		}
+	}
+
+	if err := world.space.Change(ch); err != nil {
 		Engine.Raise(err)
 	}
 }

@@ -224,8 +224,9 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		}
 		exists.
 			SetPosition(change.Offset).
-			SetRotation(change.Angles).
-			SetScale(Vector3.New(0.2, 0.2, 0.2))
+			SetRotation(change.Angles)
+		// Scale is set at creation time. Do not stomp it on updates
+		// (e.g. gizmo moves).
 		return nil
 	}
 	var node Node3D.Instance

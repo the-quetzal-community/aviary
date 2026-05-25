@@ -186,8 +186,9 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 		}
 		exists.
 			SetPosition(change.Offset).
-			SetRotation(change.Angles).
-			SetScale(Vector3.New(0.3, 0.3, 0.3))
+			SetRotation(change.Angles)
+		// Scale is set at creation time (and for mirrors at mirror creation time).
+		// Do not stomp it on subsequent transform updates from gizmo moves etc.
 		return nil
 	}
 	var node Node3D.Instance
