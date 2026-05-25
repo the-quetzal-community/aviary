@@ -18,6 +18,7 @@ import (
 	"graphics.gd/classdb/StaticBody3D"
 	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Basis"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Quaternion"
@@ -71,16 +72,29 @@ type CritterBody struct {
 	// later if we want size sliders.
 	partScale float32
 
-	// rebuildPaused / rebuildPending implement a manual batch
-	// for the editor's bone-drag path. Each Sculpt that lands
-	// runs SetBoneAxis → rebuild, and with the radial-propagation
-	// feature one drag frame can emit a Sculpt per bone. Rebuilding
-	// the body mesh, collision shape and repositioning every
-	// attached part once per bone burns ~10× the work needed —
-	// the drag handler calls PauseRebuild around its batch and
-	// ResumeRebuild fires a single rebuild at the end.
-	rebuildPaused  bool
-	rebuildPending bool
+	// rebuild() now always coalesces — multiple mutations within a
+	// single frame collapse into one flushRebuild() fired through
+	// Callable.Defer at the end of the current call batch. The flags
+	// below back that and the legacy explicit-batch hooks:
+	//
+	//   rebuildPaused:    PauseRebuild gate — when set, neither
+	//                     rebuild() nor the deferred callback flushes;
+	//                     ResumeRebuild releases the gate and runs the
+	//                     pending flush synchronously (matching the
+	//                     drag path's original "one rebuild at end of
+	//                     batch" timing).
+	//   rebuildDirty:     a mutation has happened since the last
+	//                     flushRebuild() — there's work to do.
+	//   rebuildScheduled: a Callable.Defer is in flight so additional
+	//                     rebuild() calls don't queue duplicate
+	//                     callbacks.
+	//
+	// On scene load, dozens of Sculpts arrive in one queue-drain pass
+	// and each used to fire a full mesh+skeleton+collision rebuild —
+	// now they share a single trailing flush.
+	rebuildPaused    bool
+	rebuildDirty     bool
+	rebuildScheduled bool
 
 	// legNodes / legArrayMeshes carry one MeshInstance3D + ArrayMesh
 	// per leg in the data model. Kept aligned with critter.Legs() by
@@ -527,31 +541,70 @@ func (b *CritterBody) ClosestAnchor(p Vector3.XYZ) PartAnchor {
 	return PartAnchor{T: t, Theta: theta, Offset: off}
 }
 
-// rebuild regenerates the tube mesh from the critter's current
-// shape, refreshes the collision face data, and snaps every
-// attached part back onto the new surface via its anchor params.
-// PauseRebuild defers further rebuild() calls until ResumeRebuild
-// fires the (single) pending rebuild. Used by the bone-drag path
-// to batch dozens of per-bone Sculpts into one mesh + collision +
-// reposition pass per frame.
+// EnsureFlushed forces any pending rebuild to run synchronously so
+// the next caller sees a skeleton + mesh that match the current
+// critter. Used by the editor's Process / PhysicsProcess to guard
+// per-frame skeleton reads (RepositionPartsAnimated, SetBreathe,
+// SetHeadLookYaw) against the load-replay window where many sculpts
+// have mutated the critter but the deferred flushRebuild hasn't yet
+// caught the skeleton up to the new bone count.
+//
+// A pending Callable.Defer from the original rebuild() call may
+// still fire after this — it sees rebuildDirty == false and is a
+// no-op.
+func (b *CritterBody) EnsureFlushed() {
+	if b.rebuildPaused || !b.rebuildDirty {
+		return
+	}
+	b.rebuildDirty = false
+	b.flushRebuild()
+}
+
+// PauseRebuild gates further auto-flushes until ResumeRebuild runs.
+// Used by the bone-drag path to batch dozens of per-bone Sculpts
+// into one mesh + collision + reposition pass per frame and fire it
+// synchronously at the end of the drag iteration — same timing as
+// before the coalescing rewrite, so the user sees the body deform
+// in the same frame they dragged.
 func (b *CritterBody) PauseRebuild() { b.rebuildPaused = true }
 
-// ResumeRebuild releases the rebuild gate and flushes any rebuild
-// that was elided while paused. Safe to call even when no rebuild
-// is pending — it just clears the flag.
+// ResumeRebuild releases the gate and flushes any pending rebuild
+// synchronously. Safe to call even when nothing's dirty.
 func (b *CritterBody) ResumeRebuild() {
 	b.rebuildPaused = false
-	if b.rebuildPending {
-		b.rebuildPending = false
-		b.rebuild()
+	if b.rebuildDirty {
+		b.rebuildDirty = false
+		b.flushRebuild()
 	}
 }
 
+// rebuild marks the body as dirty and (unless already in flight or
+// gated by PauseRebuild) schedules a single deferred flushRebuild at
+// the end of the current call batch. Replays during scene load and
+// other multi-mutation paths collapse into one flush per frame
+// without the caller having to remember PauseRebuild/ResumeRebuild.
 func (b *CritterBody) rebuild() {
-	if b.rebuildPaused {
-		b.rebuildPending = true
+	b.rebuildDirty = true
+	if b.rebuildPaused || b.rebuildScheduled {
 		return
 	}
+	b.rebuildScheduled = true
+	Callable.Defer(Callable.New(func() {
+		b.rebuildScheduled = false
+		if b.rebuildPaused || !b.rebuildDirty {
+			return
+		}
+		b.rebuildDirty = false
+		b.flushRebuild()
+	}))
+}
+
+// flushRebuild regenerates the tube mesh from the critter's current
+// shape, refreshes the collision face data, repopulates the skeleton
+// + skin, and snaps every attached part back onto the new surface
+// via its anchor params. Called from the deferred path in rebuild()
+// and synchronously from ResumeRebuild.
+func (b *CritterBody) flushRebuild() {
 	if b.arrayMesh == ArrayMesh.Nil {
 		return
 	}

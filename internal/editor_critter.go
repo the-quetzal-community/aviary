@@ -83,6 +83,12 @@ type CritterEditor struct {
 	lastEditAt  time.Time
 	idlePhase   float32
 
+	// lastMousePx + lastMouseMoveAt latch when the mouse last moved
+	// so eye HintFocus is only flagged valid while the cursor is
+	// "live" — eyes never start a tracking burst on a still mouse.
+	lastMousePx     Vector2.XY
+	lastMouseMoveAt time.Time
+
 	// idleHeadLook drives the occasional "look left / right" neck
 	// rotation on the spine's head-end bones via
 	// CritterBody.SetHeadLookYaw. Ticks in Process and applies in
@@ -1785,6 +1791,15 @@ func filterPendingByEntity(pending []musical.Change, entity musical.Entity) []mu
 }
 
 func (ce *CritterEditor) PhysicsProcess(delta Float.X) {
+	// Replay-window guard: many sculpts during the queue drain mark
+	// the body dirty without firing flushRebuild yet (rebuild is
+	// Callable.Defer-coalesced). RepositionPartsAnimated below indexes
+	// the skeleton by the critter's CURRENT bone count — if the
+	// skeleton hasn't been rebuilt to match, those reads go
+	// out-of-bounds and parts collapse to the origin. Force the flush
+	// here so the skeleton agrees with the critter before any frame's
+	// skeleton-driven work runs.
+	ce.body.EnsureFlushed()
 	if ce.spineEdit {
 		ce.spinePhysicsProcess(delta)
 		return
@@ -2061,6 +2076,11 @@ func (ce *CritterEditor) Process(delta Float.X) {
 	if ce.body.parts == Node3D.Nil {
 		return
 	}
+	// Same flush guard as PhysicsProcess — sculpts processed via the
+	// queue drain leave the skeleton lagging the critter until the
+	// deferred flushRebuild fires; RepositionPartsAnimated below
+	// would otherwise read OOB on the skeleton.
+	ce.body.EnsureFlushed()
 	// Retry any Changes whose packed scene wasn't loaded when the
 	// Change arrived. Cheap: pendingChanges is usually empty after
 	// the first second or two of a session.
@@ -2081,6 +2101,16 @@ func (ce *CritterEditor) Process(delta Float.X) {
 	// on their own when to enter a tracking burst (see eyePart.Process).
 	cam := Viewport.Get(ce.AsNode()).GetCamera3d()
 	mousePx := Viewport.Get(ce.AsNode()).GetMousePosition()
+	// Only flag the eye hint valid while the cursor is "live" — moved
+	// recently enough that latching onto it reads as the critter
+	// noticing motion. A still mouse leaves hintValid false so eyes
+	// keep their idle saccade pattern; bursts already underway run
+	// out their burst window and then disengage.
+	if mousePx != ce.lastMousePx {
+		ce.lastMousePx = mousePx
+		ce.lastMouseMoveAt = time.Now()
+	}
+	mouseLive := !ce.lastMouseMoveAt.IsZero() && time.Since(ce.lastMouseMoveAt) < 500*time.Millisecond
 	for id, p := range ce.animatedParts {
 		node, ok := id.Instance()
 		if !ok {
@@ -2091,7 +2121,7 @@ func (ce *CritterEditor) Process(delta Float.X) {
 			continue
 		}
 		if eye, ok := p.(*eyePart); ok {
-			if cam == Camera3D.Nil {
+			if cam == Camera3D.Nil || !mouseLive {
 				eye.HintFocus(Vector3.XYZ{}, false)
 			} else {
 				eye.HintFocus(eyeScreenLookDir(cam, node.GlobalPosition(), mousePx), true)
