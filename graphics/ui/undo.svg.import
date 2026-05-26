@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bundoaviary"
-path="res://.godot/imported/undo.svg-undoaviarytoolbarctexhash.ctex"
+uid="uid://bundoaviary00"
+path="res://.godot/imported/undo.svg-1bb2ea8261c3f2b12bc3b67d4453e466.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://ui/undo.svg"
-dest_files=["res://.godot/imported/undo.svg-undoaviarytoolbarctexhash.ctex"]
+dest_files=["res://.godot/imported/undo.svg-1bb2ea8261c3f2b12bc3b67d4453e466.ctex"]
 
 [params]
 

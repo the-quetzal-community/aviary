@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b7trash7aviary"
-path="res://.godot/imported/trash.svg-7b9c1a4e0d3f5b8a2c4e6d8f0a1b2c3d.ctex"
+uid="uid://btrashaviary00"
+path="res://.godot/imported/trash.svg-591b4f0995e9013b062fe69d24f961c8.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://ui/trash.svg"
-dest_files=["res://.godot/imported/trash.svg-7b9c1a4e0d3f5b8a2c4e6d8f0a1b2c3d.ctex"]
+dest_files=["res://.godot/imported/trash.svg-591b4f0995e9013b062fe69d24f961c8.ctex"]
 
 [params]
 

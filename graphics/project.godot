@@ -91,6 +91,7 @@ pointing/android/enable_pan_and_scale_gestures=true
 [xr]
 
 openxr/enabled=true
+openxr/startup_alert=false
 
 [rendering]
 

@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bredoaviary"
-path="res://.godot/imported/redo.svg-redoaviarytoolbarctexhash.ctex"
+uid="uid://bredoaviary00"
+path="res://.godot/imported/redo.svg-31b47982657c90d3326dd06285d78e61.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://ui/redo.svg"
-dest_files=["res://.godot/imported/redo.svg-redoaviarytoolbarctexhash.ctex"]
+dest_files=["res://.godot/imported/redo.svg-31b47982657c90d3326dd06285d78e61.ctex"]
 
 [params]
 

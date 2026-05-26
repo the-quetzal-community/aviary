@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bexportaviary"
-path="res://.godot/imported/export.svg-exportaviarytoolbarctexhash.ctex"
+uid="uid://bexportaviary00"
+path="res://.godot/imported/export.svg-bdd516b116967ed02c4189db2eacfcbc.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://ui/export.svg"
-dest_files=["res://.godot/imported/export.svg-exportaviarytoolbarctexhash.ctex"]
+dest_files=["res://.godot/imported/export.svg-bdd516b116967ed02c4189db2eacfcbc.ctex"]
 
 [params]
 
