@@ -29,6 +29,8 @@ type UI struct {
 
 	ExpansionIndicator Button.Instance
 	EditorIndicator    *EditorIndicator
+	ToolbarBacking     *Triangle
+	Toolbar            *Toolbar
 
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
@@ -56,6 +58,9 @@ func (ui *UI) Setup() {
 	ui.CloudControl.client = ui.client
 	ui.CloudControl.Setup()
 	ui.EditorIndicator.client = ui.client
+	if ui.Toolbar != nil {
+		ui.Toolbar.client = ui.client
+	}
 }
 
 func (ui *UI) SetMode(mode Mode) {
@@ -214,6 +219,12 @@ func (ui *UI) scaling() {
 	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.TrashButton.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	if ui.ToolbarBacking != nil {
+		ui.scale(ui.ToolbarBacking.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	}
+	if ui.Toolbar != nil {
+		ui.scale(ui.Toolbar.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	}
 
 	// ViewSelector needs to be centered to the top center
 	theme_pos := ui.ViewSelector.AsControl().Position()
