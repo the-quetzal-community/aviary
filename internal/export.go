@@ -9,14 +9,19 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GLTFDocument"
 	"graphics.gd/classdb/GLTFState"
+	"graphics.gd/classdb/Node"
 )
 
 // Export prompts the user with an OS-native file save dialog and
-// writes the current 3D scene to the chosen path as a glTF binary
-// (.glb). glTF is the lingua-franca interchange format for 3D —
-// the resulting file opens in Blender, Three.js, Unreal, Unity,
-// and any web viewer that speaks the spec, so this is what most
-// users mean by "export my work".
+// writes the *current editor's* 3D subtree to the chosen path as
+// a glTF binary (.glb). glTF is the lingua-franca interchange
+// format for 3D — the resulting file opens in Blender, Three.js,
+// Unreal, Unity, and any web viewer that speaks the spec.
+//
+// Only the active editor's node is exported, not the whole world:
+// when the user is editing a vehicle they expect to get just the
+// vehicle, not the terrain + every other editor's placed content.
+// If no editor is active the call is a no-op with a stderr note.
 //
 // Falls back to a stderr message on platforms without a native
 // file dialog (hypothetical headless builds only); on supported
@@ -27,13 +32,19 @@ func (world *Client) Export() {
 		fmt.Fprintln(os.Stderr, "Export: native file dialog unavailable on this platform")
 		return
 	}
+	if world.ui == nil || world.ui.Editor == nil || world.ui.Editor.editor == nil {
+		fmt.Fprintln(os.Stderr, "Export: no active editor to export")
+		return
+	}
+	editor := world.ui.Editor.editor
 
 	startDir, _ := os.UserHomeDir()
+	suggested := "aviary-" + editor.Name() + ".glb"
 
 	err := DisplayServer.FileDialogShow(
-		"Export Scene as glTF",
+		"Export "+editor.Name()+" as glTF",
 		startDir,
-		"aviary-scene.glb",
+		suggested,
 		false, // show_hidden
 		DisplayServer.FileDialogModeSaveFile,
 		// Two filters: .glb (single binary file, recommended) and
@@ -55,7 +66,7 @@ func (world *Client) Export() {
 				!strings.HasSuffix(strings.ToLower(dst), ".gltf") {
 				dst += ".glb"
 			}
-			if err := world.writeSceneAsGLTF(dst); err != nil {
+			if err := writeNodeAsGLTF(editor.AsNode3D().AsNode(), dst); err != nil {
 				Engine.Raise(fmt.Errorf("export failed: %w", err))
 				return
 			}
@@ -68,22 +79,14 @@ func (world *Client) Export() {
 	}
 }
 
-// writeSceneAsGLTF packs the entire AviaryWorld node tree into a
-// GLTFState via GLTFDocument.AppendFromScene, then writes it to
-// disk. WriteToFilesystem picks the on-disk format (.glb binary vs
-// .gltf JSON-plus-buffers) from the path's extension.
-//
-// The whole world Node3D is exported: terrain tiles, every editor's
-// placed children, lighting, environment. The UI overlay is a
-// CanvasItem subtree (not a Node3D) so it doesn't get walked.
-// Camera and FocalPoint are Node3Ds though — they'll appear in
-// the exported file as empty transforms, which is harmless in
-// downstream tools but something we could strip later if it
-// turns into a real annoyance.
-func (world *Client) writeSceneAsGLTF(path string) error {
+// writeNodeAsGLTF packs the supplied node subtree into a GLTFState
+// via GLTFDocument.AppendFromScene, then writes it to disk.
+// WriteToFilesystem picks the on-disk format (.glb binary vs .gltf
+// JSON-plus-buffers) from the path's extension.
+func writeNodeAsGLTF(root Node.Instance, path string) error {
 	doc := GLTFDocument.New()
 	state := GLTFState.New()
-	if err := doc.AppendFromScene(world.AsNode(), state); err != nil {
+	if err := doc.AppendFromScene(root, state); err != nil {
 		return fmt.Errorf("append_from_scene: %w", err)
 	}
 	if err := doc.WriteToFilesystem(state, path); err != nil {
