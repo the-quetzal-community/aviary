@@ -38,10 +38,14 @@ func (tb *Toolbar) Ready() {
 		fmt.Println("toolbar: settings (TODO)")
 	})
 	tb.Undo.AsBaseButton().OnPressed(func() {
-		fmt.Println("toolbar: undo (TODO — musical undo log not yet implemented)")
+		if tb.client != nil {
+			tb.client.Undo()
+		}
 	})
 	tb.Redo.AsBaseButton().OnPressed(func() {
-		fmt.Println("toolbar: redo (TODO — musical redo log not yet implemented)")
+		if tb.client != nil {
+			tb.client.Redo()
+		}
 	})
 	tb.Export.AsBaseButton().OnPressed(func() {
 		fmt.Println("toolbar: export (TODO — wire into save/snapshot flow)")

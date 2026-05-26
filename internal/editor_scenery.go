@@ -44,13 +44,21 @@ func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
 			if editor.Preview.Design() != "" {
-				editor.client.space.Change(musical.Change{
+				placement := musical.Change{
 					Author: editor.client.id,
 					Entity: editor.client.NextEntity(),
 					Design: editor.client.MusicalDesign(editor.Preview.Design()),
 					Offset: editor.Preview.AsNode3D().Position(),
 					Angles: editor.Preview.AsNode3D().Rotation(),
 					Commit: true,
+				}
+				editor.client.space.Change(placement)
+				// Undo of a placement = remove that entity. Redo
+				// re-runs the same placement.
+				editor.client.RecordChange(placement, musical.Change{
+					Author: editor.client.id,
+					Entity: placement.Entity,
+					Remove: true,
 				})
 				if !Input.IsKeyPressed(Input.KeyShift) {
 					editor.Preview.Remove()

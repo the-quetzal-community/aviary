@@ -200,6 +200,9 @@ type Client struct {
 	vrUIPanel    MeshInstance3D.Instance
 	vrPointer    RayCast3D.Instance
 	vrLastPixel  Vector2.XY
+
+	// undo holds the per-client undo/redo history. See undo.go.
+	undo UndoStack
 }
 
 // canUseGizmoManipulation reports whether the current global gizmo mode
@@ -388,9 +391,31 @@ func (world *Client) DeleteSelection() bool {
 		return false
 	}
 
+	// Capture the entity's pre-delete state so undo can re-create
+	// it with the same design and transform. The design lookup may
+	// miss for editor-internal entities that don't go through the
+	// global design_to_entity map (critter parts, for example); in
+	// that case we still execute the delete, but skip recording an
+	// undo entry — replaying a Remove with no matching Create just
+	// silently drops on the receiver side, which would surprise the
+	// user more than the missing undo.
+	design, canRecord := world.findDesignForObject(id)
+	prePos := node.AsNode3D().Position()
+	preRot := node.AsNode3D().Rotation()
+
 	if err := world.space.Change(ch); err != nil {
 		Engine.Raise(err)
 		return false
+	}
+	if canRecord {
+		world.RecordChange(ch, musical.Change{
+			Author: world.id,
+			Entity: ch.Entity,
+			Editor: ch.Editor,
+			Design: design,
+			Offset: prePos,
+			Angles: preRot,
+		})
 	}
 	world.selection = 0
 	world.gizmoDrag.active = false
@@ -1516,12 +1541,25 @@ func (world *Client) commitGizmoDrag() {
 			twistCh.Editor = "shelter"
 		}
 		_ = world.space.Change(twistCh)
+		// Undo of a twist = same Change but with Angles.Y restored
+		// to the pre-drag value. Position is unchanged during twist,
+		// so we reuse `pos`. Mirror field flows through as captured.
+		undo := twistCh
+		undo.Angles.Y = world.gizmoDrag.twistInitialY
+		world.RecordChange(twistCh, undo)
 		return
 	}
 
 	if err := world.space.Change(ch); err != nil {
 		Engine.Raise(err)
 	}
+	// Undo of a shift = move back to pre-drag position. Rotation
+	// doesn't change during shift, so the live rot (which we just
+	// committed) IS the pre-shift rot. Mirror field flows through
+	// as captured.
+	undo := ch
+	undo.Offset = world.gizmoDrag.startPos
+	world.RecordChange(ch, undo)
 }
 
 // updateCritterGizmoDrag handles GizmoShift / GizmoTwist for the

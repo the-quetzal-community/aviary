@@ -134,6 +134,21 @@ func (ui *UI) Input(event InputEvent.Instance) {
 					ui.SetMode(ModeGeometry)
 				}
 			}
+			// Ctrl+Z = undo, Ctrl+Shift+Z (or Ctrl+Y) = redo. We
+			// intentionally don't gate on focus — there's no text
+			// input that should swallow these in editor context,
+			// and the design-explorer drawer treats Tab as its own
+			// command above without checking focus either.
+			if event.Keycode() == Input.KeyZ && Input.IsKeyPressed(Input.KeyCtrl) && ui.client != nil {
+				if Input.IsKeyPressed(Input.KeyShift) {
+					ui.client.Redo()
+				} else {
+					ui.client.Undo()
+				}
+			}
+			if event.Keycode() == Input.KeyY && Input.IsKeyPressed(Input.KeyCtrl) && ui.client != nil {
+				ui.client.Redo()
+			}
 		}
 	}
 }
