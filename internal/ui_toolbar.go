@@ -48,6 +48,8 @@ func (tb *Toolbar) Ready() {
 		}
 	})
 	tb.Export.AsBaseButton().OnPressed(func() {
-		fmt.Println("toolbar: export (TODO — wire into save/snapshot flow)")
+		if tb.client != nil {
+			tb.client.Export()
+		}
 	})
 }
