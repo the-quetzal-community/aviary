@@ -32,11 +32,11 @@
 [ext_resource type="Texture2D" uid="uid://bbuujrcrjflt8" path="res://ui/citizen.svg" id="29_hwdbu"]
 [ext_resource type="Texture2D" uid="uid://ckhyr2lsi0att" path="res://ui/critter.svg" id="30_6p2ph"]
 [ext_resource type="Texture2D" uid="uid://bc0aster1ed1t" path="res://ui/coaster.svg" id="31_coast"]
-[ext_resource type="Texture2D" path="res://ui/trash.svg" id="32_trash"]
-[ext_resource type="Texture2D" path="res://ui/settings.svg" id="33_settings"]
-[ext_resource type="Texture2D" path="res://ui/undo.svg" id="34_undo"]
-[ext_resource type="Texture2D" path="res://ui/redo.svg" id="35_redo"]
-[ext_resource type="Texture2D" path="res://ui/export.svg" id="36_export"]
+[ext_resource type="Texture2D" uid="uid://diyhsjw7w5l52" path="res://ui/trash.svg" id="32_trash"]
+[ext_resource type="Texture2D" uid="uid://c3vvxuyqtpg32" path="res://ui/settings.svg" id="33_settings"]
+[ext_resource type="Texture2D" uid="uid://bundoaviary00" path="res://ui/undo.svg" id="34_undo"]
+[ext_resource type="Texture2D" uid="uid://bredoaviary00" path="res://ui/redo.svg" id="35_redo"]
+[ext_resource type="Texture2D" uid="uid://bmyu83dt81fd0" path="res://ui/export.svg" id="36_export"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_i6rcl"]
 bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
@@ -353,10 +353,10 @@ stretch_mode = 5
 unique_name_in_owner = true
 custom_minimum_size = Vector2(24, 32)
 layout_mode = 0
-offset_left = 141.91388
-offset_top = 138.08853
-offset_right = 172.60808
-offset_bottom = 179.01413
+offset_left = 147.00932
+offset_top = 144.88246
+offset_right = 171.00932
+offset_bottom = 176.88246
 scale = Vector2(1.522347, 1.522347)
 texture_normal = ExtResource("11_8sq1u")
 ignore_texture_size = true
@@ -366,10 +366,10 @@ stretch_mode = 5
 unique_name_in_owner = true
 custom_minimum_size = Vector2(28, 32)
 layout_mode = 0
-offset_left = 89.86023
-offset_top = 224.05609
-offset_right = 125.62695
-offset_bottom = 264.93234
+offset_left = 95.77206
+offset_top = 230.81245
+offset_right = 123.77206
+offset_bottom = 262.81244
 scale = Vector2(1.522347, 1.522347)
 texture_normal = ExtResource("13_n8yra")
 ignore_texture_size = true
@@ -641,11 +641,13 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -360.0
-offset_bottom = 360.0
+offset_left = -268.94397
+offset_top = -89.449036
+offset_right = 33.48584
+offset_bottom = 212.98077
 grow_horizontal = 0
-scale = Vector2(0.5, 0.5)
 rotation = 1.5707964
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(180, 180)
 mouse_filter = 2
 
@@ -675,7 +677,7 @@ pivot_offset = Vector2(100, 100)
 z_index = -1
 layout_mode = 0
 offset_left = 71.194275
-offset_top = -1124.817
+offset_top = -1237.7494
 offset_right = 200.32867
 offset_bottom = 0.41210938
 theme = ExtResource("1_hi2iw")
@@ -795,40 +797,40 @@ mouse_filter = 2
 
 [node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
 layout_mode = 0
-offset_left = 0.0
-offset_top = 245.0
-offset_right = 70.0
-offset_bottom = 315.0
+offset_left = 487.99457
+offset_top = 9.292816
+offset_right = 557.99457
+offset_bottom = 79.292816
 texture_normal = ExtResource("33_settings")
 ignore_texture_size = true
 stretch_mode = 5
 
 [node name="Undo" type="TextureButton" parent="Toolbar" unique_id=1700003002]
 layout_mode = 0
-offset_left = 80.0
-offset_top = 245.0
-offset_right = 150.0
-offset_bottom = 315.0
+offset_left = 557.95337
+offset_top = 75.33647
+offset_right = 627.95337
+offset_bottom = 145.33647
 texture_normal = ExtResource("34_undo")
 ignore_texture_size = true
 stretch_mode = 5
 
 [node name="Redo" type="TextureButton" parent="Toolbar" unique_id=1700003003]
 layout_mode = 0
-offset_left = 160.0
-offset_top = 245.0
-offset_right = 230.0
-offset_bottom = 315.0
+offset_left = 597.9246
+offset_top = 121.36143
+offset_right = 667.9246
+offset_bottom = 191.36142
 texture_normal = ExtResource("35_redo")
 ignore_texture_size = true
 stretch_mode = 5
 
 [node name="Export" type="TextureButton" parent="Toolbar" unique_id=1700003004]
 layout_mode = 0
-offset_left = 240.0
-offset_top = 245.0
-offset_right = 310.0
-offset_bottom = 315.0
+offset_left = 649.89716
+offset_top = 165.39386
+offset_right = 719.89716
+offset_bottom = 235.39386
 texture_normal = ExtResource("36_export")
 ignore_texture_size = true
 stretch_mode = 5

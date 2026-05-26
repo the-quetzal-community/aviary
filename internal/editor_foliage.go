@@ -12,6 +12,8 @@ import (
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/Material"
+	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Resource"
@@ -42,6 +44,37 @@ func (*FoliageEditor) Views() []string          { return nil }
 func (*FoliageEditor) SwitchToView(view string) {}
 
 func (fe *FoliageEditor) Name() string  { return "foliage" }
+
+// ExportSubtree implements the Exporter interface (see export.go).
+// We duplicate the procedural tree's MeshInstance3D onto a fresh root
+// and PROMOTE its surface materials from the Mesh resource onto the
+// MeshInstance3D itself as surface overrides. Godot's glTF exporter
+// walks `MeshInstance3D.get_active_material()` and, while that does
+// fall through to `Mesh.surface_get_material()` in principle, the
+// path is unreliable for procedural ArrayMeshes whose surfaces are
+// rebuilt at runtime — the materials end up missing from the .glb.
+// Hoisting them to the instance makes them durably exported.
+func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
+	root := Node3D.New()
+	root.AsNode().SetName("foliage")
+	if fe.Mesh == MeshInstance3D.Nil {
+		return root
+	}
+	dup, ok := Object.As[MeshInstance3D.Instance](fe.Mesh.AsNode().Duplicate())
+	if !ok {
+		return root
+	}
+	mesh := dup.Mesh()
+	if mesh != Mesh.Nil {
+		for i := range mesh.GetSurfaceCount() {
+			if mat := mesh.SurfaceGetMaterial(i); mat != Material.Nil {
+				dup.SetSurfaceOverrideMaterial(i, mat)
+			}
+		}
+	}
+	root.AsNode().AddChild(dup.AsNode())
+	return root
+}
 func (fe *FoliageEditor) EnableEditor() {}
 func (fe *FoliageEditor) ChangeEditor() {}
 
