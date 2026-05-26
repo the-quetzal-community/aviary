@@ -1,4 +1,4 @@
-//go:build musl
+//go:build musl || android
 
 package internal
 

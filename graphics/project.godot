@@ -99,3 +99,4 @@ environment/defaults/default_clear_color=Color(0.43992788, 0.44849038, 0.4802726
 
 openxr/enabled=true
 openxr/startup_alert=false
+shaders/enabled=true
