@@ -1682,6 +1682,26 @@ func newProceduralPart(design string) proceduralParter {
 	return nil
 }
 
+// ExportSubtree implements the Exporter interface (see export.go).
+// We duplicate the body MeshInstance3D — which carries every placed
+// part, the skeleton skin, and the procedural body mesh — onto a
+// fresh root, with its float-above-ground translation zeroed so the
+// critter sits at the origin in the resulting .glb (the body is
+// raised to (0, 0.3, 0) in the editor only so the tail bone doesn't
+// clip the ground plate; that offset is editor scaffolding, not part
+// of the model).
+func (ce *CritterEditor) ExportSubtree() Node3D.Instance {
+	root := Node3D.New()
+	root.AsNode().SetName("critter")
+	if ce.body.mesh != MeshInstance3D.Nil {
+		if dup, ok := Object.As[Node3D.Instance](ce.body.mesh.AsNode().Duplicate()); ok {
+			dup.SetPosition(Vector3.Zero)
+			root.AsNode().AddChild(dup.AsNode())
+		}
+	}
+	return root
+}
+
 func (ce *CritterEditor) Change(change musical.Change) error {
 	if change.Editor != "critter" {
 		return nil

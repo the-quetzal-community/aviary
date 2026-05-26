@@ -61,6 +61,26 @@ func (editor *VehicleEditor) Ready() {
 
 func (*VehicleEditor) Name() string { return "vehicle" }
 
+// ExportSubtree implements the Exporter interface (see export.go).
+// We duplicate the Objects and Spinner containers — these hold every
+// committed vehicle part — onto a fresh root so the .glb captures the
+// car/ship without the base.obj ground plate or preview ghost.
+func (editor *VehicleEditor) ExportSubtree() Node3D.Instance {
+	root := Node3D.New()
+	root.AsNode().SetName("vehicle")
+	if editor.Objects != Node3D.Nil {
+		if dup, ok := Object.As[Node3D.Instance](editor.Objects.AsNode().Duplicate()); ok {
+			root.AsNode().AddChild(dup.AsNode())
+		}
+	}
+	if editor.Spinner != Node3D.Nil {
+		if dup, ok := Object.As[Node3D.Instance](editor.Spinner.AsNode().Duplicate()); ok {
+			root.AsNode().AddChild(dup.AsNode())
+		}
+	}
+	return root
+}
+
 func (*VehicleEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:

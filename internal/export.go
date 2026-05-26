@@ -10,7 +10,28 @@ import (
 	"graphics.gd/classdb/GLTFDocument"
 	"graphics.gd/classdb/GLTFState"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/Node3D"
 )
+
+// Exporter is an optional capability an editor implements to
+// hand-pick what gets included in a glTF export. Default behavior
+// (no Exporter implementation) is to pack the editor's entire
+// AsNode3D() subtree, which includes context-only props like the
+// ground plate the vehicle/critter editors render under the body.
+//
+// Implementations typically Duplicate() the relevant in-editor
+// nodes onto a fresh Node3D root and return that — the caller
+// QueueFrees the returned tree once the .glb has been written,
+// so it's safe to assemble a one-shot subtree for the export
+// without worrying about cleanup.
+type Exporter interface {
+	// ExportSubtree builds and returns a Node3D tree to pack into
+	// the glTF. The caller owns it. The export uses the returned
+	// node's transform AS-IS, so editors can apply recenter offsets
+	// (e.g. zero out a body's float-above-ground rise) by setting
+	// the root or its children's positions accordingly.
+	ExportSubtree() Node3D.Instance
+}
 
 // Export prompts the user with an OS-native file save dialog and
 // writes the *current editor's* 3D subtree to the chosen path as
@@ -18,10 +39,9 @@ import (
 // format for 3D — the resulting file opens in Blender, Three.js,
 // Unreal, Unity, and any web viewer that speaks the spec.
 //
-// Only the active editor's node is exported, not the whole world:
-// when the user is editing a vehicle they expect to get just the
-// vehicle, not the terrain + every other editor's placed content.
-// If no editor is active the call is a no-op with a stderr note.
+// Only the active editor's content is exported, not the whole
+// world. When the editor implements [Exporter] the returned
+// subtree is exported; otherwise it falls back to AsNode3D().
 //
 // Falls back to a stderr message on platforms without a native
 // file dialog (hypothetical headless builds only); on supported
@@ -66,7 +86,9 @@ func (world *Client) Export() {
 				!strings.HasSuffix(strings.ToLower(dst), ".gltf") {
 				dst += ".glb"
 			}
-			if err := writeNodeAsGLTF(editor.AsNode3D().AsNode(), dst); err != nil {
+			root, dispose := exportRootFor(editor)
+			defer dispose()
+			if err := writeNodeAsGLTF(root, dst); err != nil {
 				Engine.Raise(fmt.Errorf("export failed: %w", err))
 				return
 			}
@@ -93,4 +115,16 @@ func writeNodeAsGLTF(root Node.Instance, path string) error {
 		return fmt.Errorf("write_to_filesystem: %w", err)
 	}
 	return nil
+}
+
+// exportRootFor resolves the Node to pass to glTF packing. If the
+// editor implements [Exporter] the returned subtree is used and
+// the dispose closure queue-frees it after the write. Otherwise
+// the editor's AsNode3D() is used directly (no cleanup needed).
+func exportRootFor(editor Editor) (root Node.Instance, dispose func()) {
+	if exp, ok := editor.(Exporter); ok {
+		sub := exp.ExportSubtree()
+		return sub.AsNode(), func() { sub.AsNode().QueueFree() }
+	}
+	return editor.AsNode3D().AsNode(), func() {}
 }
