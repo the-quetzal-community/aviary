@@ -1704,12 +1704,41 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 		ce.pendingChanges = filterPendingByEntity(ce.pendingChanges, change.Entity)
 		return nil
 	}
+	// Gizmo move/twist on an already-attached part: rebuild the
+	// anchor from the wire fields and re-pose in place. This keeps
+	// the existing Node3D (so selection state survives the drag)
+	// rather than tearing down and re-instantiating the design.
+	if id, ok := ce.entityToPart[change.Entity]; ok {
+		ce.body.SetPartAnchor(id, anchorFromChange(change))
+		return nil
+	}
 	if !ce.tryAttachChange(change) {
 		// Scene isn't loaded yet — defer until an Import lands and
 		// Process retries on the next tick.
 		ce.pendingChanges = append(ce.pendingChanges, change)
 	}
 	return nil
+}
+
+// anchorFromChange decodes a wire Change back into a PartAnchor.
+// Mirrors the encode in place() / the gizmo emit path: Offset.XYZ
+// holds (T, Theta, Offset); Bounds.X > 0 signals a leg-foot anchor
+// with (LegFoot+1, LegSide) packed into (Bounds.X, Bounds.Y);
+// Angles.Y carries the runtime-only Twist rotation around the
+// surface normal.
+func anchorFromChange(change musical.Change) PartAnchor {
+	a := PartAnchor{
+		T:      float32(change.Offset.X),
+		Theta:  float32(change.Offset.Y),
+		Offset: float32(change.Offset.Z),
+		Twist:  float32(change.Angles.Y),
+	}
+	if change.Bounds.X > 0 {
+		a.OnLeg = true
+		a.LegFoot = int(change.Bounds.X) - 1
+		a.LegSide = int(change.Bounds.Y)
+	}
+	return a
 }
 
 // tryAttachChange attempts to materialise a Change into a placed
@@ -1719,24 +1748,16 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 // nil — in single-user dev there's no packed_scenes map to wait
 // on, so we just place a placeholder.
 func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
-	anchor := PartAnchor{
-		T:      float32(change.Offset.X),
-		Theta:  float32(change.Offset.Y),
-		Offset: float32(change.Offset.Z),
-	}
+	anchor := anchorFromChange(change)
 	// Bounds.X > 0 signals a leg-foot anchor (place() encodes it that
 	// way so the zero default of historical Change records still
-	// decodes as a body anchor). Decode index + side and bail out if
-	// the named leg doesn't exist yet — caller queues the change for
-	// retry once the leg sculpt that creates it arrives.
-	if change.Bounds.X > 0 {
-		legIdx := int(change.Bounds.X) - 1
-		if ce.body.critter == nil || legIdx >= ce.body.critter.LegCount() {
+	// decodes as a body anchor). Bail out if the named leg doesn't
+	// exist yet — caller queues the change for retry once the leg
+	// sculpt that creates it arrives.
+	if anchor.OnLeg {
+		if ce.body.critter == nil || anchor.LegFoot >= ce.body.critter.LegCount() {
 			return false
 		}
-		anchor.OnLeg = true
-		anchor.LegFoot = legIdx
-		anchor.LegSide = int(change.Bounds.Y)
 	}
 	var node Node3D.Instance
 	if ce.client != nil {

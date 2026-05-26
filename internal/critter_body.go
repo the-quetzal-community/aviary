@@ -168,12 +168,20 @@ type CritterBody struct {
 // existing PartAnchor literals (and existing serialised Changes,
 // which decode through tryAttachChange below with Bounds defaulting
 // to zero) keep working without a schema migration.
+//
+// Twist is a runtime-only rotation around the part's outward axis
+// (i.e. perpendicular to the body surface at the anchor point). It
+// rides on Change.Angles.Y over the wire — the musical Change struct
+// has carried Angles since day one with critter parts ignoring it,
+// so populating it now stays backwards compatible: older clients see
+// Twist=0 and just render the part flat to the surface.
 type PartAnchor struct {
 	T, Theta float32
 	Offset   float32
 	OnLeg    bool
 	LegFoot  int
 	LegSide  int
+	Twist    float32
 }
 
 // AttachCritterBody creates a fresh ArrayMesh, runs an initial mesh
@@ -1107,6 +1115,18 @@ func (b *CritterBody) positionPart(node Node3D.Instance, anchor PartAnchor) {
 		X: Float.X(outward.X), Y: Float.X(outward.Y), Z: Float.X(outward.Z),
 	})
 	right, up := partOrientation(fwd)
+	if anchor.Twist != 0 {
+		// Spin the right/up basis vectors around fwd (the body's
+		// outward normal at this anchor) by Twist radians. Lets the
+		// user rotate a part flat against the surface — useful for
+		// orienting asymmetric parts like eyes after they're anchored,
+		// without disturbing the anchor itself.
+		s := Float.X(math.Sin(float64(anchor.Twist)))
+		c := Float.X(math.Cos(float64(anchor.Twist)))
+		newRight := Vector3.Add(Vector3.MulX(right, c), Vector3.MulX(up, s))
+		newUp := Vector3.Sub(Vector3.MulX(up, c), Vector3.MulX(right, s))
+		right, up = newRight, newUp
+	}
 	origin := Vector3.XYZ{
 		X: Float.X(pos.X), Y: Float.X(pos.Y), Z: Float.X(pos.Z),
 	}

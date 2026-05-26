@@ -218,6 +218,12 @@ func (world *Client) canUseGizmoManipulation() bool {
 	switch world.Editing {
 	case Editing.Scenery, Editing.Vehicle, Editing.Shelter:
 		return true
+	case Editing.Critter:
+		// Critter has multiple sub-views; only allow gizmo manipulation
+		// in the default ("explore") view. Ribcage/limbone own their
+		// own bone-handle drag interactions and control owns the WASD
+		// chase-cam — letting gizmo drags fire there would conflict.
+		return world.CritterEditor.view == "" || world.CritterEditor.view == "explore"
 	}
 	return false
 }
@@ -263,6 +269,20 @@ func (world *Client) selectedEntityForGizmo() (musical.Entity, Node3D.Instance, 
 		parent := node.GetParentNode3d()
 		if parent != Node3D.Nil {
 			if e, has := world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]; has {
+				return e, parent, true
+			}
+		}
+	case Editing.Critter:
+		if e, has := world.CritterEditor.partToEntity[id]; has {
+			return e, node, true
+		}
+		// Library-imported part scenes ship with their StaticBody3D
+		// at root; the picker may land on a child of the attached
+		// part. Walk up one level so the selection resolves to the
+		// entity-owning anchor node.
+		parent := node.GetParentNode3d()
+		if parent != Node3D.Nil {
+			if e, has := world.CritterEditor.partToEntity[Node3D.ID(parent.ID())]; has {
 				return e, parent, true
 			}
 		}
@@ -1144,6 +1164,17 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						if world.gizmoDrag.activeGizmo == GizmoTwist {
 							rot := node.AsNode3D().Rotation()
 							world.gizmoDrag.twistInitialY = rot.Y
+							// Critter parts derive their rotation from
+							// anchor + Twist, not from Node3D.rotation,
+							// so the part's live `rot.Y` is always 0
+							// even after previous twist edits. Seed from
+							// the stored anchor instead so a re-twist
+							// continues from where the last one left off.
+							if world.Editing == Editing.Critter && world.CritterEditor != nil {
+								if a, has := world.CritterEditor.body.partAnchors[Node3D.ID(node.ID())]; has {
+									world.gizmoDrag.twistInitialY = Angle.Radians(a.Twist)
+								}
+							}
 							world.gizmoDrag.twistPlaneY = pos.Y
 
 							// Project current mouse onto the same horizontal plane we use for move.
@@ -1252,6 +1283,13 @@ func (world *Client) updateGizmoDrag() {
 	}
 	ent, node, ok := world.selectedEntityForGizmo()
 	if !ok || node == Node3D.Nil {
+		return
+	}
+	// Critter parts live in anchor space (T, Theta, Offset) on the
+	// body surface, not world XYZ — divert into a dedicated path that
+	// raycasts against the body and consults ClosestAnchor.
+	if world.Editing == Editing.Critter {
+		world.updateCritterGizmoDrag(ent, node, false)
 		return
 	}
 	o, d := MouseRay(world.AsNode3D())
@@ -1385,6 +1423,10 @@ func (world *Client) commitGizmoDrag() {
 	if !ok || node == Node3D.Nil {
 		return
 	}
+	if world.Editing == Editing.Critter {
+		world.updateCritterGizmoDrag(ent, node, true)
+		return
+	}
 
 	pos := node.AsNode3D().Position()
 	rot := node.AsNode3D().Rotation()
@@ -1479,6 +1521,98 @@ func (world *Client) commitGizmoDrag() {
 
 	if err := world.space.Change(ch); err != nil {
 		Engine.Raise(err)
+	}
+}
+
+// updateCritterGizmoDrag handles GizmoShift / GizmoTwist for the
+// critter editor. Critter parts don't live in world-space — they're
+// anchored parametrically on the body surface (T along spine, Theta
+// around it, Offset radial), or pinned to a leg foot. We can't reuse
+// the horizontal-plane intersection the other editors use; instead a
+// physics raycast picks the body surface and CritterBody.ClosestAnchor
+// turns the hit point into anchor coordinates, which are then encoded
+// back into musical.Change.Offset (and Bounds for leg anchors). Twist
+// rides on Angles.Y the same way the other editors use rotation.Y.
+//
+// The `commit` flag toggles between live-preview drags (false) and
+// the durable release-time write (true).
+func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Instance, commit bool) {
+	if world.CritterEditor == nil || world.CritterEditor.body.critter == nil {
+		return
+	}
+	body := &world.CritterEditor.body
+	// Encode whatever the current anchor is into a Change template
+	// — this preserves the OnLeg/LegFoot/LegSide bits when the user
+	// is only twisting (no shift in anchor).
+	cur, hasCur := body.partAnchors[Node3D.ID(node.ID())]
+	if !hasCur {
+		return
+	}
+	next := cur
+
+	if world.gizmoDrag.activeGizmo == GizmoShift {
+		// Raycast the mouse against the body collider (layer 2) and
+		// translate the hit into body-local coordinates so
+		// ClosestAnchor returns a sensible anchor. PartSelectionMask
+		// clears layer 1 so we don't snag any already-placed parts
+		// sitting on top of the surface.
+		cam := Viewport.Get(world.AsNode()).GetCamera3d()
+		space := world.AsNode3D().GetWorld3d().DirectSpaceState()
+		mouse := Viewport.Get(world.AsNode()).GetMousePosition()
+		from, to := cam.ProjectRayOrigin(mouse), cam.ProjectPosition(mouse, 1000)
+		query := PhysicsRayQueryParameters3D.Create(from, to, nil)
+		query.SetCollisionMask(int(PartSelectionMask))
+		hit := space.IntersectRay(query)
+		if hit.Collider == Object.Nil {
+			return
+		}
+		bodyOrigin := body.mesh.AsNode3D().GlobalPosition()
+		local := Vector3.Sub(hit.Position, bodyOrigin)
+		fresh := body.ClosestAnchor(local)
+		next.T = fresh.T
+		next.Theta = fresh.Theta
+		next.Offset = fresh.Offset
+		next.OnLeg = fresh.OnLeg
+		next.LegFoot = fresh.LegFoot
+		next.LegSide = fresh.LegSide
+	}
+
+	if world.gizmoDrag.activeGizmo == GizmoTwist {
+		// Same atan2-on-horizontal-plane scheme the other editors
+		// use, mapped into the anchor's Twist field instead of the
+		// part's world rotation. Snapshot the part's *current* world
+		// position once (origin doesn't matter for the relative
+		// angle math; we just need a stable pivot per frame).
+		pos := node.AsNode3D().GlobalPosition()
+		o, d := MouseRay(world.AsNode3D())
+		if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, world.gizmoDrag.twistPlaneY, pos.Z), Vector3.New(0, 1, 0)); ok {
+			dx := hit.X - pos.X
+			dz := hit.Z - pos.Z
+			cur := Float.X(Angle.Atan2(Angle.Radians(dz), Angle.Radians(dx)))
+			delta := world.gizmoDrag.twistInitialAngle - cur
+			next.Twist = float32(world.gizmoDrag.twistInitialY) + float32(delta)
+		}
+	}
+
+	ch := musical.Change{
+		Author: world.id,
+		Entity: ent,
+		Editor: "critter",
+		Offset: Vector3.New(Float.X(next.T), Float.X(next.Theta), Float.X(next.Offset)),
+		Angles: Euler.Radians{X: 0, Y: Angle.Radians(next.Twist), Z: 0},
+		Commit: commit,
+	}
+	if next.OnLeg {
+		// place() encodes leg-foot anchors as Bounds.X = LegFoot+1
+		// so a zero Bounds in old records still decodes as a body
+		// anchor. Mirror that here so the receive side decodes the
+		// same way (see anchorFromChange in editor_critter.go).
+		ch.Bounds = Vector3.New(Float.X(next.LegFoot+1), Float.X(next.LegSide), 0)
+	}
+	if err := world.space.Change(ch); err != nil {
+		if commit {
+			Engine.Raise(err)
+		}
 	}
 }
 
