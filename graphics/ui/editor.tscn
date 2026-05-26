@@ -634,22 +634,61 @@ visible = false
 z_index = 2
 layout_mode = 1
 
-[node name="ToolbarBacking" type="Triangle" parent="." unique_id=1700002000]
+[node name="Toolbar" type="Triangle" parent="." unique_id=1700002000]
 right_angled = true
 color = Color(0.18, 0.18, 0.18, 1)
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -268.94397
-offset_top = -89.449036
-offset_right = 33.48584
-offset_bottom = 212.98077
+offset_left = -0.00024414063
+offset_top = 0.71878624
+offset_right = 302.42957
+offset_bottom = 303.1486
 grow_horizontal = 0
 rotation = 1.5707964
 scale = Vector2(0.5, 0.5)
-pivot_offset = Vector2(180, 180)
 mouse_filter = 2
+
+[node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
+layout_mode = 0
+offset_left = 7.898929
+offset_top = 162.00496
+offset_right = 77.898926
+offset_bottom = 232.00496
+texture_normal = ExtResource("33_settings")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Undo" type="TextureButton" parent="Toolbar" unique_id=1700003002]
+layout_mode = 0
+offset_left = 63.928864
+offset_top = 114.03998
+offset_right = 133.92886
+offset_bottom = 184.03998
+texture_normal = ExtResource("34_undo")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Redo" type="TextureButton" parent="Toolbar" unique_id=1700003003]
+layout_mode = 0
+offset_left = 103.9588
+offset_top = 66.0648
+offset_right = 173.9588
+offset_bottom = 136.06479
+texture_normal = ExtResource("35_redo")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Export" type="TextureButton" parent="Toolbar" unique_id=1700003004]
+layout_mode = 0
+offset_left = 165.99622
+offset_top = 6.1036224
+offset_right = 235.99622
+offset_bottom = 76.10362
+texture_normal = ExtResource("36_export")
+ignore_texture_size = true
+stretch_mode = 5
 
 [node name="EditorIndicator" type="EditorIndicator" parent="." unique_id=1166549893]
 layout_mode = 1
@@ -781,56 +820,5 @@ offset_bottom = 380.0
 grow_horizontal = 0
 scale = Vector2(0.5, 0.5)
 texture_normal = ExtResource("32_trash")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Toolbar" type="AviaryToolbar" parent="." unique_id=1700003000]
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -360.0
-offset_bottom = 360.0
-grow_horizontal = 0
-scale = Vector2(0.5, 0.5)
-mouse_filter = 2
-
-[node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
-layout_mode = 0
-offset_left = 487.99457
-offset_top = 9.292816
-offset_right = 557.99457
-offset_bottom = 79.292816
-texture_normal = ExtResource("33_settings")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Undo" type="TextureButton" parent="Toolbar" unique_id=1700003002]
-layout_mode = 0
-offset_left = 557.95337
-offset_top = 75.33647
-offset_right = 627.95337
-offset_bottom = 145.33647
-texture_normal = ExtResource("34_undo")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Redo" type="TextureButton" parent="Toolbar" unique_id=1700003003]
-layout_mode = 0
-offset_left = 597.9246
-offset_top = 121.36143
-offset_right = 667.9246
-offset_bottom = 191.36142
-texture_normal = ExtResource("35_redo")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Export" type="TextureButton" parent="Toolbar" unique_id=1700003004]
-layout_mode = 0
-offset_left = 649.89716
-offset_top = 165.39386
-offset_right = 719.89716
-offset_bottom = 235.39386
-texture_normal = ExtResource("36_export")
 ignore_texture_size = true
 stretch_mode = 5

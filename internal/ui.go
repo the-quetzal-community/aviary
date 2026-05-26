@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"fmt"
+
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
@@ -29,8 +31,15 @@ type UI struct {
 
 	ExpansionIndicator Button.Instance
 	EditorIndicator    *EditorIndicator
-	ToolbarBacking     *Triangle
-	Toolbar            *Toolbar
+
+	Toolbar struct {
+		*Triangle
+
+		Settings TextureButton.Instance
+		Undo     TextureButton.Instance
+		Redo     TextureButton.Instance
+		Export   TextureButton.Instance
+	}
 
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
@@ -58,9 +67,18 @@ func (ui *UI) Setup() {
 	ui.CloudControl.client = ui.client
 	ui.CloudControl.Setup()
 	ui.EditorIndicator.client = ui.client
-	if ui.Toolbar != nil {
-		ui.Toolbar.client = ui.client
-	}
+	ui.Toolbar.Settings.AsBaseButton().OnPressed(func() {
+		fmt.Println("toolbar: settings (TODO)")
+	})
+	ui.Toolbar.Undo.AsBaseButton().OnPressed(func() {
+		ui.client.Undo()
+	})
+	ui.Toolbar.Redo.AsBaseButton().OnPressed(func() {
+		ui.client.Redo()
+	})
+	ui.Toolbar.Export.AsBaseButton().OnPressed(func() {
+		ui.client.Export()
+	})
 }
 
 func (ui *UI) SetMode(mode Mode) {
@@ -234,12 +252,7 @@ func (ui *UI) scaling() {
 	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.TrashButton.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	if ui.ToolbarBacking != nil {
-		ui.scale(ui.ToolbarBacking.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	}
-	if ui.Toolbar != nil {
-		ui.scale(ui.Toolbar.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	}
+	ui.scale(ui.Toolbar.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 
 	// ViewSelector needs to be centered to the top center
 	theme_pos := ui.ViewSelector.AsControl().Position()

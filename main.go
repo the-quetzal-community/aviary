@@ -42,7 +42,6 @@ func main() {
 	classdb.Register[internal.AnimationSaving]()
 	classdb.Register[internal.ActionRenderer]()
 	classdb.Register[internal.EditorIndicator]()
-	classdb.Register[internal.Toolbar]()
 	classdb.Register[internal.MaterialSharingMeshInstance3D]()
 	classdb.Register[internal.MaterialSharingDecal]()
 	classdb.Register[internal.DesignExplorer]()
