@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
@@ -22,6 +23,8 @@ type BoulderEditor struct {
 
 	Mesh MeshInstance3D.Instance
 	rock *Rock
+
+	mineralMaterial BaseMaterial3D.Instance
 
 	client *Client
 
@@ -43,11 +46,10 @@ func (fe *BoulderEditor) Ready() {
 	fe.rock = Object.Leak(NewRock())
 	fe.Mesh.SetMesh(fe.rock.AsMesh())
 
-	standard := StandardMaterial3D.New()
-	standard.AsBaseMaterial3D().
-		SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")).
-		SetUv1Triplanar(true)
-	fe.Mesh.Mesh().SurfaceSetMaterial(0, standard.AsMaterial())
+	fe.mineralMaterial = StandardMaterial3D.New().
+		AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")).
+		AsBaseMaterial3D().SetUv1Triplanar(true)
+	fe.Mesh.Mesh().SurfaceSetMaterial(0, fe.mineralMaterial.AsMaterial())
 }
 
 func (fe *BoulderEditor) ExitTree() {
@@ -58,6 +60,13 @@ func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
 	editing := brush.Slider
 	value := float64(brush.Amount)
 	switch editing {
+	case "mineral":
+		texture := fe.client.resolveMaterialTexture(brush.Design)
+		if texture == Texture2D.Nil {
+			return nil
+		}
+		fe.mineralMaterial.SetAlbedoTexture(texture)
+		return nil
 	case "editing/width":
 		scale := fe.Mesh.AsNode3D().Scale()
 		scale.X = Float.X(value)
@@ -107,7 +116,20 @@ func (fe *BoulderEditor) Tabs(mode Mode) []string {
 }
 
 func (fe *BoulderEditor) SelectDesign(mode Mode, design string) {
-
+	if mode != ModeMaterial {
+		return
+	}
+	// Mineral has only one material slot, so the slider name is fixed
+	// — unlike foliage which keys on leaflet/timbers.
+	if err := fe.client.space.Sculpt(musical.Sculpt{
+		Author: fe.client.id,
+		Editor: "mineral",
+		Slider: "mineral",
+		Design: fe.client.MusicalDesign(design),
+		Commit: true,
+	}); err != nil {
+		Engine.Raise(err)
+	}
 }
 
 func (fe *BoulderEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {

@@ -73,7 +73,7 @@ func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
 		case "timbers":
 			target = fe.timbersMaterial
 		}
-		texture := fe.resolveMaterialTexture(brush.Design)
+		texture := fe.client.resolveMaterialTexture(brush.Design)
 		if texture == Texture2D.Nil {
 			return nil
 		}
@@ -88,20 +88,24 @@ func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
 	return nil
 }
 
-// resolveMaterialTexture turns a foliage material Design into a usable
+// resolveMaterialTexture turns a material Design into a usable
 // Texture2D. For legacy .png paths it just loads the file (or returns
-// the cached import). For .region sidecars it reads the JSON, loads the
-// referenced shared material from <author>/texture/<hash>.tres, and
-// wraps its albedo in an AtlasTexture with the recorded region.
-func (fe *FoliageEditor) resolveMaterialTexture(design musical.Design) Texture2D.Instance {
-	uri, ok := fe.client.design_to_string[design]
+// the cached import). For .region sidecars it reads the JSON, loads
+// the referenced shared material from <author>/texture/<hash>.tres,
+// and wraps its albedo in an AtlasTexture with the recorded region.
+//
+// Lives on Client because it consults the shared design caches
+// (design_to_string, textures) — every editor that supports material
+// selection (foliage, mineral, …) calls it the same way.
+func (client *Client) resolveMaterialTexture(design musical.Design) Texture2D.Instance {
+	uri, ok := client.design_to_string[design]
 	if !ok {
 		return Texture2D.Nil
 	}
 	if strings.HasSuffix(uri, ".region") {
 		return loadRegionTexture(uri)
 	}
-	if tex, ok := fe.client.textures[design].Instance(); ok {
+	if tex, ok := client.textures[design].Instance(); ok {
 		return tex
 	}
 	return Resource.Load[Texture2D.Instance](uri)
