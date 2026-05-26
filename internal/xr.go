@@ -59,18 +59,18 @@ func (world *Client) setupXR() {
 	vp := Viewport.Get(world.AsNode())
 	vp.SetUseXr(true)
 
-	// 2D control overlay is not meaningful in a headset. Hide it; the
-	// VR UI (drawer-on-a-quad + controller wrist panels) is a follow-up
-	// chunk of work tracked separately. We can re-show it for the
-	// passenger / mirror-window case later.
-	if world.ui != nil {
-		world.ui.AsCanvasItem().SetVisible(false)
-	}
-
 	world.xr = true
 	world.xrOrigin = origin
 	world.xrLeft = left
 	world.xrRight = right
+
+	// Hoist the existing 2D editor overlay onto a quad parented to
+	// the left controller, and wire a right-controller raycast +
+	// trigger so the same buttons remain interactive. See xr_ui.go.
+	if world.ui != nil {
+		world.attachUIToVR(world.ui, left.AsNode3D())
+	}
+	world.setupControllerPointer(right)
 
 	fmt.Println("Aviary: OpenXR initialized, running in VR mode")
 }

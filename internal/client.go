@@ -42,8 +42,10 @@ import (
 	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/QuadMesh"
+	"graphics.gd/classdb/RayCast3D"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/SubViewport"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/WorldEnvironment"
@@ -186,11 +188,18 @@ type Client struct {
 	// xr is true once setupXR has confirmed an OpenXR runtime is
 	// initialized and switched the viewport into headset rendering.
 	// While true, the desktop input/move paths short-circuit and the
-	// 2D Control overlay is hidden — VR-side UI lives elsewhere.
+	// 2D Control overlay is moved into a SubViewport rendered on a
+	// quad attached to the left controller (wrist UI).
 	xr       bool
 	xrOrigin XROrigin3D.Instance
 	xrLeft   XRController3D.Instance
 	xrRight  XRController3D.Instance
+
+	// VR UI plumbing — see xr_ui.go.
+	vrUIViewport SubViewport.Instance
+	vrUIPanel    MeshInstance3D.Instance
+	vrPointer    RayCast3D.Instance
+	vrLastPixel  Vector2.XY
 }
 
 // canUseGizmoManipulation reports whether the current global gizmo mode
@@ -920,8 +929,10 @@ func (world *Client) Process(dt Float.X) {
 	}
 	// In XR the headset drives the view; thumbstick locomotion is a
 	// follow-up. Until then, keyboard-driven focal-point translation
-	// would fight the headset pose.
+	// would fight the headset pose. We still drive the controller-ray
+	// → UI panel hover loop here so the wrist menu feels live.
 	if world.xr {
+		world.processVRPointer()
 		return
 	}
 
