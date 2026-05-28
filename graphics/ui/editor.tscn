@@ -34,9 +34,8 @@
 [ext_resource type="Texture2D" uid="uid://bc0aster1ed1t" path="res://ui/coaster.svg" id="31_coast"]
 [ext_resource type="Texture2D" uid="uid://diyhsjw7w5l52" path="res://ui/trash.svg" id="32_trash"]
 [ext_resource type="Texture2D" uid="uid://c3vvxuyqtpg32" path="res://ui/settings.svg" id="33_settings"]
-[ext_resource type="Texture2D" uid="uid://bundoaviary00" path="res://ui/undo.svg" id="34_undo"]
-[ext_resource type="Texture2D" uid="uid://bredoaviary00" path="res://ui/redo.svg" id="35_redo"]
 [ext_resource type="Texture2D" uid="uid://bmyu83dt81fd0" path="res://ui/export.svg" id="36_export"]
+[ext_resource type="Texture2D" uid="uid://bc3w88wpvj5qt" path="res://ui/duplicate.svg" id="37_dupli"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_i6rcl"]
 bg_color = Color(0.29803923, 0.29803923, 0.29803923, 1)
@@ -208,12 +207,12 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -1.0
-offset_top = 72.0
-offset_right = 1919.0
-offset_bottom = 432.0
+offset_top = 1038.6666
+offset_right = 2791.3477
+offset_bottom = 1398.6666
 grow_horizontal = 2
 grow_vertical = 0
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.93703705, 0.93703705)
 theme = ExtResource("1_hi2iw")
 theme_override_constants/separation = 0
 
@@ -258,7 +257,7 @@ offset_top = -42.0
 offset_right = 210.0
 grow_horizontal = 2
 grow_vertical = 0
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.9625, 0.9625)
 pivot_offset = Vector2(210, 42)
 mouse_filter = 1
 theme_override_colors/font_color = Color(0, 0, 0, 1)
@@ -293,11 +292,11 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = 192.0
-offset_right = 232.0
+offset_left = 1272.0
+offset_right = 1312.0
 offset_bottom = 40.0
 grow_horizontal = 2
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.9625, 0.9625)
 pivot_offset = Vector2(20, 0.09)
 
 [node name="Pointer" type="TextureRect" parent="ViewSelector" unique_id=1142122943]
@@ -324,7 +323,7 @@ offset_left = 8.9975
 offset_top = 4.00561
 offset_right = 400.997
 offset_bottom = 135.006
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.9625, 0.9625)
 mouse_filter = 2
 
 [node name="Triangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
@@ -596,7 +595,7 @@ anchor_bottom = 0.5
 offset_left = 84.80156
 offset_top = 252.5528
 offset_right = 126.80156
-offset_bottom = 552.02997
+offset_bottom = 646.9831
 grow_vertical = 2
 scale = Vector2(1.6152885, 1.6152885)
 theme_override_constants/separation = 16
@@ -629,6 +628,26 @@ texture_normal = ExtResource("28_nterg")
 ignore_texture_size = true
 stretch_mode = 4
 
+[node name="ActionsSeparator" type="HSeparator" parent="CloudControl/GizmoTypes" unique_id=1700004001]
+custom_minimum_size = Vector2(42, 8)
+layout_mode = 2
+
+[node name="Duplicate" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=1700004002]
+visible = false
+custom_minimum_size = Vector2(42, 42)
+layout_mode = 2
+texture_normal = ExtResource("37_dupli")
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="Delete" type="TextureButton" parent="CloudControl/GizmoTypes" unique_id=1700004003]
+visible = false
+custom_minimum_size = Vector2(42, 42)
+layout_mode = 2
+texture_normal = ExtResource("32_trash")
+ignore_texture_size = true
+stretch_mode = 4
+
 [node name="Cloudy" parent="." unique_id=1665134801 instance=ExtResource("11_75vv8")]
 visible = false
 z_index = 2
@@ -643,49 +662,53 @@ anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -0.00024414063
 offset_top = 0.71878624
-offset_right = 302.42957
-offset_bottom = 303.1486
+offset_right = 312.9569
+offset_bottom = 313.6759
 grow_horizontal = 0
 rotation = 1.5707964
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.9625, 0.9625)
 mouse_filter = 2
 
 [node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
 layout_mode = 0
-offset_left = 7.898929
-offset_top = 162.00496
-offset_right = 77.898926
-offset_bottom = 232.00496
+offset_left = 13.389814
+offset_top = 187.02136
+offset_right = 68.69715
+offset_bottom = 242.32869
 texture_normal = ExtResource("33_settings")
 ignore_texture_size = true
 stretch_mode = 5
 
 [node name="Undo" type="TextureButton" parent="Toolbar" unique_id=1700003002]
 layout_mode = 0
-offset_left = 63.928864
-offset_top = 114.03998
-offset_right = 133.92886
-offset_bottom = 184.03998
-texture_normal = ExtResource("34_undo")
+offset_left = 59.13846
+offset_top = 131.98495
+offset_right = 126.71414
+offset_bottom = 199.56064
+rotation = -0.21123604
+texture_normal = ExtResource("9_75vv8")
 ignore_texture_size = true
 stretch_mode = 5
+flip_h = true
 
 [node name="Redo" type="TextureButton" parent="Toolbar" unique_id=1700003003]
 layout_mode = 0
-offset_left = 103.9588
-offset_top = 66.0648
-offset_right = 173.9588
-offset_bottom = 136.06479
-texture_normal = ExtResource("35_redo")
+offset_left = 114.209206
+offset_top = 122.66872
+offset_right = 182.63206
+offset_bottom = 191.09161
+rotation = -1.3089969
+texture_normal = ExtResource("9_75vv8")
 ignore_texture_size = true
 stretch_mode = 5
 
 [node name="Export" type="TextureButton" parent="Toolbar" unique_id=1700003004]
 layout_mode = 0
-offset_left = 165.99622
-offset_top = 6.1036224
-offset_right = 235.99622
-offset_bottom = 76.10362
+offset_left = 184.89096
+offset_top = 70.764694
+offset_right = 248.14267
+offset_bottom = 134.01642
+rotation = -1.5707964
 texture_normal = ExtResource("36_export")
 ignore_texture_size = true
 stretch_mode = 5
@@ -698,8 +721,9 @@ anchor_right = 1.0
 offset_left = -200.0
 offset_bottom = 200.0
 grow_horizontal = 0
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.9625, 0.9625)
 pivot_offset = Vector2(208.68042, -3.5928783)
+mouse_filter = 2
 
 [node name="Triangle" type="Triangle" parent="EditorIndicator" unique_id=212828080]
 right_angled = true
@@ -711,6 +735,7 @@ grow_horizontal = 2
 grow_vertical = 2
 rotation = 1.5707964
 pivot_offset = Vector2(100, 100)
+mouse_filter = 2
 
 [node name="EditorSelector" type="Panel" parent="EditorIndicator" unique_id=519162058]
 z_index = -1
@@ -804,21 +829,10 @@ offset_left = 122.946335
 offset_top = 86.07677
 offset_right = 160.39362
 offset_bottom = 123.52404
+mouse_filter = 2
 texture = ExtResource("15_ny7lf")
 expand_mode = 1
 
-[node name="TrashButton" type="TextureButton" parent="." unique_id=1700001000]
-visible = false
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -180.0
-offset_top = 220.0
-offset_right = -20.0
-offset_bottom = 380.0
-grow_horizontal = 0
-scale = Vector2(0.5, 0.5)
-texture_normal = ExtResource("32_trash")
-ignore_texture_size = true
-stretch_mode = 5
+[node name="TrashButton" type="TextureButton" parent="." unique_id=1002434942]
+layout_mode = 0
+scale = Vector2(0.9625, 0.9625)

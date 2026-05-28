@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bredoaviary00"
-path="res://.godot/imported/redo.svg-31b47982657c90d3326dd06285d78e61.ctex"
+uid="uid://bc3w88wpvj5qt"
+path="res://.godot/imported/duplicate.svg-fba4af55f066f6c2ec96082751e5609f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/redo.svg"
-dest_files=["res://.godot/imported/redo.svg-31b47982657c90d3326dd06285d78e61.ctex"]
+source_file="res://ui/duplicate.svg"
+dest_files=["res://.godot/imported/duplicate.svg-fba4af55f066f6c2ec96082751e5609f.ctex"]
 
 [params]
 
@@ -37,7 +37,7 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=2
 svg/scale=1.0
 editor/scale_with_editor_scale=false
 editor/convert_colors_with_editor_theme=false

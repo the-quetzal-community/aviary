@@ -72,7 +72,18 @@ type CloudControl struct {
 		Keys GridContainer.Instance
 	}
 
-	GizmoTypes     VBoxContainer.Instance
+	GizmoTypes struct {
+		VBoxContainer.Instance
+
+		// The four gizmo buttons sit at scene indices 0..3 so
+		// set_gizmo can address them with GetChild(int(gizmo)).
+		// Duplicate / Delete live in the same column underneath an
+		// HSeparator — Ready() limits the gizmo OnPressed wire-up to
+		// the gizmo prefix so the action buttons don't get hooked as
+		// extra gizmos.
+		Duplicate TextureButton.Instance
+		Delete    TextureButton.Instance
+	}
 	GizmoIndicator TextureRect.Instance
 
 	UpdateProgress ProgressBar.Instance
@@ -151,7 +162,13 @@ func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
 }
 
 func (ui *CloudControl) Ready() {
-	for i := 0; i < ui.GizmoTypes.AsNode().GetChildCount(); i++ {
+	// First four GizmoTypes children are the gizmo TextureButtons in
+	// the enum order GizmoPoint/Shift/Twist/Scale. Children after
+	// that are the action group (HSeparator, Duplicate, Delete) and
+	// must not be hooked as extra gizmos — their OnPressed is wired
+	// from UI.Ready instead so the client reference is available.
+	const gizmoCount = 4
+	for i := 0; i < gizmoCount; i++ {
 		child := ui.GizmoTypes.AsNode().GetChild(i)
 		Object.To[BaseButton.Instance](child).OnPressed(func() {
 			ui.set_gizmo(Gizmo(i))

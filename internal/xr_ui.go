@@ -147,7 +147,9 @@ func (world *Client) attachUIToVR(ui *UI, leftAnchor, rightAnchor Node3D.Instanc
 	if ui.Toolbar.Triangle != nil {
 		reparentTo(rightWrap, ui.Toolbar.Triangle.AsNode())
 	}
-	reparentTo(rightWrap, ui.TrashButton.AsNode())
+	// Delete and Duplicate now live inside CloudControl/GizmoTypes
+	// on the LEFT wrist alongside the gizmos — no separate reparent
+	// step needed, they ride along with CloudControl.
 
 	// Move the design explorer drawer + its hover trigger onto the
 	// palette. ExpansionIndicator goes too so the "open drawer on
@@ -795,11 +797,12 @@ func (world *Client) tryStartPaletteGrab(controller XRController3D.Instance) {
 
 // vrUpdateGripGizmo applies the desktop Shift/Ctrl-style gizmo
 // modifier using the controller grips:
-//   right grip only → GizmoShift  (= Shift)
-//   left grip only  → GizmoTwist  (= Ctrl)
-//   both grips      → GizmoScale  (= Shift+Ctrl)
-//   no grips        → restore the gizmo that was active before the
-//                     first grip came in
+//
+//	right grip only → GizmoShift  (= Shift)
+//	left grip only  → GizmoTwist  (= Ctrl)
+//	both grips      → GizmoScale  (= Shift+Ctrl)
+//	no grips        → restore the gizmo that was active before the
+//	                  first grip came in
 //
 // Called from each grip's press/release handler after the palette-
 // grab branch has been ruled out.

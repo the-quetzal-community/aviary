@@ -235,29 +235,29 @@ type Client struct {
 	// first grip comes in we snapshot the user's previous gizmo so
 	// we can restore it when both grips are released — matching the
 	// desktop CloudControl.Input behaviour.
-	vrRightGrip           bool
-	vrLeftGrip            bool
-	vrGripModifierActive  bool
-	vrGripGizmoBackup     Gizmo
+	vrRightGrip          bool
+	vrLeftGrip           bool
+	vrGripModifierActive bool
+	vrGripGizmoBackup    Gizmo
 
-	vrPointer        RayCast3D.Instance // right hand
-	vrLaser          MeshInstance3D.Instance
-	vrLaserCyl       CylinderMesh.Instance
-	vrRightHovering  bool // right pointer ray hit some UI panel last frame
-	vrRightTrigger   bool // right trigger is held
+	vrPointer       RayCast3D.Instance // right hand
+	vrLaser         MeshInstance3D.Instance
+	vrLaserCyl      CylinderMesh.Instance
+	vrRightHovering bool // right pointer ray hit some UI panel last frame
+	vrRightTrigger  bool // right trigger is held
 	// vrUIHoverViewportRight / vrUIHoverPixelRight track which panel
 	// the right ray was hovering on the last tick and where it was
 	// pointing in panel-pixel space — so the trigger handler can
 	// click whichever panel (left wrist, palette) it was over.
 	vrUIHoverViewportRight SubViewport.Instance
 	vrUIHoverPixelRight    Vector2.XY
-	vrPointerLeft    RayCast3D.Instance // left hand
-	vrLaserLeft      MeshInstance3D.Instance
-	vrLaserCylLeft   CylinderMesh.Instance
-	vrLeftHovering   bool // left pointer ray hit some UI panel last frame
-	vrLeftTrigger    bool // left trigger is held
-	vrUIHoverViewportLeft SubViewport.Instance
-	vrUIHoverPixelLeft    Vector2.XY
+	vrPointerLeft          RayCast3D.Instance // left hand
+	vrLaserLeft            MeshInstance3D.Instance
+	vrLaserCylLeft         CylinderMesh.Instance
+	vrLeftHovering         bool // left pointer ray hit some UI panel last frame
+	vrLeftTrigger          bool // left trigger is held
+	vrUIHoverViewportLeft  SubViewport.Instance
+	vrUIHoverPixelLeft     Vector2.XY
 	// vrDragController points at the hand that armed an in-progress
 	// gizmo drag. inputRay() uses its pose so updateGizmoDrag follows
 	// the controller; release on the same hand commits the drag.
@@ -630,6 +630,112 @@ func (world *Client) DeleteSelection() bool {
 	world.gizmoDrag.twistInitialAngle = 0
 	world.gizmoDrag.twistPlaneY = 0
 	return true
+}
+
+// DuplicateSelection enters preview mode for the selected entity's
+// design — same flow as picking that design from the design explorer.
+// The user then aims and clicks to drop the copy, which keeps the
+// duplicate consistent with manual placement (snap-to-terrain, rotate
+// with shift-wheel, undo via the normal placement path) instead of
+// hard-committing a clone at a fixed offset. Returns true if a preview
+// was attached.
+func (world *Client) DuplicateSelection() bool {
+	if world.selection == 0 || world.space == nil {
+		return false
+	}
+	raw, ok := world.selection.Instance()
+	if !ok {
+		return false
+	}
+	node, ok := Object.As[Node3D.Instance](raw)
+	if !ok {
+		return false
+	}
+	id := Node3D.ID(node.ID())
+
+	var design musical.Design
+	switch world.Editing {
+	case Editing.Scenery:
+		if _, has := world.object_to_entity[id]; !has {
+			return false
+		}
+		d, ok := world.findDesignForObject(id)
+		if !ok {
+			return false
+		}
+		design = d
+	case Editing.Shelter:
+		owner := id
+		if _, has := world.ShelterEditor.object_to_entity[owner]; !has {
+			parent := node.GetParentNode3d()
+			if parent == Node3D.Nil {
+				return false
+			}
+			owner = Node3D.ID(parent.ID())
+			if _, has := world.ShelterEditor.object_to_entity[owner]; !has {
+				return false
+			}
+		}
+		d, ok := findDesignInMap(world.ShelterEditor.design_to_entity, owner)
+		if !ok {
+			return false
+		}
+		design = d
+	case Editing.Vehicle:
+		if _, has := world.VehicleEditor.object_to_entity[id]; !has {
+			return false
+		}
+		d, ok := findDesignInMap(world.VehicleEditor.design_to_entity, id)
+		if !ok {
+			return false
+		}
+		design = d
+	default:
+		return false
+	}
+
+	resource, ok := world.design_to_string[design]
+	if !ok || resource == "" {
+		return false
+	}
+	if world.ui == nil || world.ui.Editor == nil || world.ui.Editor.editor == nil {
+		return false
+	}
+	world.ui.Editor.editor.SelectDesign(world.ui.mode, resource)
+	// Inherit the source entity's rotation and scale so the duplicate
+	// preview matches the original's pose 1:1. Position is set per
+	// frame by the editor's preview tracking, so we deliberately
+	// don't carry it. Optional interface — editors that don't
+	// implement it just get a fresh-default preview, which is the
+	// pre-existing behaviour.
+	if pt, ok := world.ui.Editor.editor.(previewTransformer); ok {
+		pt.SetPreviewTransform(node.AsNode3D().Rotation(), node.AsNode3D().Scale())
+	}
+	return true
+}
+
+// previewTransformer is implemented by editors whose preview supports
+// being initialised with a specific rotation + scale (rather than the
+// editor's defaults). Currently SceneryEditor — other editors compute
+// the preview transform from their own gizmos/mouse picker each frame,
+// where a one-shot setter wouldn't survive past the next physics tick.
+type previewTransformer interface {
+	SetPreviewTransform(rot Euler.Radians, scale Vector3.XYZ)
+}
+
+// findDesignInMap is the per-editor analogue of findDesignForObject —
+// each editor that stores its own design_to_entity map shares the same
+// linear-scan shape. Returns the design owning `id`, or the zero
+// Design + false if it isn't tracked.
+func findDesignInMap(m map[musical.Design][]Node3D.ID, id Node3D.ID) (musical.Design, bool) {
+	for design, ids := range m {
+		for _, candidate := range ids {
+			if candidate == id {
+				return design, true
+			}
+		}
+	}
+	return musical.Design{}, false
 }
 
 func NewClient() *Client {

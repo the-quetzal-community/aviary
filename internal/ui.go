@@ -50,12 +50,6 @@ type UI struct {
 
 	Cloudy *FlightPlanner
 
-	// TrashButton is a touch-friendly entry point for deleting the
-	// current selection. Hidden whenever DeleteSelection would be a
-	// no-op (no selection, or editor that does not support per-
-	// selection delete).
-	TrashButton TextureButton.Instance
-
 	client *Client
 
 	mode Mode
@@ -67,6 +61,27 @@ func (ui *UI) Setup() {
 	ui.CloudControl.client = ui.client
 	ui.CloudControl.Setup()
 	ui.EditorIndicator.client = ui.client
+	// The Toolbar struct field's embedded *Triangle defeats graphics.gd's
+	// auto-binder for the four TextureButton siblings — it treats the
+	// outer struct as a single node-implementing value and never
+	// recurses into the buttons, so they stay zero / pointing at an
+	// orphan and OnPressed silently goes nowhere. Look them up via the
+	// scene path directly so the handlers attach to the in-scene
+	// nodes. Ctrl+Z working via UI.Input confirmed Undo() itself was
+	// fine; only the button wiring was broken.
+	toolbar := ui.AsNode().GetNode("Toolbar")
+	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Settings")); ok {
+		ui.Toolbar.Settings = btn
+	}
+	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Undo")); ok {
+		ui.Toolbar.Undo = btn
+	}
+	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Redo")); ok {
+		ui.Toolbar.Redo = btn
+	}
+	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Export")); ok {
+		ui.Toolbar.Export = btn
+	}
 	ui.Toolbar.Settings.AsBaseButton().OnPressed(func() {
 		fmt.Println("toolbar: settings (TODO)")
 	})
@@ -133,9 +148,17 @@ func (ui *UI) Process(_ Float.X) {
 	if ui.client == nil {
 		return
 	}
+	// Duplicate and Delete sit at the bottom of the gizmo column and
+	// only make sense when something is selectable. Hide them so the
+	// column doesn't show greyed-out tiles for ineligible editors.
 	want := ui.client.CanDeleteSelection()
-	if ui.TrashButton.AsCanvasItem().Visible() != want {
-		ui.TrashButton.AsCanvasItem().SetVisible(want)
+	if ui.CloudControl != nil {
+		if ui.CloudControl.GizmoTypes.Delete.AsCanvasItem().Visible() != want {
+			ui.CloudControl.GizmoTypes.Delete.AsCanvasItem().SetVisible(want)
+		}
+		if ui.CloudControl.GizmoTypes.Duplicate.AsCanvasItem().Visible() != want {
+			ui.CloudControl.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(want)
+		}
 	}
 }
 
@@ -202,9 +225,14 @@ func (ui *UI) Ready() {
 		AsBaseButton().SetToggleMode(true).
 		AsBaseButton().AsControl().OnMouseEntered(ui.Editor.openDrawer).
 		AsControl().SetMouseFilter(Control.MouseFilterPass)
-	ui.TrashButton.AsBaseButton().OnPressed(func() {
+	ui.CloudControl.GizmoTypes.Delete.AsBaseButton().OnPressed(func() {
 		if ui.client != nil {
 			ui.client.DeleteSelection()
+		}
+	})
+	ui.CloudControl.GizmoTypes.Duplicate.AsBaseButton().OnPressed(func() {
+		if ui.client != nil {
+			ui.client.DuplicateSelection()
 		}
 	})
 	ui.CloudControl.HBoxContainer.Cloud.AsBaseButton().OnPressed(func() {
@@ -259,7 +287,6 @@ func (ui *UI) scaling() {
 	ui.scale(ui.ViewSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	ui.scale(ui.TrashButton.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 	ui.scale(ui.Toolbar.AsControl(), Float.X(3840), Float.X(2160), 0.5)
 
 	// ViewSelector needs to be centered to the top center

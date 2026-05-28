@@ -8,6 +8,7 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/variant/Angle"
+	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector3"
@@ -79,6 +80,13 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 		Design: editor.client.MusicalDesign(editor.Preview.Design()),
 		Offset: editor.Preview.AsNode3D().Position(),
 		Angles: editor.Preview.AsNode3D().Rotation(),
+		// Carry the preview's scale forward so a duplicate-from-
+		// selection preserves the source's user-scaled size. For a
+		// fresh placement Preview.Scale() is the 0.1 default set in
+		// Ready, so the inline branch of musicalImpl.Change still
+		// lands the node at scale 0.1 — same result as the
+		// pre-duplicate behaviour.
+		Bounds: editor.Preview.AsNode3D().Scale(),
 		Commit: true,
 	}
 	editor.client.space.Change(placement)
@@ -188,6 +196,15 @@ func (fe *SceneryEditor) SelectDesign(mode Mode, design string) {
 // ghost following the cursor (false).
 func (editor *SceneryEditor) PreviewOverDropZone() bool {
 	return editor.Preview.Design() != "" && editor.previewOnTerrain
+}
+
+// SetPreviewTransform overrides the preview's rotation and scale, used
+// by Client.DuplicateSelection so the in-progress duplicate matches
+// the source entity's pose. Position is left alone — PhysicsProcess
+// will snap the preview to wherever the cursor lands next.
+func (editor *SceneryEditor) SetPreviewTransform(rot Euler.Radians, scale Vector3.XYZ) {
+	editor.Preview.AsNode3D().SetRotation(rot)
+	editor.Preview.AsNode3D().SetScale(scale)
 }
 
 // ClearPreview is the design-explorer drag flow's escape hatch for a
