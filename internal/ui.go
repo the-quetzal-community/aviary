@@ -1,8 +1,6 @@
 package internal
 
 import (
-	"fmt"
-
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
@@ -10,6 +8,7 @@ import (
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
@@ -41,6 +40,13 @@ type UI struct {
 		Export   TextureButton.Instance
 	}
 
+	// SettingsMenu is the (initially empty) panel that rolls out from
+	// the Toolbar triangle when the Settings cog is pressed, mirroring
+	// the editor switcher's EditorSelector rollout. It's a root-level
+	// sibling so it stays axis-aligned (the Toolbar itself is rotated)
+	// and is sized to the Toolbar triangle's width in the scene.
+	SettingsMenu Panel.Instance
+
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
 	ModeDressing TextureButton.Instance `gd:"%ModeDressing"`
@@ -53,6 +59,10 @@ type UI struct {
 	client *Client
 
 	mode Mode
+
+	// settingsRollout drives the Settings cog menu's slide animation,
+	// sharing the same Rollout helper as the editor switcher.
+	settingsRollout Rollout
 }
 
 func (ui *UI) Setup() {
@@ -82,9 +92,7 @@ func (ui *UI) Setup() {
 	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Export")); ok {
 		ui.Toolbar.Export = btn
 	}
-	ui.Toolbar.Settings.AsBaseButton().OnPressed(func() {
-		fmt.Println("toolbar: settings (TODO)")
-	})
+	ui.Toolbar.Settings.AsBaseButton().OnPressed(ui.toggleSettings)
 	ui.Toolbar.Undo.AsBaseButton().OnPressed(func() {
 		ui.client.Undo()
 	})
@@ -94,6 +102,12 @@ func (ui *UI) Setup() {
 	ui.Toolbar.Export.AsBaseButton().OnPressed(func() {
 		ui.client.Export()
 	})
+}
+
+// toggleSettings rolls the Settings menu in and out from behind the
+// Toolbar triangle, sharing the Rollout helper with the editor switcher.
+func (ui *UI) toggleSettings() {
+	ui.settingsRollout.Toggle(ui.SettingsMenu.AsControl())
 }
 
 func (ui *UI) SetMode(mode Mode) {
@@ -283,11 +297,16 @@ func (ui *UI) scaling() {
 	ui.Editor.AsControl().SetPosition(pos)
 
 	// scale root UI elements based on display size
-	ui.scale(ui.CloudControl.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	ui.scale(ui.ViewSelector.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	ui.scale(ui.ExpansionIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	ui.scale(ui.EditorIndicator.AsControl(), Float.X(3840), Float.X(2160), 0.5)
-	ui.scale(ui.Toolbar.AsControl(), Float.X(3840), Float.X(2160), 0.5)
+	ui.scaleDefault(ui.CloudControl.AsControl())
+	ui.scaleDefault(ui.ViewSelector.AsControl())
+	ui.scaleDefault(ui.ExpansionIndicator.AsControl())
+	ui.scaleDefault(ui.EditorIndicator.AsControl())
+	ui.scaleDefault(ui.Toolbar.AsControl())
+	// Scale the Settings rollout with the same factor as the Toolbar so
+	// it keeps the triangle's width across display sizes.
+	if ui.SettingsMenu.AsControl() != Control.Nil {
+		ui.scaleDefault(ui.SettingsMenu.AsControl())
+	}
 
 	// ViewSelector needs to be centered to the top center
 	theme_pos := ui.ViewSelector.AsControl().Position()
@@ -295,6 +314,22 @@ func (ui *UI) scaling() {
 	theme_size := ui.ViewSelector.AsControl().Size()
 	theme_pos.X = (Float.X(display.X)/2 - (theme_size.X * theme_scale.X * Float.X(len(ui.ViewSelector.views))))
 	ui.ViewSelector.AsControl().SetPosition(theme_pos)
+}
+
+// Reference display the root UI controls are authored against, and the
+// floor scale factor below which they stop shrinking. Shared by every
+// scaleDefault call so the magic numbers live in one place.
+const (
+	baseScreenWidth  Float.X = 3840
+	baseScreenHeight Float.X = 2160
+	minUIScale       Float.X = 0.5
+)
+
+// scaleDefault scales a root UI control against the reference display
+// (baseScreenWidth × baseScreenHeight, floored at minUIScale). Wraps the
+// previously-repeated ui.scale(c, 3840, 2160, 0.5) call.
+func (ui *UI) scaleDefault(control Control.Instance) {
+	ui.scale(control, baseScreenWidth, baseScreenHeight, minUIScale)
 }
 
 func (ui *UI) scale(control Control.Instance, base_screen_width, base_screen_height, min_scale Float.X) {

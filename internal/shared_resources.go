@@ -2,6 +2,7 @@ package internal
 
 import (
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,6 +39,38 @@ type SharedResources struct {
 	textures         map[musical.Design]Texture2D.ID
 	design_to_string map[musical.Design]string
 	loaded           map[string]musical.Design
+}
+
+// The entity↔object↔design bookkeeping below is what every placement
+// editor (Scenery via SharedResources, plus Shelter, Vehicle and
+// Coaster, and the world-level path in client.go) keeps to map a
+// musical.Entity to its scene node, recover the owning entity from a
+// node, and list every node sharing a Design. registerEntity and
+// removeEntity centralise the once-copy-pasted bookkeeping so the three
+// maps can't drift out of sync.
+
+// registerEntity records a freshly-instantiated node under its entity
+// and design across all three maps. Callers still own node creation,
+// scene parenting and any per-editor side maps (mirror/chain) — this
+// only touches the shared triad.
+func registerEntity(designToEntity map[musical.Design][]Node3D.ID, entityToObject map[musical.Entity]Node3D.ID, objectToEntity map[Node3D.ID]musical.Entity, design musical.Design, entity musical.Entity, node Node3D.Instance) {
+	entityToObject[entity] = node.ID()
+	objectToEntity[node.ID()] = entity
+	designToEntity[design] = append(designToEntity[design], node.ID())
+}
+
+// removeEntity prunes a node from all three maps and frees it. It fixes
+// two bugs the inline copies shared: the design_to_entity prune used
+// slices.Delete(s, idx, idx) (a zero-width range that deleted nothing,
+// leaking freed IDs), and most copies forgot to delete the reverse-map
+// entries entirely, leaking entity_to_object / object_to_entity rows.
+func removeEntity(designToEntity map[musical.Design][]Node3D.ID, entityToObject map[musical.Entity]Node3D.ID, objectToEntity map[Node3D.ID]musical.Entity, design musical.Design, entity musical.Entity, node Node3D.Instance) {
+	if idx := slices.Index(designToEntity[design], node.ID()); idx >= 0 {
+		designToEntity[design] = slices.Delete(designToEntity[design], idx, idx+1)
+	}
+	delete(entityToObject, entity)
+	delete(objectToEntity, node.ID())
+	node.AsNode().QueueFree()
 }
 
 func (client *Client) MusicalDesign(resource string) musical.Design {

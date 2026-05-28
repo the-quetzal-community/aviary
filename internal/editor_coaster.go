@@ -1,8 +1,6 @@
 package internal
 
 import (
-	"slices"
-
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
@@ -277,13 +275,7 @@ func (editor *CoasterEditor) Change(change musical.Change) error {
 	exists, ok := editor.entity_to_object[change.Entity].Instance()
 	if ok {
 		if change.Remove {
-			idx := slices.Index(editor.design_to_entity[change.Design], exists.ID())
-			if idx >= 0 {
-				editor.design_to_entity[change.Design] = slices.Delete(editor.design_to_entity[change.Design], idx, idx)
-			}
-			delete(editor.entity_to_object, change.Entity)
-			delete(editor.object_to_entity, exists.ID())
-			exists.AsNode().QueueFree()
+			removeEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, exists)
 			return nil
 		}
 		exists.
@@ -303,9 +295,7 @@ func (editor *CoasterEditor) Change(change musical.Change) error {
 		SetPosition(change.Offset).
 		SetRotation(change.Angles).
 		SetScale(scale)
-	editor.entity_to_object[change.Entity] = node.ID()
-	editor.object_to_entity[node.ID()] = change.Entity
-	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
+	registerEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, node)
 	container.AddChild(node.AsNode())
 	return nil
 }

@@ -2,7 +2,6 @@ package internal
 
 import (
 	"path"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -215,11 +214,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	exists, ok := editor.entity_to_object[change.Entity].Instance()
 	if ok {
 		if change.Remove {
-			idx := slices.Index(editor.design_to_entity[change.Design], exists.ID())
-			if idx >= 0 {
-				editor.design_to_entity[change.Design] = slices.Delete(editor.design_to_entity[change.Design], idx, idx)
-			}
-			exists.AsNode().QueueFree()
+			removeEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, exists)
 			return nil
 		}
 		exists.
@@ -276,9 +271,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	} else {
 		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.2, 0.2, 0.2)))
 	}
-	editor.entity_to_object[change.Entity] = node.ID()
-	editor.object_to_entity[node.ID()] = change.Entity
-	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
+	registerEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, node)
 	container.AddChild(node.AsNode())
 	return nil
 }

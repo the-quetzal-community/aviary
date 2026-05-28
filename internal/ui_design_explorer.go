@@ -95,6 +95,18 @@ type DesignExplorer struct {
 	drag_resource string
 	drag_thumb    Texture2D.Instance
 	drag_ghost    TextureRect.Instance
+
+	// placement_recency orders design resource paths most-recently-
+	// placed first. BumpDesign pushes a resource to the front each time
+	// an entity using it is created in the scene (local, remote, or
+	// replayed — they all flow through the same Change handler), and
+	// Refresh/applyRecency consult it so the designs you most recently
+	// built float to the front of every tab. Persisted across Refreshes.
+	placement_recency []string
+	// tile_for_resource maps a design resource path to the live tile
+	// shown for it in the current Refresh, letting BumpDesign reorder
+	// the grid in place without a full rebuild. Rebuilt every Refresh.
+	tile_for_resource map[string]TextureButton.ID
 }
 
 const dragThreshold Float.X = 6
@@ -335,10 +347,58 @@ func (ui *DesignExplorer) endDrag() {
 	}
 }
 
+// applyRecency reorders the tiles across every currently-built tab so
+// the most-recently-placed designs come first. It walks
+// placement_recency oldest-first and moves each matching tile to the
+// front of its own grid, so after the pass the most-recent tile lands
+// at child index 0 within its tab. Tiles whose design has never been
+// placed keep their original library order behind the placed ones.
+func (ui *DesignExplorer) applyRecency() {
+	for i := len(ui.placement_recency) - 1; i >= 0; i-- {
+		tile, ok := ui.tile_for_resource[ui.placement_recency[i]].Instance()
+		if !ok {
+			continue
+		}
+		parent := tile.AsNode().GetParent()
+		if parent == Node.Nil {
+			continue
+		}
+		parent.MoveChild(tile.AsNode(), 0)
+	}
+}
+
+// BumpDesign records that an entity using `resource` was just placed,
+// pushing it to the front of placement_recency and — when its tile is
+// currently shown — moving that tile to the front of its tab grid so
+// the explorer always lists the most recently built designs first.
+// Called from the Change handler on every entity creation, so
+// placements by any client keep the ordering live and observable.
+func (ui *DesignExplorer) BumpDesign(resource string) {
+	if resource == "" {
+		return
+	}
+	ui.placement_recency = slices.DeleteFunc(ui.placement_recency, func(s string) bool {
+		return s == resource
+	})
+	ui.placement_recency = append([]string{resource}, ui.placement_recency...)
+	tile, ok := ui.tile_for_resource[resource].Instance()
+	if !ok {
+		return
+	}
+	parent := tile.AsNode().GetParent()
+	if parent == Node.Nil {
+		return
+	}
+	parent.MoveChild(tile.AsNode(), 0)
+}
+
 // Refresh repopulates the tabbed designs depending on the active editor,
 // these designs may be cached so that subsequent refreshes are faster.
 func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	expansion, _ := ui.ExpansionIndicator.Instance()
+	// Rebuilt each Refresh — tiles are recreated below, so the previous
+	// map's node IDs are stale. placement_recency persists separately.
+	ui.tile_for_resource = make(map[string]TextureButton.ID)
 	for _, node := range ui.Tabs.AsNode().GetChildren() {
 		ui.Tabs.AsNode().RemoveChild(node)
 		node.QueueFree()
@@ -477,6 +537,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				elements.AsNode().AddChild(button.
 					AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).
 					AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode())
+				ui.tile_for_resource[resource] = button.ID()
 			}
 			if resources == DirAccess.Nil {
 				gridflow.Update()
@@ -522,6 +583,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
 					tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
 					elements.AsNode().AddChild(tile.AsNode())
+					ui.tile_for_resource[resource] = tile.ID()
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
 					// Prefer a .region sidecar over a raw .png when both
@@ -547,6 +609,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
 					tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
 					elements.AsNode().AddChild(tile.AsNode())
+					ui.tile_for_resource[resource] = tile.ID()
 				}
 			}
 			gridflow.Update()
@@ -559,6 +622,9 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			index++
 		}
 	}
+	// Now that every tab's tiles exist, reorder them by how recently
+	// their design was placed in the scene (most recent first).
+	ui.applyRecency()
 	if len(themes_available) == 0 {
 		ui.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/editing.svg"))
 	}

@@ -2,7 +2,6 @@ package internal
 
 import (
 	"path"
-	"slices"
 
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
@@ -209,11 +208,7 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 	if ok {
 		defer editor.remirror(exists, change)
 		if change.Remove {
-			idx := slices.Index(editor.design_to_entity[change.Design], exists.ID())
-			if idx >= 0 {
-				editor.design_to_entity[change.Design] = slices.Delete(editor.design_to_entity[change.Design], idx, idx)
-			}
-			exists.AsNode().QueueFree()
+			removeEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, exists)
 			return nil
 		}
 		exists.
@@ -243,9 +238,7 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 	} else {
 		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, 0.3)))
 	}
-	editor.entity_to_object[change.Entity] = node.ID()
-	editor.object_to_entity[node.ID()] = change.Entity
-	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
+	registerEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, node)
 	editor.remirror(node, change)
 	if path.Base(path.Dir(editor.client.design_to_string[change.Design])) == "spinner" {
 		editor.Spinner.AsNode().AddChild(node.AsNode())
