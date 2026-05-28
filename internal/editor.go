@@ -122,6 +122,49 @@ type Editor interface {
 	SliderHandle(mode Mode, editing string, value float64, commit bool)
 }
 
+// ClickableEditor is the contract for editors whose placed entities can
+// be picked in the viewport (mouse click or VR pointer) and then deleted,
+// duplicated, or gizmo-manipulated. The selection and gizmo systems act
+// on the result of a click, so rather than the client switching on
+// world.Editing and reaching into each editor's private entity maps, it
+// asks the active editor these questions directly — the knowledge of how
+// an editor tracks its entities, names itself for musical routing, and
+// gates gizmo interaction stays with the editor that owns it.
+//
+// Adoption is incremental: editors implement this as they migrate off
+// the client's per-editor switches. The client falls back to its
+// existing handling (the global object_to_entity map, no Editor routing
+// string) for editors that don't implement it — which is exactly the
+// Scenery behaviour, so Scenery deliberately does NOT implement it.
+type ClickableEditor interface {
+	// EditorID is the routing string stamped into musical.Change.Editor
+	// so the change dispatches back to this editor's Change handler (and
+	// matched by its `change.Editor != id` guard). It is distinct from
+	// Name(), which is a display name — e.g. BoulderEditor.Name() is
+	// "boulder" but it routes changes as "mineral".
+	EditorID() string
+
+	// EntityForNode resolves a picked scene node to the entity it
+	// belongs to. owner is the node that actually carries the entity:
+	// editors that nest pickable children under an entity root (e.g.
+	// shelter parts under a floor anchor) walk up to it, so the gizmo
+	// transforms the right node. ok is false when the node isn't a
+	// placed entity this editor tracks.
+	EntityForNode(node Node3D.Instance) (entity musical.Entity, owner Node3D.Instance, ok bool)
+
+	// DesignForNode resolves a picked node to the design it was placed
+	// from, for Duplicate (which re-enters preview mode with that
+	// design). ok is false when the node isn't a tracked entity or its
+	// design can't be recovered.
+	DesignForNode(node Node3D.Instance) (design musical.Design, ok bool)
+
+	// GizmoManipulable reports whether the editor currently allows gizmo
+	// translate/twist/scale of its selection. Editors with modal
+	// sub-views (critter's ribcage/limbone/control own their own drag
+	// interactions) return false while those views are active.
+	GizmoManipulable() bool
+}
+
 // BuiltinDesign is one procedural/builtin entry that an editor wants
 // shown in a tab alongside (or instead of) library scenes. Used by
 // editors whose part categories include shapes generated in code

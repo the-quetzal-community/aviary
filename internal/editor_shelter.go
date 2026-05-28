@@ -200,6 +200,40 @@ func (editor *ShelterEditor) SelectDesign(mode Mode, design string) {
 	editor.Preview.SetDesign(design)
 }
 
+var _ ClickableEditor = (*ShelterEditor)(nil)
+
+func (*ShelterEditor) EditorID() string { return "shelter" }
+
+// GizmoManipulable implements [ClickableEditor]. Shelter has no modal
+// sub-views that own their own drag, so gizmos are always available.
+func (*ShelterEditor) GizmoManipulable() bool { return true }
+
+// EntityForNode implements [ClickableEditor]. Shelter parts placed from
+// library scenes nest the pickable mesh under an entity-root node, so a
+// pick may land on a child; we resolve the node directly first, then
+// walk up one level to the owning anchor.
+func (editor *ShelterEditor) EntityForNode(node Node3D.Instance) (musical.Entity, Node3D.Instance, bool) {
+	if e, has := editor.object_to_entity[Node3D.ID(node.ID())]; has {
+		return e, node, true
+	}
+	if parent := node.GetParentNode3d(); parent != Node3D.Nil {
+		if e, has := editor.object_to_entity[Node3D.ID(parent.ID())]; has {
+			return e, parent, true
+		}
+	}
+	return musical.Entity{}, Node3D.Nil, false
+}
+
+// DesignForNode implements [ClickableEditor], resolving through the same
+// owner-walk as EntityForNode before scanning the design map.
+func (editor *ShelterEditor) DesignForNode(node Node3D.Instance) (musical.Design, bool) {
+	_, owner, ok := editor.EntityForNode(node)
+	if !ok {
+		return musical.Design{}, false
+	}
+	return findDesignInMap(editor.design_to_entity, Node3D.ID(owner.ID()))
+}
+
 func (*ShelterEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
 	return 0, 0, 1, 0.01
 }

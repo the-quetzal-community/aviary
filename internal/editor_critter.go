@@ -381,6 +381,42 @@ func (ce *CritterEditor) SwitchToView(view string) {
 }
 
 func (*CritterEditor) Name() string { return "critter" }
+
+var _ ClickableEditor = (*CritterEditor)(nil)
+
+func (*CritterEditor) EditorID() string { return "critter" }
+
+// GizmoManipulable implements [ClickableEditor]. Only the default
+// ("explore") view permits gizmo manipulation; the ribcage/limbone views
+// own their bone-handle drags and control owns the WASD chase-cam, so
+// gizmo drags must not fire there.
+func (ce *CritterEditor) GizmoManipulable() bool {
+	return ce.view == "" || ce.view == "explore"
+}
+
+// EntityForNode implements [ClickableEditor]. Critter parts resolve
+// through partToEntity; library-imported part scenes carry a StaticBody3D
+// at root, so a pick may land on a child — walk up one level.
+func (ce *CritterEditor) EntityForNode(node Node3D.Instance) (musical.Entity, Node3D.Instance, bool) {
+	if e, has := ce.partToEntity[Node3D.ID(node.ID())]; has {
+		return e, node, true
+	}
+	if parent := node.GetParentNode3d(); parent != Node3D.Nil {
+		if e, has := ce.partToEntity[Node3D.ID(parent.ID())]; has {
+			return e, parent, true
+		}
+	}
+	return musical.Entity{}, Node3D.Nil, false
+}
+
+// DesignForNode implements [ClickableEditor]. Critter parts are placed
+// via procedural/encoded designs that don't go through a recoverable
+// design map, so duplicate-from-selection isn't supported — returning
+// false preserves the prior behaviour where DuplicateSelection bailed
+// for critter.
+func (ce *CritterEditor) DesignForNode(node Node3D.Instance) (musical.Design, bool) {
+	return musical.Design{}, false
+}
 func (*CritterEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:

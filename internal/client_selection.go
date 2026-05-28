@@ -9,39 +9,46 @@ import (
 	"the.quetzal.community/aviary/internal/musical"
 )
 
+// resolveSelection resolves the current world.selection to its entity,
+// the node that owns that entity, and the editor-routing id to stamp on
+// a musical.Change (empty for Scenery, which uses the global map and no
+// Editor field). It is the single place that knows how to ask the active
+// editor — every selection-driven action (delete, duplicate, gizmo) goes
+// through it instead of switching on world.Editing. ok is false when
+// there's no selection or it isn't an editable entity.
+func (world *Client) resolveSelection() (entity musical.Entity, node Node3D.Instance, editorID string, ok bool) {
+	if world.selection == 0 || world.space == nil {
+		return musical.Entity{}, Node3D.Nil, "", false
+	}
+	raw, has := world.selection.Instance()
+	if !has {
+		return musical.Entity{}, Node3D.Nil, "", false
+	}
+	picked, has := Object.As[Node3D.Instance](raw)
+	if !has {
+		return musical.Entity{}, Node3D.Nil, "", false
+	}
+	// Active editors that track their own entities (shelter, vehicle,
+	// critter) resolve the pick — including ancestor-walk and routing id.
+	if ed, isClickable := world.ui.Editor.editor.(ClickableEditor); isClickable {
+		if e, owner, found := ed.EntityForNode(picked); found {
+			return e, owner, ed.EditorID(), true
+		}
+		return musical.Entity{}, Node3D.Nil, "", false
+	}
+	// Scenery (and any non-ClickableEditor) uses the global map with no
+	// Editor routing string.
+	if e, found := world.object_to_entity[Node3D.ID(picked.ID())]; found {
+		return e, picked, "", true
+	}
+	return musical.Entity{}, Node3D.Nil, "", false
+}
+
 // CanDeleteSelection reports whether DeleteSelection would do anything
 // right now. Used by the trash-can button to decide visibility without
 // committing to a delete.
 func (world *Client) CanDeleteSelection() bool {
-	if world.selection == 0 || world.space == nil {
-		return false
-	}
-	raw, ok := world.selection.Instance()
-	if !ok {
-		return false
-	}
-	node, ok := Object.As[Node3D.Instance](raw)
-	if !ok {
-		return false
-	}
-	id := Node3D.ID(node.ID())
-	switch world.Editing {
-	case Editing.Scenery:
-		_, ok = world.object_to_entity[id]
-	case Editing.Shelter:
-		_, ok = world.ShelterEditor.object_to_entity[id]
-		if !ok {
-			if parent := node.GetParentNode3d(); parent != Node3D.Nil {
-				_, ok = world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]
-			}
-		}
-	case Editing.Vehicle:
-		_, ok = world.VehicleEditor.object_to_entity[id]
-	case Editing.Critter:
-		_, ok = world.CritterEditor.partToEntity[id]
-	default:
-		return false
-	}
+	_, _, _, ok := world.resolveSelection()
 	return ok
 }
 
@@ -50,61 +57,18 @@ func (world *Client) CanDeleteSelection() bool {
 // Delete/Backspace handler and the trash-can UI button so they share
 // one canonical path. Returns true if a delete was actually issued.
 func (world *Client) DeleteSelection() bool {
-	if world.selection == 0 || world.space == nil {
-		return false
-	}
-	raw, ok := world.selection.Instance()
-	if !ok {
-		return false
-	}
-	node, ok := Object.As[Node3D.Instance](raw)
+	entity, node, editorID, ok := world.resolveSelection()
 	if !ok {
 		return false
 	}
 	id := Node3D.ID(node.ID())
 
-	var ch musical.Change
-	ch.Author = world.id
-	ch.Remove = true
-	ch.Commit = true
-
-	switch world.Editing {
-	case Editing.Scenery:
-		entity, has := world.object_to_entity[id]
-		if !has {
-			return false
-		}
-		ch.Entity = entity
-	case Editing.Shelter:
-		entity, has := world.ShelterEditor.object_to_entity[id]
-		if !has {
-			parent := node.GetParentNode3d()
-			if parent == Node3D.Nil {
-				return false
-			}
-			entity, has = world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]
-			if !has {
-				return false
-			}
-		}
-		ch.Entity = entity
-		ch.Editor = "shelter"
-	case Editing.Vehicle:
-		entity, has := world.VehicleEditor.object_to_entity[id]
-		if !has {
-			return false
-		}
-		ch.Entity = entity
-		ch.Editor = "vehicle"
-	case Editing.Critter:
-		entity, has := world.CritterEditor.partToEntity[id]
-		if !has {
-			return false
-		}
-		ch.Entity = entity
-		ch.Editor = "critter"
-	default:
-		return false
+	ch := musical.Change{
+		Author: world.id,
+		Entity: entity,
+		Editor: editorID,
+		Remove: true,
+		Commit: true,
 	}
 
 	// Capture the entity's pre-delete state so undo can re-create
@@ -151,58 +115,28 @@ func (world *Client) DeleteSelection() bool {
 // hard-committing a clone at a fixed offset. Returns true if a preview
 // was attached.
 func (world *Client) DuplicateSelection() bool {
-	if world.selection == 0 || world.space == nil {
-		return false
-	}
-	raw, ok := world.selection.Instance()
+	_, node, _, ok := world.resolveSelection()
 	if !ok {
 		return false
 	}
-	node, ok := Object.As[Node3D.Instance](raw)
-	if !ok {
-		return false
-	}
-	id := Node3D.ID(node.ID())
 
+	// Resolve the design behind the selected node. ClickableEditors that
+	// support duplication answer via DesignForNode; Scenery falls back to
+	// the global design map. Editors that can't recover a design (critter)
+	// return false here, so duplicate is a no-op for them as before.
 	var design musical.Design
-	switch world.Editing {
-	case Editing.Scenery:
-		if _, has := world.object_to_entity[id]; !has {
-			return false
-		}
-		d, ok := world.findDesignForObject(id)
-		if !ok {
+	if ed, isClickable := world.ui.Editor.editor.(ClickableEditor); isClickable {
+		d, found := ed.DesignForNode(node)
+		if !found {
 			return false
 		}
 		design = d
-	case Editing.Shelter:
-		owner := id
-		if _, has := world.ShelterEditor.object_to_entity[owner]; !has {
-			parent := node.GetParentNode3d()
-			if parent == Node3D.Nil {
-				return false
-			}
-			owner = Node3D.ID(parent.ID())
-			if _, has := world.ShelterEditor.object_to_entity[owner]; !has {
-				return false
-			}
-		}
-		d, ok := findDesignInMap(world.ShelterEditor.design_to_entity, owner)
-		if !ok {
+	} else {
+		d, found := world.findDesignForObject(Node3D.ID(node.ID()))
+		if !found {
 			return false
 		}
 		design = d
-	case Editing.Vehicle:
-		if _, has := world.VehicleEditor.object_to_entity[id]; !has {
-			return false
-		}
-		d, ok := findDesignInMap(world.VehicleEditor.design_to_entity, id)
-		if !ok {
-			return false
-		}
-		design = d
-	default:
-		return false
 	}
 
 	resource, ok := world.design_to_string[design]

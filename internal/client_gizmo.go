@@ -16,6 +16,25 @@ import (
 	"the.quetzal.community/aviary/internal/musical"
 )
 
+// stampRouting fills in the musical.Change routing fields for a gizmo
+// drag so it dispatches back to the active editor's specialised Change
+// handler. The editor-id comes from the ClickableEditor contract; the
+// captured design is carried for editors whose handler needs it to
+// re-resolve the entity (vehicle). Scenery (not a ClickableEditor) wants
+// neither field set, which the type assertion handles by leaving the
+// Change untouched. Centralises the routing-stamp switch that the move /
+// twist / scale drag paths each repeated.
+func (world *Client) stampRouting(ch *musical.Change) {
+	ed, ok := world.ui.Editor.editor.(ClickableEditor)
+	if !ok {
+		return
+	}
+	ch.Editor = ed.EditorID()
+	if world.Editing == Editing.Vehicle {
+		ch.Design = world.gizmoDrag.design
+	}
+}
+
 // canUseGizmoManipulation reports whether the current global gizmo mode
 // (toolbar or hotkey) plus the active editor context allows gizmo-based
 // manipulation (translate via GizmoShift or twist/rotate-Y via GizmoTwist)
@@ -29,19 +48,18 @@ func (world *Client) canUseGizmoManipulation() bool {
 	if g != GizmoShift && g != GizmoTwist && g != GizmoScale {
 		return false
 	}
-	switch world.Editing {
-	case Editing.Scenery, Editing.Vehicle, Editing.Shelter:
+	// Scenery uses the global entity map and isn't a ClickableEditor, but
+	// it supports gizmo manipulation; allow it explicitly. Every other
+	// gizmo-capable editor answers GizmoManipulable() for itself (e.g.
+	// critter gates on its active sub-view). GizmoScale is supported for
+	// critter via a per-part anchor.Scale field piggy-backed on Bounds.Z,
+	// so it coexists with the leg-foot encoding in Bounds.X/Y without a
+	// schema migration.
+	if world.Editing == Editing.Scenery {
 		return true
-	case Editing.Critter:
-		// Critter has multiple sub-views; only allow gizmo manipulation
-		// in the default ("explore") view. Ribcage/limbone own their
-		// own bone-handle drag interactions and control owns the WASD
-		// chase-cam — letting gizmo drags fire there would conflict.
-		// GizmoScale is supported via a per-part anchor.Scale field
-		// piggy-backed on Bounds.Z (the slot the leg-foot encoding
-		// leaves empty), so it coexists with the leg-foot encoding
-		// in Bounds.X/Y without a schema migration.
-		return world.CritterEditor.view == "" || world.CritterEditor.view == "explore"
+	}
+	if ed, ok := world.ui.Editor.editor.(ClickableEditor); ok {
+		return ed.GizmoManipulable()
 	}
 	return false
 }
@@ -203,41 +221,17 @@ func (world *Client) selectedEntityForGizmo() (musical.Entity, Node3D.Instance, 
 	if !ok {
 		return musical.Entity{}, Node3D.Nil, false
 	}
-	id := Node3D.ID(node.ID())
-
-	if e, has := world.object_to_entity[id]; has {
+	if e, has := world.object_to_entity[Node3D.ID(node.ID())]; has {
 		return e, node, true
 	}
 
-	switch world.Editing {
-	case Editing.Vehicle:
-		if e, has := world.VehicleEditor.object_to_entity[id]; has {
-			return e, node, true
-		}
-	case Editing.Shelter:
-		if e, has := world.ShelterEditor.object_to_entity[id]; has {
-			return e, node, true
-		}
-		// Mirror the fallback used in ShelterEditor's delete handling.
-		parent := node.GetParentNode3d()
-		if parent != Node3D.Nil {
-			if e, has := world.ShelterEditor.object_to_entity[Node3D.ID(parent.ID())]; has {
-				return e, parent, true
-			}
-		}
-	case Editing.Critter:
-		if e, has := world.CritterEditor.partToEntity[id]; has {
-			return e, node, true
-		}
-		// Library-imported part scenes ship with their StaticBody3D
-		// at root; the picker may land on a child of the attached
-		// part. Walk up one level so the selection resolves to the
-		// entity-owning anchor node.
-		parent := node.GetParentNode3d()
-		if parent != Node3D.Nil {
-			if e, has := world.CritterEditor.partToEntity[Node3D.ID(parent.ID())]; has {
-				return e, parent, true
-			}
+	// Editors that keep their own entity maps (shelter, vehicle, critter)
+	// resolve the pick themselves via ClickableEditor, including any
+	// ancestor-walk for nested pickable children. Scenery deliberately
+	// doesn't implement it — it uses the global map handled above.
+	if ed, ok := world.ui.Editor.editor.(ClickableEditor); ok {
+		if e, owner, ok := ed.EntityForNode(node); ok {
+			return e, owner, true
 		}
 	}
 	return musical.Entity{}, Node3D.Nil, false
@@ -293,13 +287,7 @@ func (world *Client) updateGizmoDrag() {
 				Bounds: newScale,
 				Commit: false,
 			}
-			switch world.Editing {
-			case Editing.Vehicle:
-				scaleCh.Editor = "vehicle"
-				scaleCh.Design = world.gizmoDrag.design
-			case Editing.Shelter:
-				scaleCh.Editor = "shelter"
-			}
+			world.stampRouting(&scaleCh)
 			_ = world.space.Change(scaleCh)
 		}
 		return // scale handled, skip translate/twist
@@ -330,13 +318,7 @@ func (world *Client) updateGizmoDrag() {
 		Angles: rot,
 		Commit: false, // live preview during drag
 	}
-	switch world.Editing {
-	case Editing.Vehicle:
-		ch.Editor = "vehicle"
-		ch.Design = world.gizmoDrag.design
-	case Editing.Shelter:
-		ch.Editor = "shelter"
-	}
+	world.stampRouting(&ch)
 
 	// Vehicle mirror handling: if we captured a symmetry plane at drag
 	// start, reflect the target main position over it. This makes the
@@ -392,14 +374,11 @@ func (world *Client) updateGizmoDrag() {
 				Angles: rot,
 				Commit: false,
 			}
-			switch world.Editing {
-			case Editing.Vehicle:
-				twistCh.Editor = "vehicle"
-				twistCh.Design = world.gizmoDrag.design
-
-				// Preserve the existing mirror offset (if any) so remirror()
-				// does not interpret the lack of Mirror field as "remove the twin".
-				// This mirrors the logic we use for move drags.
+			world.stampRouting(&twistCh)
+			// Preserve the existing mirror offset (if any) so remirror()
+			// does not interpret the lack of Mirror field as "remove the twin".
+			// This mirrors the logic we use for move drags.
+			if world.Editing == Editing.Vehicle {
 				if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
 					if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
 						mirrorPos := mirrorNode.AsNode3D().Position()
@@ -407,8 +386,6 @@ func (world *Client) updateGizmoDrag() {
 						twistCh.Mirror = Vector3.Sub(mirrorPos, mainPos)
 					}
 				}
-			case Editing.Shelter:
-				twistCh.Editor = "shelter"
 			}
 			_ = world.space.Change(twistCh)
 		}
@@ -456,13 +433,7 @@ func (world *Client) commitGizmoDrag() {
 		Angles: rot,
 		Commit: true,
 	}
-	switch world.Editing {
-	case Editing.Vehicle:
-		ch.Editor = "vehicle"
-		ch.Design = world.gizmoDrag.design
-	case Editing.Shelter:
-		ch.Editor = "shelter"
-	}
+	world.stampRouting(&ch)
 
 	// Vehicle mirror handling: if we captured a symmetry plane at drag
 	// start, reflect the target main position over it. This makes the
@@ -503,13 +474,7 @@ func (world *Client) commitGizmoDrag() {
 			Bounds: node.AsNode3D().Scale(),
 			Commit: true,
 		}
-		switch world.Editing {
-		case Editing.Vehicle:
-			scaleCh.Editor = "vehicle"
-			scaleCh.Design = world.gizmoDrag.design
-		case Editing.Shelter:
-			scaleCh.Editor = "shelter"
-		}
+		world.stampRouting(&scaleCh)
 		if err := world.space.Change(scaleCh); err != nil {
 			Engine.Raise(err)
 		}
@@ -540,12 +505,9 @@ func (world *Client) commitGizmoDrag() {
 			Angles: rot,
 			Commit: true,
 		}
-		switch world.Editing {
-		case Editing.Vehicle:
-			twistCh.Editor = "vehicle"
-			twistCh.Design = world.gizmoDrag.design
-
-			// Preserve mirror offset on final commit too.
+		world.stampRouting(&twistCh)
+		// Preserve mirror offset on final commit too.
+		if world.Editing == Editing.Vehicle {
 			if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
 				if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
 					mirrorPos := mirrorNode.AsNode3D().Position()
@@ -553,8 +515,6 @@ func (world *Client) commitGizmoDrag() {
 					twistCh.Mirror = Vector3.Sub(mirrorPos, mainPos)
 				}
 			}
-		case Editing.Shelter:
-			twistCh.Editor = "shelter"
 		}
 		_ = world.space.Change(twistCh)
 		// Undo of a twist = same Change but with Angles.Y restored

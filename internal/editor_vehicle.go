@@ -60,6 +60,31 @@ func (editor *VehicleEditor) Ready() {
 
 func (*VehicleEditor) Name() string { return "vehicle" }
 
+var _ ClickableEditor = (*VehicleEditor)(nil)
+
+func (*VehicleEditor) EditorID() string { return "vehicle" }
+
+// GizmoManipulable implements [ClickableEditor]. Vehicle has no modal
+// sub-views, so gizmos are always available.
+func (*VehicleEditor) GizmoManipulable() bool { return true }
+
+// EntityForNode implements [ClickableEditor]. Vehicle parts are tracked
+// directly by their instantiated node, so no ancestor walk is needed.
+func (editor *VehicleEditor) EntityForNode(node Node3D.Instance) (musical.Entity, Node3D.Instance, bool) {
+	if e, has := editor.object_to_entity[Node3D.ID(node.ID())]; has {
+		return e, node, true
+	}
+	return musical.Entity{}, Node3D.Nil, false
+}
+
+// DesignForNode implements [ClickableEditor].
+func (editor *VehicleEditor) DesignForNode(node Node3D.Instance) (musical.Design, bool) {
+	if _, has := editor.object_to_entity[Node3D.ID(node.ID())]; !has {
+		return musical.Design{}, false
+	}
+	return findDesignInMap(editor.design_to_entity, Node3D.ID(node.ID()))
+}
+
 // ExportSubtree implements the Exporter interface (see export.go).
 // We duplicate the Objects and Spinner containers — these hold every
 // committed vehicle part — onto a fresh root so the .glb captures the
