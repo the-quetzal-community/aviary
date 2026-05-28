@@ -222,6 +222,14 @@ func (ui *UI) Ready() {
 
 func (ui *UI) scaling() {
 	display := DisplayServer.WindowGetSize(0)
+	// In VR the UI doesn't live in the main window — it's painted
+	// into a 1920×1080 SubViewport per wrist panel. Pretend the
+	// "display" is 1920×1080 so the drawer-position-by-bottom-of-
+	// screen math doesn't push the drawer off the visible quad.
+	if ui.client != nil && ui.client.xr {
+		display.X = 1920
+		display.Y = 1080
+	}
 
 	// Calculate uniform scale factor based on height ratio (360 base height at 2160 screen height)
 	var scale_factor Float.X = Float.X(display.Y) / 2160.0

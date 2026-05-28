@@ -9,7 +9,6 @@ import (
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
-	"graphics.gd/classdb/DisplayServer"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/HSlider"
@@ -22,10 +21,12 @@ import (
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Range"
 	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/ResourceLoader"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/Tween"
 	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Float"
@@ -75,6 +76,44 @@ type DesignExplorer struct {
 	queued       func()
 
 	last_slider_state sliderState
+
+	// drag-and-drop state for placing designs into the scene by
+	// dragging from the explorer. drag_active is armed on a tile's
+	// button_down; drag_started flips true once the cursor moves past
+	// dragThreshold from the press anchor — at that point the preview
+	// is attached and the drawer closes (drag intent confirmed). If
+	// the user releases without crossing the threshold, the tile's
+	// legacy OnPressed handler attaches the preview the way it always
+	// did, preserving the old click-then-click placement flow.
+	// drag_mode / drag_resource / drag_thumb capture the pending tile
+	// so the threshold-cross path can call SelectDesign without
+	// re-plumbing the loop closures.
+	drag_active   bool
+	drag_started  bool
+	drag_anchor   Vector2.XY
+	drag_mode     Mode
+	drag_resource string
+	drag_thumb    Texture2D.Instance
+	drag_ghost    TextureRect.Instance
+}
+
+const dragThreshold Float.X = 6
+
+// previewDropZoneReporter is implemented by editors that can tell the
+// drag flow whether the in-progress preview is currently hovering a
+// valid drop site. When true, the design explorer hides the 2D ghost
+// (the 3D preview already shows where the design will land); when
+// false, the 2D ghost follows the cursor as visual feedback.
+type previewDropZoneReporter interface {
+	PreviewOverDropZone() bool
+}
+
+// previewClearer is implemented by editors that can wipe their
+// preview without arguments. The drag flow calls it on a missed drop
+// so the ghost doesn't linger after the user releases the mouse off
+// any valid drop site.
+type previewClearer interface {
+	ClearPreview()
 }
 
 type editorMode struct {
@@ -105,7 +144,13 @@ func (de *DesignExplorer) Ready() {
 		if strings.Contains(name, ".") {
 			continue
 		}
-		if FileAccess.FileExists("res://library/" + name + "/icon.png.import") {
+		// On Android/Quest exports, .import metadata files are stripped
+		// and `FileAccess.FileExists(...".import")` always returns
+		// false — which made the loop skip every theme and left the
+		// drawer empty. ResourceLoader.Exists works against the
+		// packed converted texture (.ctex) too, so it's correct on
+		// both desktop and Android.
+		if ResourceLoader.Exists("res://library/"+name+"/icon.png", "") {
 			button := TextureButton.New().
 				SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png")).
 				SetIgnoreTextureSize(true).
@@ -160,6 +205,133 @@ func (ui *DesignExplorer) Process(delta Float.X) {
 			ui.last_slider_state.val,
 			true,
 		)
+	}
+	ui.updateDrag()
+}
+
+// ensureDragGhost lazily creates the 2D thumbnail overlay used during
+// a drag. Parented to the UI root (rather than the design explorer
+// panel) so the ghost can float anywhere on screen without inheriting
+// the drawer's animated transform. Mouse-filter-ignore so it never
+// eats clicks, top-level so it doesn't get sucked into the explorer's
+// HBoxContainer layout, and Z-indexed above sibling UI.
+func (ui *DesignExplorer) ensureDragGhost() {
+	if ui.drag_ghost != TextureRect.Nil {
+		return
+	}
+	rect := TextureRect.New()
+	rect.SetExpandMode(TextureRect.ExpandIgnoreSize)
+	rect.SetStretchMode(TextureRect.StretchKeepAspectCentered)
+	rect.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
+	rect.AsControl().SetSize(Vector2.New(96, 96))
+	rect.AsCanvasItem().SetVisible(false)
+	rect.AsCanvasItem().SetTopLevel(true)
+	rect.AsCanvasItem().SetZIndex(100)
+	var parent Node.Instance
+	if ui.client != nil && ui.client.ui != nil {
+		parent = ui.client.ui.AsControl().AsNode()
+	} else {
+		parent = ui.AsNode()
+	}
+	parent.AddChild(rect.AsNode())
+	ui.drag_ghost = rect
+}
+
+// armDrag is called from a tile's button_down. It captures the press
+// anchor and pending design but deliberately does NOT call SelectDesign
+// or close the drawer yet — that way an accidental press that's
+// released off the tile (with no movement past dragThreshold) leaves
+// the explorer state untouched, exactly like the pre-drag behaviour.
+// The preview is attached either when updateDrag confirms drag intent
+// (threshold crossed) or when the tile's OnPressed fires (legacy tap).
+func (ui *DesignExplorer) armDrag(mode Mode, resource string, thumb Texture2D.Instance) {
+	ui.ensureDragGhost()
+	ui.drag_active = true
+	ui.drag_started = false
+	ui.drag_mode = mode
+	ui.drag_resource = resource
+	ui.drag_thumb = thumb
+	ui.drag_anchor = ui.AsCanvasItem().GetGlobalMousePosition()
+	if ui.drag_ghost != TextureRect.Nil {
+		if thumb != Texture2D.Nil {
+			ui.drag_ghost.SetTexture(thumb)
+		}
+		ui.drag_ghost.AsCanvasItem().SetVisible(false)
+	}
+}
+
+// tapTile is the legacy click-to-enter-preview path. It runs from the
+// tile's OnPressed (which Godot fires only when the release lands on
+// the same button), so it both preserves the pre-drag behaviour and
+// covers the "released without crossing the drag threshold" tap case.
+// If drag intent was already confirmed (drag_started=true) we leave
+// the preview to the drag/release path.
+func (ui *DesignExplorer) tapTile(mode Mode, resource string) {
+	if ui.drag_started {
+		return
+	}
+	ui.editor.SelectDesign(mode, resource)
+	ui.closeDrawer()
+}
+
+func (ui *DesignExplorer) updateDrag() {
+	if !ui.drag_active {
+		return
+	}
+	mouse := ui.AsCanvasItem().GetGlobalMousePosition()
+	if !ui.drag_started && Vector2.Distance(mouse, ui.drag_anchor) > dragThreshold {
+		// Drag intent confirmed — attach the preview and collapse the
+		// drawer so the user sees the 3D ghost track their cursor.
+		ui.drag_started = true
+		ui.editor.SelectDesign(ui.drag_mode, ui.drag_resource)
+		ui.closeDrawer()
+	}
+	if !Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
+		ui.endDrag()
+		return
+	}
+	if ui.drag_ghost == TextureRect.Nil {
+		return
+	}
+	if !ui.drag_started {
+		ui.drag_ghost.AsCanvasItem().SetVisible(false)
+		return
+	}
+	overDropZone := false
+	if dz, ok := ui.editor.(previewDropZoneReporter); ok {
+		overDropZone = dz.PreviewOverDropZone()
+	}
+	ui.drag_ghost.AsCanvasItem().SetVisible(!overDropZone)
+	if !overDropZone {
+		size := ui.drag_ghost.AsControl().Size()
+		ui.drag_ghost.AsControl().SetPosition(Vector2.New(
+			mouse.X-size.X/2,
+			mouse.Y-size.Y/2,
+		))
+	}
+}
+
+func (ui *DesignExplorer) endDrag() {
+	if !ui.drag_active {
+		return
+	}
+	dragged := ui.drag_started
+	ui.drag_active = false
+	ui.drag_started = false
+	if ui.drag_ghost != TextureRect.Nil {
+		ui.drag_ghost.AsCanvasItem().SetVisible(false)
+	}
+	if !dragged {
+		return // tap path: legacy OnPressed already handled preview attach.
+	}
+	placed := false
+	if pp, ok := ui.editor.(PreviewPlacer); ok {
+		placed = pp.TryPlacePreview()
+	}
+	if !placed {
+		if pc, ok := ui.editor.(previewClearer); ok {
+			pc.ClearPreview()
+		}
 	}
 }
 
@@ -246,7 +418,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			ui.slider[ui.editor.Name()][tab] = slider_id
 			ui.Tabs.AsNode().AddChild(Node.Instance(slider.AsNode()))
-			if FileAccess.FileExists("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg.import") {
+			if ResourceLoader.Exists("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg", "") {
 				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
 				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
@@ -283,16 +455,21 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			for _, b := range builtins {
 				resource := b.Resource
 				button := TextureButton.New()
+				var iconTex Texture2D.Instance
 				if b.Icon != "" {
 					if icon := Resource.Load[Texture2D.Instance](b.Icon); icon != Texture2D.Nil {
+						iconTex = icon
 						button.SetTextureNormal(icon)
 					}
 				}
-				button.SetIgnoreTextureSize(true).
+				base := button.SetIgnoreTextureSize(true).
 					SetStretchMode(TextureButton.StretchKeepAspectCentered).
-					AsBaseButton().OnPressed(func() {
-					ui.editor.SelectDesign(mode, resource)
-					ui.closeDrawer()
+					AsBaseButton()
+				base.OnButtonDown(func() {
+					ui.armDrag(mode, resource, iconTex)
+				})
+				base.OnPressed(func() {
+					ui.tapTile(mode, resource)
 				})
 				if b.Label != "" {
 					button.AsControl().SetTooltipText(b.Label)
@@ -303,7 +480,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			if resources == DirAccess.Nil {
 				gridflow.Update()
-				if FileAccess.FileExists("res://ui/" + tab + ".svg.import") {
+				if ResourceLoader.Exists("res://ui/"+tab+".svg", "") {
 					ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
 				} else {
 					ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
@@ -332,18 +509,19 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
 						resource = tscn
 					}
-					elements.AsNode().AddChild(TextureButton.New().
+					tile := TextureButton.New().
 						SetTextureNormal(preview).
 						SetIgnoreTextureSize(true).
-						SetStretchMode(TextureButton.StretchKeepAspectCentered).
-						AsBaseButton().OnPressed(
-						func() {
-							ui.editor.SelectDesign(mode, resource)
-							ui.closeDrawer()
-						}).
-						AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).
-						AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode(),
-					)
+						SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					tile.AsBaseButton().OnButtonDown(func() {
+						ui.armDrag(mode, resource, preview)
+					})
+					tile.AsBaseButton().OnPressed(func() {
+						ui.tapTile(mode, resource)
+					})
+					tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+					tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
+					elements.AsNode().AddChild(tile.AsNode())
 				case png:
 					texture := Resource.Load[Texture2D.Instance](path)
 					// Prefer a .region sidecar over a raw .png when both
@@ -356,22 +534,23 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					if FileAccess.FileExists(region_path) {
 						resource = region_path
 					}
-					elements.AsNode().AddChild(TextureButton.New().
+					tile := TextureButton.New().
 						SetTextureNormal(texture).
 						SetIgnoreTextureSize(true).
-						SetStretchMode(TextureButton.StretchKeepAspectCentered).
-						AsBaseButton().OnPressed(
-						func() {
-							ui.editor.SelectDesign(mode, resource)
-							ui.closeDrawer()
-						}).
-						AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).
-						AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode(),
-					)
+						SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					tile.AsBaseButton().OnButtonDown(func() {
+						ui.armDrag(mode, resource, texture)
+					})
+					tile.AsBaseButton().OnPressed(func() {
+						ui.tapTile(mode, resource)
+					})
+					tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+					tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
+					elements.AsNode().AddChild(tile.AsNode())
 				}
 			}
 			gridflow.Update()
-			if FileAccess.FileExists("res://ui/" + tab + ".svg.import") {
+			if ResourceLoader.Exists("res://ui/"+tab+".svg", "") {
 				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
 			} else {
 				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
@@ -389,10 +568,33 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 
 func (ui *DesignExplorer) UnhandledInput(event InputEvent.Instance) {
 	if ui.drawExpanded.Load() && Object.Is[InputEventMouseMotion.Instance](event) {
-		height := DisplayServer.WindowGetSize(0).Y
+		height := uiDisplaySize(ui.client).Y
 		if ui.AsCanvasItem().GetGlobalMousePosition().Y < Float.X(height)*0.3 {
 			ui.closeDrawer()
 		}
+	}
+}
+
+// fadeGizmos tweens the modulate alpha of the gizmo toolbar
+// (GizmoTypes + GizmoIndicator on CloudControl) to `alpha` over
+// 150 ms. Called with 0.0 when the drawer opens (so the gizmo
+// strip doesn't fight the design grid visually) and 1.0 when it
+// closes. Modulate propagates to children, so the whole strip of
+// gizmo buttons fades together.
+func (ui *DesignExplorer) fadeGizmos(alpha float32) {
+	if ui.client == nil || ui.client.ui == nil || ui.client.ui.CloudControl == nil {
+		return
+	}
+	cc := ui.client.ui.CloudControl
+	const dur = 0.15
+	for _, ctl := range []Control.Instance{
+		cc.GizmoTypes.AsControl(),
+		cc.GizmoIndicator.AsControl(),
+	} {
+		target := ctl.AsCanvasItem().Modulate()
+		target.A = alpha
+		tween := SceneTree.Get(ui.AsNode()).CreateTween()
+		PropertyTweener.Make(tween, ctl.AsObject(), "modulate", target, dur).SetEase(Tween.EaseOut)
 	}
 }
 
@@ -409,7 +611,8 @@ func (ui *DesignExplorer) openDrawer() {
 		container.scroll_lock = false
 	}
 	ui.client.scroll_lock = true
-	window_size := DisplayServer.WindowGetSize(0)
+	ui.fadeGizmos(0.0)
+	window_size := uiDisplaySize(ui.client)
 	scale_factor := ui.AsControl().Scale().Y
 	current_eff_height := ui.AsControl().Size().Y * scale_factor
 	var amount Float.X = -(Float.X(window_size.Y) - current_eff_height) * 0.8
@@ -443,7 +646,8 @@ func (ui *DesignExplorer) closeDrawer() {
 		container.scroll_lock = true
 	}
 	ui.client.scroll_lock = false
-	window_size := DisplayServer.WindowGetSize(0)
+	ui.fadeGizmos(1.0)
+	window_size := uiDisplaySize(ui.client)
 	scale_factor := ui.AsControl().Scale().Y
 	const base_logical_height = 360.0 // Your base collapsed logical height (adjust to 370.0 if that's intended)
 	grow := Vector2.New(ui.AsControl().Size().X, base_logical_height)

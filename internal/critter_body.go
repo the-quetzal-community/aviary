@@ -182,6 +182,13 @@ type PartAnchor struct {
 	LegFoot  int
 	LegSide  int
 	Twist    float32
+
+	// Scale is a per-part uniform scale MULTIPLIER applied on top of
+	// the body-wide partScale in positionPart. Zero is the legacy
+	// default meaning "no per-part scaling" (treated as 1.0) — so
+	// pre-existing recorded Changes whose Bounds.Z is 0 stay valid
+	// without a schema migration.
+	Scale float32
 }
 
 // AttachCritterBody creates a fresh ArrayMesh, runs an initial mesh
@@ -819,7 +826,7 @@ func (b *CritterBody) RepositionPartsAnimated() {
 					foot.X = -foot.X
 				}
 			}
-			b.positionPartFlatAtFoot(node, foot)
+			b.positionPartFlatAtFoot(node, foot, anchor.Scale)
 			continue
 		}
 		pos, outward, _ := b.critter.AnchorPoint(anchor.T, anchor.Theta, anchor.Offset)
@@ -865,6 +872,9 @@ func (b *CritterBody) RepositionPartsAnimated() {
 		})
 		right, up := partOrientation(posedOut)
 		s := b.partScale
+		if anchor.Scale > 0 {
+			s *= anchor.Scale
+		}
 		basis := Basis.XYZ{
 			Vector3.MulX(right, s),
 			Vector3.MulX(up, s),
@@ -1107,7 +1117,7 @@ func (b *CritterBody) positionPart(node Node3D.Instance, anchor PartAnchor) {
 		if anchor.LegSide == 1 {
 			foot.X = -foot.X
 		}
-		b.positionPartFlatAtFoot(node, foot)
+		b.positionPartFlatAtFoot(node, foot, anchor.Scale)
 		return
 	}
 	pos, outward, _ := b.critter.AnchorPoint(anchor.T, anchor.Theta, anchor.Offset)
@@ -1130,10 +1140,14 @@ func (b *CritterBody) positionPart(node Node3D.Instance, anchor PartAnchor) {
 	origin := Vector3.XYZ{
 		X: Float.X(pos.X), Y: Float.X(pos.Y), Z: Float.X(pos.Z),
 	}
+	s := b.partScale
+	if anchor.Scale > 0 {
+		s *= anchor.Scale
+	}
 	basis := Basis.XYZ{
-		Vector3.MulX(right, b.partScale),
-		Vector3.MulX(up, b.partScale),
-		Vector3.MulX(fwd, b.partScale),
+		Vector3.MulX(right, s),
+		Vector3.MulX(up, s),
+		Vector3.MulX(fwd, s),
 	}
 	node.AsNode3D().SetTransform(Transform3D.BasisOrigin{Basis: basis, Origin: origin})
 }
@@ -1150,7 +1164,7 @@ func (b *CritterBody) positionPart(node Node3D.Instance, anchor PartAnchor) {
 // Used both by the rest-pose path (positionPart's OnLeg branch
 // above) and by the per-frame animated path (SetAnimatedLegFeet
 // below) so both share the same orientation conventions.
-func (b *CritterBody) positionPartFlatAtFoot(node Node3D.Instance, footLocal critter.Vec3) {
+func (b *CritterBody) positionPartFlatAtFoot(node Node3D.Instance, footLocal critter.Vec3, anchorScale float32) {
 	if b.mesh == MeshInstance3D.Nil {
 		return
 	}
@@ -1186,6 +1200,9 @@ func (b *CritterBody) positionPartFlatAtFoot(node Node3D.Instance, footLocal cri
 	up := Vector3.XYZ{Y: 1}
 	right := Vector3.Cross(up, fwd)
 	s := b.partScale
+	if anchorScale > 0 {
+		s *= anchorScale
+	}
 	basis := Basis.XYZ{
 		Vector3.MulX(right, s),
 		Vector3.MulX(up, s),
@@ -1225,7 +1242,7 @@ func (b *CritterBody) SetAnimatedLegFeet(footLocals [][2]critter.Vec3) {
 		if !ok {
 			continue
 		}
-		b.positionPartFlatAtFoot(node, footLocals[anchor.LegFoot][anchor.LegSide])
+		b.positionPartFlatAtFoot(node, footLocals[anchor.LegFoot][anchor.LegSide], anchor.Scale)
 	}
 }
 

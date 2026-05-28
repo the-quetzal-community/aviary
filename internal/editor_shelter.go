@@ -225,8 +225,12 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		exists.
 			SetPosition(change.Offset).
 			SetRotation(change.Angles)
-		// Scale is set at creation time. Do not stomp it on updates
-		// (e.g. gizmo moves).
+		// Apply explicit Bounds if present (scale gizmo); otherwise
+		// leave whatever scale the instance already has so translate/
+		// twist edits don't stomp the creation-time 0.2 factor.
+		if change.Bounds != Vector3.Zero {
+			exists.SetScale(change.Bounds)
+		}
 		return nil
 	}
 	var node Node3D.Instance
@@ -266,8 +270,12 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	node.AsNode().AddToGroup("floor_" + strconv.Itoa(level))
 	node.
 		SetPosition(change.Offset).
-		SetRotation(change.Angles).
-		SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.2, 0.2, 0.2)))
+		SetRotation(change.Angles)
+	if change.Bounds != Vector3.Zero {
+		node.SetScale(change.Bounds)
+	} else {
+		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.2, 0.2, 0.2)))
+	}
 	editor.entity_to_object[change.Entity] = node.ID()
 	editor.object_to_entity[node.ID()] = change.Entity
 	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())

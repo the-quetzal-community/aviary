@@ -1593,7 +1593,12 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 		change.Bounds = Vector3.XYZ{
 			X: Float.X(anchor.LegFoot + 1),
 			Y: Float.X(anchor.LegSide),
+			Z: Float.X(anchor.Scale),
 		}
+	} else if anchor.Scale > 0 {
+		// Body anchor + per-part scale: only the Z slot is used;
+		// X stays 0 so decoders still see this as a body anchor.
+		change.Bounds = Vector3.XYZ{Z: Float.X(anchor.Scale)}
 	}
 	if err := ce.client.space.Change(change); err != nil {
 		Engine.Raise(err)
@@ -1752,6 +1757,11 @@ func anchorFromChange(change musical.Change) PartAnchor {
 		Theta:  float32(change.Offset.Y),
 		Offset: float32(change.Offset.Z),
 		Twist:  float32(change.Angles.Y),
+		// Bounds.Z carries the per-part scale multiplier (0 = legacy
+		// default, treated as 1.0 by positionPart). Sits in the slot
+		// the leg-foot encoding leaves empty (Bounds.X = LegFoot+1,
+		// Bounds.Y = LegSide) so scale + leg anchors can coexist.
+		Scale: float32(change.Bounds.Z),
 	}
 	if change.Bounds.X > 0 {
 		a.OnLeg = true

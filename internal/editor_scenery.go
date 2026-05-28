@@ -6,6 +6,7 @@ import (
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -18,6 +19,13 @@ type SceneryEditor struct {
 	musical.Stubbed
 
 	Preview PreviewRenderer
+
+	// previewOnTerrain is true when PhysicsProcess's last picker
+	// query landed on an actual TerrainTile. Placement is only
+	// allowed in that state so a VR trigger can't drop the design
+	// at a floating laser-endpoint fallback the user can see for
+	// orientation but isn't a valid drop site.
+	previewOnTerrain bool
 
 	client *Client
 }
@@ -43,37 +51,79 @@ func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 			editor.Preview.Remove()
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
-			if editor.Preview.Design() != "" {
-				placement := musical.Change{
-					Author: editor.client.id,
-					Entity: editor.client.NextEntity(),
-					Design: editor.client.MusicalDesign(editor.Preview.Design()),
-					Offset: editor.Preview.AsNode3D().Position(),
-					Angles: editor.Preview.AsNode3D().Rotation(),
-					Commit: true,
-				}
-				editor.client.space.Change(placement)
-				// Undo of a placement = remove that entity. Redo
-				// re-runs the same placement.
-				editor.client.RecordChange(placement, musical.Change{
-					Author: editor.client.id,
-					Entity: placement.Entity,
-					Remove: true,
-				})
-				if !Input.IsKeyPressed(Input.KeyShift) {
-					editor.Preview.Remove()
-				}
-			}
+			editor.TryPlacePreview()
 		}
 	}
 }
 
-func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
-	if editor.Preview.Design() != "" {
-		if hover := MousePicker(editor.AsNode3D()); Object.Is[*TerrainTile](hover.Collider) {
-			editor.Preview.AsNode3D().SetGlobalPosition(hover.Position)
-		}
+// TryPlacePreview commits the current preview design as a placed
+// entity if one is loaded, and returns true on success. Shared by
+// the desktop left-click path and the VR trigger handler (where it's
+// invoked via the PreviewPlacer interface when the user pulls trigger
+// off-UI with a design ready to drop). Holding Shift on desktop keeps
+// the preview attached for rapid duplication; in VR there's no Shift
+// hotkey, so the preview always clears.
+func (editor *SceneryEditor) TryPlacePreview() bool {
+	if editor.Preview.Design() == "" {
+		return false
 	}
+	// Require a live terrain hit before placement so a VR trigger
+	// can't drop the design at the floating laser-endpoint preview
+	// the user sees as feedback when pointing at sky or geometry.
+	if !editor.previewOnTerrain {
+		return false
+	}
+	placement := musical.Change{
+		Author: editor.client.id,
+		Entity: editor.client.NextEntity(),
+		Design: editor.client.MusicalDesign(editor.Preview.Design()),
+		Offset: editor.Preview.AsNode3D().Position(),
+		Angles: editor.Preview.AsNode3D().Rotation(),
+		Commit: true,
+	}
+	editor.client.space.Change(placement)
+	editor.client.RecordChange(placement, musical.Change{
+		Author: editor.client.id,
+		Entity: placement.Entity,
+		Remove: true,
+	})
+	if !Input.IsKeyPressed(Input.KeyShift) {
+		editor.Preview.Remove()
+	}
+	return true
+}
+
+func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
+	if editor.Preview.Design() == "" {
+		editor.previewOnTerrain = false
+		return
+	}
+	// PreviewPicker routes to the right controller's aim in VR
+	// (and the mouse projection on desktop). When the pointer lands
+	// on a terrain tile, the preview snaps there and is committable.
+	// When it doesn't:
+	//   - desktop: hide the preview (matches the pre-VR behaviour).
+	//   - VR: float the preview 3 m down the laser as visual
+	//     feedback so the user can see what they're holding, while
+	//     keeping previewOnTerrain=false so a trigger pull won't
+	//     commit it in mid-air.
+	hover := editor.client.PreviewPicker()
+	onTerrain := Object.Is[*TerrainTile](hover.Collider)
+	editor.previewOnTerrain = onTerrain
+	if onTerrain {
+		editor.Preview.AsNode3D().SetVisible(true)
+		editor.Preview.AsNode3D().SetGlobalPosition(hover.Position)
+		return
+	}
+	if editor.client.xr && editor.client.xrRight != XRController3D.Nil {
+		t := editor.client.xrRight.AsNode3D().GlobalTransform()
+		forward := Vector3.XYZ{X: -t.Basis.Z.X, Y: -t.Basis.Z.Y, Z: -t.Basis.Z.Z}
+		pos := Vector3.Add(t.Origin, Vector3.MulX(forward, 3.0))
+		editor.Preview.AsNode3D().SetVisible(true)
+		editor.Preview.AsNode3D().SetGlobalPosition(pos)
+		return
+	}
+	editor.Preview.AsNode3D().SetVisible(false)
 }
 
 func (fe *SceneryEditor) Name() string { return "scenery" }
@@ -130,6 +180,21 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 
 func (fe *SceneryEditor) SelectDesign(mode Mode, design string) {
 	fe.Preview.SetDesign(design)
+}
+
+// PreviewOverDropZone tells the design-explorer drag flow whether the
+// in-progress preview is currently parked on a valid drop site, so it
+// can swap between showing the 3D preview (true) and the 2D thumbnail
+// ghost following the cursor (false).
+func (editor *SceneryEditor) PreviewOverDropZone() bool {
+	return editor.Preview.Design() != "" && editor.previewOnTerrain
+}
+
+// ClearPreview is the design-explorer drag flow's escape hatch for a
+// release that landed off any valid drop site — wipes the preview so
+// the ghost doesn't persist after a missed drop.
+func (editor *SceneryEditor) ClearPreview() {
+	editor.Preview.Remove()
 }
 
 func (fe *SceneryEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {

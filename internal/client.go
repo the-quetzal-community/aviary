@@ -21,6 +21,7 @@ import (
 	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Environment"
@@ -49,6 +50,7 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/WorldEnvironment"
+	"graphics.gd/classdb/XRCamera3D"
 	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/classdb/XROrigin3D"
 	"graphics.gd/variant/Angle"
@@ -58,6 +60,7 @@ import (
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
+	"graphics.gd/variant/Transform3D"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
@@ -168,6 +171,16 @@ type Client struct {
 		twistInitialY     Angle.Radians // original .Y component of the object's Euler rotation
 		twistPlaneY       Float.X       // Y level of the virtual horizontal plane used for angle calculation
 		twistInitialAngle Float.X       // atan2 angle of the initial mouse projection relative to object center
+
+		// --- Uniform scale state (for GizmoScale) ---
+		// scaleInitial is the live Node3D scale captured at drag
+		// start; scaleInitialDistance is the planar distance from
+		// the object center to the cursor's grab point on the
+		// same Y plane. Live scale = scaleInitial * (currentDist
+		// / scaleInitialDistance).
+		scaleInitial         Vector3.XYZ
+		scaleInitialDistance Float.X
+		scalePlaneY          Float.X
 	}
 
 	time TimingCoordinator
@@ -192,14 +205,67 @@ type Client struct {
 	// quad attached to the left controller (wrist UI).
 	xr       bool
 	xrOrigin XROrigin3D.Instance
+	xrCamera XRCamera3D.Instance
 	xrLeft   XRController3D.Instance
 	xrRight  XRController3D.Instance
 
-	// VR UI plumbing — see xr_ui.go.
-	vrUIViewport SubViewport.Instance
-	vrUIPanel    MeshInstance3D.Instance
-	vrPointer    RayCast3D.Instance
-	vrLastPixel  Vector2.XY
+	// VR UI plumbing — see xr_ui.go. We split the editor's 2D
+	// overlay across two wrist panels:
+	//   * left hand carries CloudControl + drawer (the "left" set)
+	//   * right hand carries EditorIndicator + Toolbar + Trash
+	// Each controller pointer aims at the OPPOSITE hand's panel,
+	// so the dominant hand interacts with the off-hand menu.
+	vrUIViewport        SubViewport.Instance
+	vrUIPanel           MeshInstance3D.Instance
+	vrUIViewportRight   SubViewport.Instance
+	vrUIPanelRight      MeshInstance3D.Instance
+	vrUIViewportPalette SubViewport.Instance
+	vrUIPanelPalette    MeshInstance3D.Instance
+	// vrPaletteGrabHand is the controller currently grabbing the
+	// design palette (grip-button held while pointing at it). Nil
+	// when not being moved. While set, processVRPointer keeps the
+	// palette's transform pinned to (controllerTransform * grabXform)
+	// so the palette tracks the hand 1:1 in space.
+	vrPaletteGrabHand     XRController3D.Instance
+	vrPaletteGrabRelative Transform3D.BasisOrigin // controller^-1 * palette at grab start
+
+	// Grip-as-gizmo-modifier state. Right grip is the Shift
+	// equivalent (GizmoShift), left grip is Ctrl (GizmoTwist),
+	// both grips together are Shift+Ctrl (GizmoScale). When the
+	// first grip comes in we snapshot the user's previous gizmo so
+	// we can restore it when both grips are released — matching the
+	// desktop CloudControl.Input behaviour.
+	vrRightGrip           bool
+	vrLeftGrip            bool
+	vrGripModifierActive  bool
+	vrGripGizmoBackup     Gizmo
+
+	vrPointer        RayCast3D.Instance // right hand
+	vrLaser          MeshInstance3D.Instance
+	vrLaserCyl       CylinderMesh.Instance
+	vrRightHovering  bool // right pointer ray hit some UI panel last frame
+	vrRightTrigger   bool // right trigger is held
+	// vrUIHoverViewportRight / vrUIHoverPixelRight track which panel
+	// the right ray was hovering on the last tick and where it was
+	// pointing in panel-pixel space — so the trigger handler can
+	// click whichever panel (left wrist, palette) it was over.
+	vrUIHoverViewportRight SubViewport.Instance
+	vrUIHoverPixelRight    Vector2.XY
+	vrPointerLeft    RayCast3D.Instance // left hand
+	vrLaserLeft      MeshInstance3D.Instance
+	vrLaserCylLeft   CylinderMesh.Instance
+	vrLeftHovering   bool // left pointer ray hit some UI panel last frame
+	vrLeftTrigger    bool // left trigger is held
+	vrUIHoverViewportLeft SubViewport.Instance
+	vrUIHoverPixelLeft    Vector2.XY
+	// vrDragController points at the hand that armed an in-progress
+	// gizmo drag. inputRay() uses its pose so updateGizmoDrag follows
+	// the controller; release on the same hand commits the drag.
+	vrDragController XRController3D.Instance
+	// vrRotateArmed tracks whether the right thumbstick has crossed
+	// vrRotateLatch since it last returned to centre — a single
+	// snap-turn per flick.
+	vrRotateArmed bool
 
 	// undo holds the per-client undo/redo history. See undo.go.
 	undo UndoStack
@@ -215,7 +281,7 @@ func (world *Client) canUseGizmoManipulation() bool {
 		return false
 	}
 	g := world.ui.CloudControl.Gizmo
-	if g != GizmoShift && g != GizmoTwist {
+	if g != GizmoShift && g != GizmoTwist && g != GizmoScale {
 		return false
 	}
 	switch world.Editing {
@@ -226,6 +292,10 @@ func (world *Client) canUseGizmoManipulation() bool {
 		// in the default ("explore") view. Ribcage/limbone own their
 		// own bone-handle drag interactions and control owns the WASD
 		// chase-cam — letting gizmo drags fire there would conflict.
+		// GizmoScale is supported via a per-part anchor.Scale field
+		// piggy-backed on Bounds.Z (the slot the leg-foot encoding
+		// leaves empty), so it coexists with the leg-foot encoding
+		// in Bounds.X/Y without a schema migration.
 		return world.CritterEditor.view == "" || world.CritterEditor.view == "explore"
 	}
 	return false
@@ -234,6 +304,141 @@ func (world *Client) canUseGizmoManipulation() bool {
 // canUseGizmoTransform is the old name, kept for a few call sites during transition.
 func (world *Client) canUseGizmoTransform() bool {
 	return world.canUseGizmoManipulation() && world.ui.CloudControl.Gizmo == GizmoShift
+}
+
+// armGizmoDrag captures the current selection's start state into
+// world.gizmoDrag using the current input ray, so subsequent
+// updateGizmoDrag calls can translate (or twist) the object relative
+// to the initial grab point. Shared by the desktop left-click path
+// and the VR trigger-press path — the only environmental difference
+// (mouse vs controller) is hidden inside inputRay().
+func (world *Client) armGizmoDrag() {
+	if !world.canUseGizmoManipulation() {
+		return
+	}
+	ent, node, ok := world.selectedEntityForGizmo()
+	if !ok {
+		return
+	}
+	pos := node.AsNode3D().Position()
+
+	world.gizmoDrag.activeGizmo = world.ui.CloudControl.Gizmo
+	world.gizmoDrag.active = true
+	world.gizmoDrag.entity = ent
+	world.gizmoDrag.startPos = pos
+	world.gizmoDrag.dragPlaneY = pos.Y
+	world.gizmoDrag.hasMirrorPlane = false
+	world.gizmoDrag.mirrorPlanePoint = Vector3.Zero
+	world.gizmoDrag.mirrorPlaneNormal = Vector3.Zero
+	world.gizmoDrag.design = musical.Design{}
+	world.gizmoDrag.twistInitialY = 0
+	world.gizmoDrag.twistPlaneY = 0
+	world.gizmoDrag.twistInitialAngle = 0
+	world.gizmoDrag.scaleInitial = Vector3.Zero
+	world.gizmoDrag.scaleInitialDistance = 0
+	world.gizmoDrag.scalePlaneY = 0
+
+	o, d := world.inputRay()
+	if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
+		world.gizmoDrag.startGrab = hit
+	} else {
+		world.gizmoDrag.startGrab = pos
+	}
+
+	if world.Editing == Editing.Vehicle {
+		if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+			if mnode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+				mpos := mnode.AsNode3D().Position()
+				delta := Vector3.Sub(mpos, pos)
+				if Vector3.Length(delta) > 0.05 {
+					world.gizmoDrag.mirrorPlanePoint = Vector3.Add(pos, Vector3.MulX(delta, 0.5))
+					world.gizmoDrag.mirrorPlaneNormal = Vector3.Normalized(delta)
+					world.gizmoDrag.hasMirrorPlane = true
+				}
+			}
+		}
+		for des, ids := range world.VehicleEditor.design_to_entity {
+			for _, id := range ids {
+				if id == node.ID() {
+					world.gizmoDrag.design = des
+					goto designCaptured
+				}
+			}
+		}
+	designCaptured:
+	}
+
+	if world.gizmoDrag.activeGizmo == GizmoTwist {
+		rot := node.AsNode3D().Rotation()
+		world.gizmoDrag.twistInitialY = rot.Y
+		if world.Editing == Editing.Critter && world.CritterEditor != nil {
+			if a, has := world.CritterEditor.body.partAnchors[Node3D.ID(node.ID())]; has {
+				world.gizmoDrag.twistInitialY = Angle.Radians(a.Twist)
+			}
+		}
+		world.gizmoDrag.twistPlaneY = pos.Y
+
+		o, d := world.inputRay()
+		if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
+			dx := hit.X - pos.X
+			dz := hit.Z - pos.Z
+			world.gizmoDrag.twistInitialAngle = Float.X(Angle.Atan2(Angle.Radians(dz), Angle.Radians(dx)))
+		} else {
+			world.gizmoDrag.twistInitialAngle = 0
+		}
+	}
+
+	if world.gizmoDrag.activeGizmo == GizmoScale {
+		world.gizmoDrag.scaleInitial = node.AsNode3D().Scale()
+		world.gizmoDrag.scalePlaneY = pos.Y
+		o, d := world.inputRay()
+		if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
+			dx := float64(hit.X - pos.X)
+			dz := float64(hit.Z - pos.Z)
+			world.gizmoDrag.scaleInitialDistance = Float.X(math.Sqrt(dx*dx + dz*dz))
+		}
+		// Critter override: critter parts don't expose meaningful
+		// Node3D.Scale (it's baked into a custom basis by
+		// positionPart) and they sit deep inside the body tree, so
+		// Position is local rather than world. Capture the part's
+		// per-anchor Scale (1.0 default) into scaleInitial.X and
+		// re-do the plane intersection using GlobalPosition so the
+		// distance matches what the user sees on screen.
+		if world.Editing == Editing.Critter && world.CritterEditor != nil {
+			initial := float32(1.0)
+			if a, has := world.CritterEditor.body.partAnchors[Node3D.ID(node.ID())]; has && a.Scale > 0 {
+				initial = a.Scale
+			}
+			world.gizmoDrag.scaleInitial = Vector3.New(initial, initial, initial)
+			worldPos := node.AsNode3D().GlobalPosition()
+			world.gizmoDrag.startPos = worldPos // re-used by update as plane center
+			world.gizmoDrag.scalePlaneY = worldPos.Y
+			if hit, ok := IntersectRayPlane(o, d, worldPos, Vector3.New(0, 1, 0)); ok {
+				dx := float64(hit.X - worldPos.X)
+				dz := float64(hit.Z - worldPos.Z)
+				world.gizmoDrag.scaleInitialDistance = Float.X(math.Sqrt(dx*dx + dz*dz))
+			}
+		}
+	}
+}
+
+// inputRay is the current "primary" input ray in world space:
+// desktop returns the mouse-projected ray from the main camera; XR
+// returns the active gizmo-drag controller's ray (or, if no drag is
+// armed, the right hand's). Direction is not normalised — callers
+// pass it to IntersectRayPlane which doesn't care about length.
+func (world *Client) inputRay() (origin, dir Vector3.XYZ) {
+	if world.xr {
+		ctrl := world.vrDragController
+		if ctrl == XRController3D.Nil {
+			ctrl = world.xrRight
+		}
+		if ctrl != XRController3D.Nil {
+			t := ctrl.AsNode3D().GlobalTransform()
+			return t.Origin, Vector3.New(-t.Basis.Z.X, -t.Basis.Z.Y, -t.Basis.Z.Z)
+		}
+	}
+	return MouseRay(world.AsNode3D())
 }
 
 // selectedEntityForGizmo returns the musical.Entity (if any) that corresponds
@@ -824,9 +1029,15 @@ func (world musicalImpl) Change(con musical.Change) error {
 			exists.
 				SetPosition(con.Offset).
 				SetRotation(con.Angles)
-			// Do not stomp scale here. The creation path applies the
-			// conventional 0.1 factor; subsequent transform edits (gizmo
-			// moves, etc.) must preserve whatever scale the instance has.
+			// If the Change carries an explicit Bounds (set by the
+			// scale gizmo or restored from the musical log), use it
+			// as the absolute scale. Otherwise leave whatever
+			// scale the instance currently has — the creation path
+			// applied the conventional 0.1 factor, and translate/
+			// twist edits must not stomp it.
+			if con.Bounds != Vector3.Zero {
+				exists.SetScale(con.Bounds)
+			}
 			return
 		}
 		var node Node3D.Instance
@@ -845,8 +1056,12 @@ func (world musicalImpl) Change(con musical.Change) error {
 		}
 		node.
 			SetPosition(con.Offset).
-			SetRotation(con.Angles).
-			SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
+			SetRotation(con.Angles)
+		if con.Bounds != Vector3.Zero {
+			node.SetScale(con.Bounds)
+		} else {
+			node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
+		}
 		world.entity_to_object[con.Entity] = node.ID()
 		world.object_to_entity[node.ID()] = con.Entity
 		world.design_to_entity[con.Design] = append(world.design_to_entity[con.Design], node.ID())
@@ -977,7 +1192,7 @@ func (world *Client) Process(dt Float.X) {
 	// would fight the headset pose. We still drive the controller-ray
 	// → UI panel hover loop here so the wrist menu feels live.
 	if world.xr {
-		world.processVRPointer()
+		world.processVRPointer(dt)
 		return
 	}
 
@@ -1029,6 +1244,16 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	}
 	if gesture, ok := Object.As[InputEventScreenDrag.Instance](event); ok {
 		if gesture.Index() != 0 {
+			return
+		}
+		// While a gizmo manipulation is live (touch started on a
+		// selectable item with gizmoShift/gizmoTwist armed), don't
+		// also rotate the camera — the emulated MouseMotion event
+		// for the same finger drives updateGizmoDrag via the
+		// mouse-button-held path above. Without this gate the camera
+		// spins under the user's finger as they're trying to
+		// translate/twist an object on a touchscreen.
+		if world.gizmoDrag.active {
 			return
 		}
 		relative := gesture.Relative()
@@ -1125,96 +1350,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				}
 
 				// Arm gizmo drag (only for the editors we support right now).
-				// We use selectedEntityForGizmo so this also works for Vehicle
-				// and Shelter, which maintain their own entity maps.
-				if world.canUseGizmoManipulation() {
-					if ent, node, ok := world.selectedEntityForGizmo(); ok {
-						pos := node.AsNode3D().Position()
-
-						// Record which gizmo mode started this drag so we finish the
-						// interaction even if the user releases the temporary hotkey.
-						world.gizmoDrag.activeGizmo = world.ui.CloudControl.Gizmo
-						world.gizmoDrag.active = true
-						world.gizmoDrag.entity = ent
-						world.gizmoDrag.startPos = pos
-						world.gizmoDrag.dragPlaneY = pos.Y
-						world.gizmoDrag.hasMirrorPlane = false
-						world.gizmoDrag.mirrorPlanePoint = Vector3.Zero
-						world.gizmoDrag.mirrorPlaneNormal = Vector3.Zero
-						world.gizmoDrag.design = musical.Design{}
-						world.gizmoDrag.twistInitialY = 0
-						world.gizmoDrag.twistPlaneY = 0
-						world.gizmoDrag.twistInitialAngle = 0
-
-						o, d := MouseRay(world.AsNode3D())
-						if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
-							world.gizmoDrag.startGrab = hit
-						} else {
-							world.gizmoDrag.startGrab = pos
-						}
-
-						// For vehicles: if this part has a mirror twin, capture the
-						// symmetry plane defined by the current main+mirror positions.
-						// This plane is kept fixed for the duration of the drag so
-						// that subsequent moves keep the mirror as a proper reflection
-						// (and remove it when the part crosses near the axis).
-						if world.Editing == Editing.Vehicle {
-							if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
-								if mnode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
-									mpos := mnode.AsNode3D().Position()
-									delta := Vector3.Sub(mpos, pos)
-									if Vector3.Length(delta) > 0.05 {
-										world.gizmoDrag.mirrorPlanePoint = Vector3.Add(pos, Vector3.MulX(delta, 0.5))
-										world.gizmoDrag.mirrorPlaneNormal = Vector3.Normalized(delta)
-										world.gizmoDrag.hasMirrorPlane = true
-									}
-								}
-							}
-
-							// Capture the Design that owns this main entity so we can
-							// re-create the mirror part from the correct packed scene
-							// if the user drags back away from the axis after we removed it.
-							for d, ids := range world.VehicleEditor.design_to_entity {
-								for _, id := range ids {
-									if id == node.ID() {
-										world.gizmoDrag.design = d
-										goto designCaptured
-									}
-								}
-							}
-						designCaptured:
-						}
-
-						// --- Twist (local Y rotation) arming ---
-						if world.gizmoDrag.activeGizmo == GizmoTwist {
-							rot := node.AsNode3D().Rotation()
-							world.gizmoDrag.twistInitialY = rot.Y
-							// Critter parts derive their rotation from
-							// anchor + Twist, not from Node3D.rotation,
-							// so the part's live `rot.Y` is always 0
-							// even after previous twist edits. Seed from
-							// the stored anchor instead so a re-twist
-							// continues from where the last one left off.
-							if world.Editing == Editing.Critter && world.CritterEditor != nil {
-								if a, has := world.CritterEditor.body.partAnchors[Node3D.ID(node.ID())]; has {
-									world.gizmoDrag.twistInitialY = Angle.Radians(a.Twist)
-								}
-							}
-							world.gizmoDrag.twistPlaneY = pos.Y
-
-							// Project current mouse onto the same horizontal plane we use for move.
-							// The angle of this vector around the object gives us a stable reference.
-							o, d := MouseRay(world.AsNode3D())
-							if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, pos.Y, pos.Z), Vector3.New(0, 1, 0)); ok {
-								dx := hit.X - pos.X
-								dz := hit.Z - pos.Z
-								world.gizmoDrag.twistInitialAngle = Float.X(Angle.Atan2(Angle.Radians(dz), Angle.Radians(dx)))
-							} else {
-								world.gizmoDrag.twistInitialAngle = 0
-							}
-						}
-					}
-				}
+				world.armGizmoDrag()
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
 				if world.TerrainEditor.CancelPaint() {
 					break
@@ -1317,7 +1453,45 @@ func (world *Client) updateGizmoDrag() {
 		world.updateCritterGizmoDrag(ent, node, false)
 		return
 	}
-	o, d := MouseRay(world.AsNode3D())
+	// --- Uniform scale handling ---
+	// Diverted before the translate/twist paths because scale has its
+	// own grab-point math (distance-from-center) and emits a Change
+	// that should *only* set Bounds, keeping Offset/Angles at their
+	// pre-drag values.
+	if world.gizmoDrag.activeGizmo == GizmoScale && world.gizmoDrag.scaleInitialDistance > 0.001 {
+		o, d := world.inputRay()
+		if hit, ok := IntersectRayPlane(o, d, Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.scalePlaneY, world.gizmoDrag.startPos.Z), Vector3.New(0, 1, 0)); ok {
+			dx := float64(hit.X - world.gizmoDrag.startPos.X)
+			dz := float64(hit.Z - world.gizmoDrag.startPos.Z)
+			cur := Float.X(math.Sqrt(dx*dx + dz*dz))
+			factor := cur / world.gizmoDrag.scaleInitialDistance
+			if factor < 0.1 {
+				factor = 0.1
+			}
+			if factor > 10 {
+				factor = 10
+			}
+			newScale := Vector3.MulX(world.gizmoDrag.scaleInitial, factor)
+			scaleCh := musical.Change{
+				Author: world.id,
+				Entity: ent,
+				Offset: world.gizmoDrag.startPos,
+				Angles: node.AsNode3D().Rotation(),
+				Bounds: newScale,
+				Commit: false,
+			}
+			switch world.Editing {
+			case Editing.Vehicle:
+				scaleCh.Editor = "vehicle"
+				scaleCh.Design = world.gizmoDrag.design
+			case Editing.Shelter:
+				scaleCh.Editor = "shelter"
+			}
+			_ = world.space.Change(scaleCh)
+		}
+		return // scale handled, skip translate/twist
+	}
+	o, d := world.inputRay()
 	planePoint := Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.dragPlaneY, world.gizmoDrag.startPos.Z)
 	hit, ok := IntersectRayPlane(o, d, planePoint, Vector3.New(0, 1, 0))
 	if !ok {
@@ -1380,7 +1554,7 @@ func (world *Client) updateGizmoDrag() {
 	// --- Twist (local Y rotation) handling ---
 	if world.gizmoDrag.activeGizmo == GizmoTwist {
 		// Recompute current hit on the rotation plane
-		o, d := MouseRay(world.AsNode3D())
+		o, d := world.inputRay()
 		if hit, ok := IntersectRayPlane(o, d, Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.twistPlaneY, world.gizmoDrag.startPos.Z), Vector3.New(0, 1, 0)); ok {
 			dx := hit.X - world.gizmoDrag.startPos.X
 			dz := hit.Z - world.gizmoDrag.startPos.Z
@@ -1503,6 +1677,35 @@ func (world *Client) commitGizmoDrag() {
 		}
 	}
 
+	// For a pure scale drag, only Bounds changed during the drag;
+	// the live node scale (driven by preview Changes) is authoritative.
+	// Commit one final Change recording it, and the undo entry restores
+	// the pre-drag scale.
+	if world.gizmoDrag.activeGizmo == GizmoScale {
+		scaleCh := musical.Change{
+			Author: world.id,
+			Entity: ent,
+			Offset: world.gizmoDrag.startPos,
+			Angles: node.AsNode3D().Rotation(),
+			Bounds: node.AsNode3D().Scale(),
+			Commit: true,
+		}
+		switch world.Editing {
+		case Editing.Vehicle:
+			scaleCh.Editor = "vehicle"
+			scaleCh.Design = world.gizmoDrag.design
+		case Editing.Shelter:
+			scaleCh.Editor = "shelter"
+		}
+		if err := world.space.Change(scaleCh); err != nil {
+			Engine.Raise(err)
+		}
+		undo := scaleCh
+		undo.Bounds = world.gizmoDrag.scaleInitial
+		world.RecordChange(scaleCh, undo)
+		return
+	}
+
 	// For a pure twist drag, the live node rotation (updated by the preview
 	// Changes) is already correct. Just commit it.
 	if world.gizmoDrag.activeGizmo == GizmoTwist {
@@ -1615,6 +1818,28 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 		next.LegSide = fresh.LegSide
 	}
 
+	if world.gizmoDrag.activeGizmo == GizmoScale && world.gizmoDrag.scaleInitialDistance > 0.001 {
+		// Per-part uniform scale. armGizmoDrag's critter override
+		// stored the initial multiplier (1.0 default) in scaleInitial.X
+		// and the part's world position in startPos; the plane is at
+		// scalePlaneY.
+		o, d := world.inputRay()
+		center := Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.scalePlaneY, world.gizmoDrag.startPos.Z)
+		if hit, ok := IntersectRayPlane(o, d, center, Vector3.New(0, 1, 0)); ok {
+			dx := float64(hit.X - world.gizmoDrag.startPos.X)
+			dz := float64(hit.Z - world.gizmoDrag.startPos.Z)
+			curDist := Float.X(math.Sqrt(dx*dx + dz*dz))
+			factor := curDist / world.gizmoDrag.scaleInitialDistance
+			if factor < 0.1 {
+				factor = 0.1
+			}
+			if factor > 10 {
+				factor = 10
+			}
+			next.Scale = float32(world.gizmoDrag.scaleInitial.X) * float32(factor)
+		}
+	}
+
 	if world.gizmoDrag.activeGizmo == GizmoTwist {
 		// Same atan2-on-horizontal-plane scheme the other editors
 		// use, mapped into the anchor's Twist field instead of the
@@ -1622,7 +1847,7 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 		// position once (origin doesn't matter for the relative
 		// angle math; we just need a stable pivot per frame).
 		pos := node.AsNode3D().GlobalPosition()
-		o, d := MouseRay(world.AsNode3D())
+		o, d := world.inputRay()
 		if hit, ok := IntersectRayPlane(o, d, Vector3.New(pos.X, world.gizmoDrag.twistPlaneY, pos.Z), Vector3.New(0, 1, 0)); ok {
 			dx := hit.X - pos.X
 			dz := hit.Z - pos.Z
@@ -1645,7 +1870,12 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 		// so a zero Bounds in old records still decodes as a body
 		// anchor. Mirror that here so the receive side decodes the
 		// same way (see anchorFromChange in editor_critter.go).
-		ch.Bounds = Vector3.New(Float.X(next.LegFoot+1), Float.X(next.LegSide), 0)
+		// Bounds.Z carries the per-part scale (0 = legacy default).
+		ch.Bounds = Vector3.New(Float.X(next.LegFoot+1), Float.X(next.LegSide), Float.X(next.Scale))
+	} else if next.Scale > 0 {
+		// Body anchor + per-part scale: only Bounds.Z is used; .X
+		// stays 0 so anchorFromChange still sees it as a body anchor.
+		ch.Bounds = Vector3.New(0, 0, Float.X(next.Scale))
 	}
 	if err := world.space.Change(ch); err != nil {
 		if commit {

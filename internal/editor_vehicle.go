@@ -186,6 +186,18 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 	node.
 		SetPosition(Vector3.Add(parent.Position(), change.Mirror)).
 		SetRotation(Euler.Radians{X: change.Angles.X, Y: -change.Angles.Y, Z: -change.Angles.Z})
+	// Mirror scale tracks the parent's current scale with the
+	// appropriate axis sign-flipped, so the scale gizmo on the main
+	// part propagates uniformly to its mirror twin.
+	mainScale := parent.Scale()
+	switch {
+	case change.Mirror.X != 0:
+		node.SetScale(Vector3.Mul(mainScale, Vector3.New(-1, 1, 1)))
+	case change.Mirror.Y != 0:
+		node.SetScale(Vector3.Mul(mainScale, Vector3.New(1, -1, 1)))
+	case change.Mirror.Z != 0:
+		node.SetScale(Vector3.Mul(mainScale, Vector3.New(1, 1, -1)))
+	}
 }
 
 func (editor *VehicleEditor) Change(change musical.Change) error {
@@ -207,8 +219,13 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 		exists.
 			SetPosition(change.Offset).
 			SetRotation(change.Angles)
-		// Scale is set at creation time (and for mirrors at mirror creation time).
-		// Do not stomp it on subsequent transform updates from gizmo moves etc.
+		// Apply explicit Bounds (scale gizmo) when present; otherwise
+		// keep the creation-time 0.3 factor (or the mirror's sign-
+		// flipped variant). Mirror parts get their own scale through
+		// remirror(); the scale gizmo only edits the main entity.
+		if change.Bounds != Vector3.Zero {
+			exists.SetScale(change.Bounds)
+		}
 		return nil
 	}
 	var node Node3D.Instance
@@ -220,8 +237,12 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 	}
 	node.
 		SetPosition(change.Offset).
-		SetRotation(change.Angles).
-		SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, 0.3)))
+		SetRotation(change.Angles)
+	if change.Bounds != Vector3.Zero {
+		node.SetScale(change.Bounds)
+	} else {
+		node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, 0.3)))
+	}
 	editor.entity_to_object[change.Entity] = node.ID()
 	editor.object_to_entity[node.ID()] = change.Entity
 	editor.design_to_entity[change.Design] = append(editor.design_to_entity[change.Design], node.ID())
