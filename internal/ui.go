@@ -5,11 +5,18 @@ import (
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DisplayServer"
+	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/HSlider"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/Panel"
+	"graphics.gd/classdb/Range"
+	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/TextureRect"
+	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -102,6 +109,66 @@ func (ui *UI) Setup() {
 	ui.Toolbar.Export.AsBaseButton().OnPressed(func() {
 		ui.client.Export()
 	})
+	ui.buildSettingsMenu()
+}
+
+// buildSettingsMenu populates the (otherwise empty) Settings rollout
+// with the graphics-quality slider: a gray toaster icon on the low end,
+// a gray sports-car icon on the high end, and an HSlider between them
+// that drives [GraphicsQuality] from QualityToaster..QualityFerrari.
+// Built in code (rather than the .tscn) so the icons load via
+// Resource.Load without needing committed .import sidecars, matching how
+// the design explorer loads its library thumbnails. The icons are PNGs
+// from The Noun Project, tinted gray to read on the light drawer (see
+// graphics/License for attribution).
+func (ui *UI) buildSettingsMenu() {
+	if ui.SettingsMenu.AsControl() == Control.Nil {
+		return
+	}
+	typesNode := ui.SettingsMenu.AsNode().GetNode("SettingsTypes")
+	types, ok := Object.As[VBoxContainer.Instance](typesNode)
+	if !ok {
+		return
+	}
+
+	row := HBoxContainer.New()
+	row.AsControl().SetMouseFilter(Control.MouseFilterPass)
+
+	const iconSize = 28
+	makeIcon := func(path string) TextureRect.Instance {
+		rect := TextureRect.New()
+		if tex := Resource.Load[Texture2D.Instance](path); tex != Texture2D.Nil {
+			rect.SetTexture(tex)
+		}
+		rect.SetExpandMode(TextureRect.ExpandIgnoreSize)
+		rect.SetStretchMode(TextureRect.StretchKeepAspectCentered)
+		rect.AsControl().SetCustomMinimumSize(Vector2.New(iconSize, iconSize))
+		rect.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
+		return rect
+	}
+
+	low := makeIcon("res://ui/quality_low.png")   // toaster
+	high := makeIcon("res://ui/quality_high.png") // sports car
+
+	slider := HSlider.New()
+	slider.AsRange().SetMinValue(0)
+	slider.AsRange().SetMaxValue(graphicsQualitySteps - 1)
+	slider.AsRange().SetStep(1)
+	slider.AsRange().SetValue(Float.X(defaultGraphicsQuality))
+	slider.AsControl().SetSizeFlagsHorizontal(Control.SizeExpandFill)
+	slider.AsControl().SetCustomMinimumSize(Vector2.New(160, iconSize))
+	Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
+		GraphicsQuality(int(value)).Apply(ui.AsNode())
+	})
+
+	row.AsNode().AddChild(low.AsNode())
+	row.AsNode().AddChild(slider.AsNode())
+	row.AsNode().AddChild(high.AsNode())
+	types.AsNode().AddChild(row.AsNode())
+
+	// Apply the launch default so the renderer matches the slider's
+	// initial position before the user ever opens the menu.
+	defaultGraphicsQuality.Apply(ui.AsNode())
 }
 
 // toggleSettings rolls the Settings menu in and out from behind the
