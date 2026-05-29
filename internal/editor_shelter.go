@@ -16,7 +16,6 @@ import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
@@ -188,7 +187,7 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 
 func (editor *ShelterEditor) EnableEditor() {
 	shader := ShaderMaterial.New()
-	shader.SetShader(Resource.Load[Shader.Instance]("res://shader/grid.gdshader"))
+	shader.SetShader(LoadSync[Shader.Instance]("res://shader/grid.gdshader"))
 	editor.grid_shader = shader.ID()
 	editor.client.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, shader.AsMaterial())
 }
@@ -273,7 +272,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			full.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
 			full.SetVisible(editor.explore || editor.current_level != level)
 			node.AsNode().AddChild(full.AsNode())
-			cut := Resource.Load[PackedScene.Is[Node3D.Instance]](strings.TrimSuffix(design, path.Ext(design)) + "_cut.glb").Instantiate()
+			cut := LoadSync[PackedScene.Is[Node3D.Instance]](strings.TrimSuffix(design, path.Ext(design)) + "_cut.glb").Instantiate()
 			cut.SetVisible(!editor.explore && editor.current_level == level)
 			cut.AsNode().AddToGroup("floor_short_" + strconv.Itoa(level))
 			node.AsNode().AddChild(cut.AsNode())

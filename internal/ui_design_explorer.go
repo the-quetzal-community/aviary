@@ -20,8 +20,6 @@ import (
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Range"
-	"graphics.gd/classdb/Resource"
-	"graphics.gd/classdb/ResourceLoader"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TabContainer"
 	"graphics.gd/classdb/Texture2D"
@@ -162,9 +160,9 @@ func (de *DesignExplorer) Ready() {
 		// drawer empty. ResourceLoader.Exists works against the
 		// packed converted texture (.ctex) too, so it's correct on
 		// both desktop and Android.
-		if ResourceLoader.Exists("res://library/"+name+"/icon.png", "") {
+		if ExistsSync("res://library/" + name + "/icon.png") {
 			button := TextureButton.New().
-				SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png")).
+				SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + name + "/icon.png")).
 				SetIgnoreTextureSize(true).
 				SetStretchMode(TextureButton.StretchKeepAspectCentered)
 			button.AsControl().
@@ -179,7 +177,7 @@ func (de *DesignExplorer) Ready() {
 					other_button.AsCanvasItem().SetVisible(true)
 				}
 				de.Refresh(de.client.Editing, name, de.client.ui.mode)
-				de.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + name + "/icon.png"))
+				de.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + name + "/icon.png"))
 				button, _ := de.themes[name].Instance()
 				button.AsCanvasItem().SetVisible(false)
 			})
@@ -441,7 +439,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	for _, theme := range slices.Sorted(maps.Keys(themes_available)) {
 		if author == "" {
 			author = theme
-			ui.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://library/" + author + "/icon.png"))
+			ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png"))
 		} else {
 			button, _ := ui.themes[theme].Instance()
 			button.AsCanvasItem().SetVisible(true)
@@ -478,10 +476,10 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			ui.slider[ui.editor.Name()][tab] = slider_id
 			ui.Tabs.AsNode().AddChild(Node.Instance(slider.AsNode()))
-			if ResourceLoader.Exists("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg", "") {
-				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
+			if ExistsSync("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
+				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
-				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
 			}
 			ui.Tabs.SetTabTitle(index, "")
 			edits = true
@@ -517,7 +515,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				button := TextureButton.New()
 				var iconTex Texture2D.Instance
 				if b.Icon != "" {
-					if icon := Resource.Load[Texture2D.Instance](b.Icon); icon != Texture2D.Nil {
+					if icon := LoadSync[Texture2D.Instance](b.Icon); icon != Texture2D.Nil {
 						iconTex = icon
 						button.SetTextureNormal(icon)
 					}
@@ -541,10 +539,10 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			if resources == DirAccess.Nil {
 				gridflow.Update()
-				if ResourceLoader.Exists("res://ui/"+tab+".svg", "") {
-					ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
+				if ExistsSync("res://ui/" + tab + ".svg") {
+					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))
 				} else {
-					ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
 				}
 				ui.Tabs.SetTabTitle(index, "")
 				index++
@@ -562,7 +560,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				var path = preview_path + "/" + tab + "/" + resource
 				switch ext {
 				case glb:
-					preview := Resource.Load[Texture2D.Instance](path)
+					preview := LoadSync[Texture2D.Instance](path)
 					if preview == Texture2D.Nil {
 						continue
 					}
@@ -585,7 +583,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					elements.AsNode().AddChild(tile.AsNode())
 					ui.tile_for_resource[resource] = tile.ID()
 				case png:
-					texture := Resource.Load[Texture2D.Instance](path)
+					texture := LoadSync[Texture2D.Instance](path)
 					// Prefer a .region sidecar over a raw .png when both
 					// exist — the sidecar describes a sub-region of a
 					// shared atlas material, while the raw .png is the
@@ -613,10 +611,10 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				}
 			}
 			gridflow.Update()
-			if ResourceLoader.Exists("res://ui/"+tab+".svg", "") {
-				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+tab+".svg"))
+			if ExistsSync("res://ui/" + tab + ".svg") {
+				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))
 			} else {
-				ui.Tabs.SetTabIcon(index, Resource.Load[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
 			}
 			ui.Tabs.SetTabTitle(index, "")
 			index++
@@ -626,7 +624,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	// their design was placed in the scene (most recent first).
 	ui.applyRecency()
 	if len(themes_available) == 0 {
-		ui.Panel.Themes.Heading.Selected.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/editing.svg"))
+		ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/editing.svg"))
 	}
 	ui.AsCanvasItem().SetVisible(index > 0 || len(themes_available) > 0)
 	expansion.AsCanvasItem().SetVisible(index > 0 && !edits)

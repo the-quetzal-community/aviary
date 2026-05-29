@@ -34,7 +34,7 @@ func Select(node Node.Instance, selected bool) {
 				if source == Material.Nil {
 					continue
 				}
-				outline := Resource.Load[Shader.Instance]("res://shader/outline.gdshader")
+				outline := LoadSync[Shader.Instance]("res://shader/outline.gdshader")
 				shader := ShaderMaterial.New()
 				shader.SetShader(outline)
 				shader.SetShaderParameter("outline_width", 1.05)

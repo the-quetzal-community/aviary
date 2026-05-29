@@ -12,7 +12,6 @@ import (
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/Range"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/TextureRect"
@@ -137,7 +136,7 @@ func (ui *UI) buildSettingsMenu() {
 	const iconSize = 28
 	makeIcon := func(path string) TextureRect.Instance {
 		rect := TextureRect.New()
-		if tex := Resource.Load[Texture2D.Instance](path); tex != Texture2D.Nil {
+		if tex := LoadSync[Texture2D.Instance](path); tex != Texture2D.Nil {
 			rect.SetTexture(tex)
 		}
 		rect.SetExpandMode(TextureRect.ExpandIgnoreSize)

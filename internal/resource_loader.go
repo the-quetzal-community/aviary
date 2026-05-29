@@ -26,8 +26,12 @@ import (
 // corresponding resource from the remote .pck file using an HTTP range request and then we
 // write this back into our local user://library.pck" before Godot has the chance to read it.
 //
-// In Aviary, we may assume that CommunityResourceLoader is only ever called from a
-// single dedicated resource loading thread.
+// CommunityResourceLoader is only ever called from a single dedicated
+// resource loading thread. That invariant is enforced by routing every
+// aviary load and existence check through the loader goroutine in
+// resource_thread.go (LoadSync / LoadAsync / ExistsSync) — which is what
+// makes the lock-free maps below safe. Do not call Resource.Load or
+// ResourceLoader.Exists directly from aviary code; use those helpers.
 type CommunityResourceLoader struct {
 	ResourceFormatLoader.Extension[CommunityResourceLoader]
 

@@ -18,7 +18,6 @@ import (
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/StandardMaterial3D"
@@ -253,8 +252,8 @@ func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max
 }
 
 func (tr *TerrainEditor) Ready() {
-	shader := Resource.Load[Shader.Instance]("res://shader/terrain.gdshader")
-	grass := Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png")
+	shader := LoadSync[Shader.Instance]("res://shader/terrain.gdshader")
+	grass := LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png")
 	textures := Texture2DArray.New()
 	textures.AsImageTextureLayered().CreateFromImages([]Image.Instance{
 		grass.AsTexture2D().GetImage(),
@@ -267,8 +266,8 @@ func (tr *TerrainEditor) Ready() {
 		SetShaderParameter("radius", 2.0).
 		SetShaderParameter("height", 0.0)
 
-	rock := Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")
-	buried := Resource.Load[Shader.Instance]("res://shader/buried.gdshader")
+	rock := LoadSync[Texture2D.Instance]("res://default/mineral.jpg")
+	buried := LoadSync[Shader.Instance]("res://shader/buried.gdshader")
 	tr.shader_buried = ShaderMaterial.New().
 		SetShader(buried).
 		SetShaderParameter("texture_albedo", rock).
@@ -279,8 +278,8 @@ func (tr *TerrainEditor) Ready() {
 
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
-	tr.albedos = []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
-	tr.normal_maps = []Image.Instance{Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
+	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
+	tr.normal_maps = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
 	tr.uploadTextureArrays()
 	// Spawn the starter tile so the world is clickable before any
 	// sculpt arrives.
@@ -319,9 +318,9 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 	ext := path.Ext(texture.AsResource().ResourcePath())
 	normal_path := strings.TrimSuffix(texture.AsResource().ResourcePath(), ext) + "_normal" + ext
 	if FileAccess.FileExists(normal_path) {
-		tr.normal_maps = append(tr.normal_maps, Resource.Load[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
+		tr.normal_maps = append(tr.normal_maps, LoadSync[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
 	} else {
-		tr.normal_maps = append(tr.normal_maps, Resource.Load[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
+		tr.normal_maps = append(tr.normal_maps, LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
 	}
 	tr.uploadTextureArrays()
 	return idx
@@ -376,7 +375,7 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 	for {
 		select {
 		case res := <-vr.texture:
-			texture := Resource.Load[Texture2D.Instance](res)
+			texture := LoadSync[Texture2D.Instance](res)
 			vr.BrushDesign = res.String()
 			vr.shader.
 				SetShaderParameter("paint_texture", texture).

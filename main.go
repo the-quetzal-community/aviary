@@ -8,7 +8,6 @@ import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/ProjectSettings"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/ResourceLoader"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/startup"
@@ -51,14 +50,19 @@ func main() {
 		startup.Scene()
 		return
 	}
-	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
-		SceneTree.Add(Resource.Load[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
-	} else {
-		SceneTree.Add(internal.NewClient())
-	}
 	community_resource_loader := internal.NewCommunityResourceLoader().AsResourceFormatLoader()
 	ResourceLoader.AddResourceFormatLoader(community_resource_loader, true)
 	defer ResourceLoader.RemoveResourceFormatLoader(community_resource_loader)
+	// Start the dedicated resource-loading thread before any scene is
+	// added, so every load triggered by a node's Ready() funnels through
+	// it (see resource_thread.go) and the community loader's maps are only
+	// ever touched by that one thread.
+	internal.StartResourceThread()
+	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
+		SceneTree.Add(internal.LoadSync[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
+	} else {
+		SceneTree.Add(internal.NewClient())
+	}
 	startup.Scene()
 	close(internal.ShuttingDown)
 	internal.PendingSaves.Wait()

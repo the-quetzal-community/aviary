@@ -7,7 +7,6 @@ import (
 	"graphics.gd/classdb/CollisionShape3D"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/SphereMesh"
@@ -72,7 +71,7 @@ func newEyePart(phase float32) *eyePart {
 	sphere.SetRadius(radius)
 	sphere.SetHeight(radius * 2)
 
-	shader := Resource.Load[Shader.Instance]("res://shader/critter_eye.gdshader")
+	shader := LoadSync[Shader.Instance]("res://shader/critter_eye.gdshader")
 	mat := ShaderMaterial.New()
 	mat.SetShader(shader)
 	mat.SetShaderParameter("blink", 0.0)

@@ -3,7 +3,6 @@ package internal
 import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Enum"
 	"graphics.gd/variant/Vector3"
@@ -60,36 +59,36 @@ func (world *Client) StartEditing(subject Subject) {
 	case Editing.Scenery:
 		editor = world.SceneryEditor
 		world.TerrainEditor.AsNode3D().SetVisible(true)
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/scenery.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/scenery.svg"))
 	case Editing.Terrain:
 		editor = world.TerrainEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/terrain.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/terrain.svg"))
 	case Editing.Foliage:
 		editor = world.FoliageEditor
 		world.FocalPoint.SetPosition(Vector3.New(0, 0, 0))
 		pos := world.FocalPoint.Lens.AsNode3D().Position()
 		pos.Y = 4
 		world.FocalPoint.Lens.AsNode3D().SetPosition(pos)
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/foliage.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/foliage.svg"))
 	case Editing.Mineral:
 		editor = world.MineralEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/mineral.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/mineral.svg"))
 	case Editing.Shelter:
 		editor = world.ShelterEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/shelter.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/shelter.svg"))
 	case Editing.Vehicle:
 		editor = world.VehicleEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/vehicle.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/vehicle.svg"))
 	case Editing.Citizen:
 		editor = world.CitizenEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/citizen.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/citizen.svg"))
 	case Editing.Critter:
 		editor = world.CritterEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/critter.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/critter.svg"))
 	case Editing.Coaster:
 		editor = world.CoasterEditor
 		world.TerrainEditor.AsNode3D().SetVisible(true)
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/coaster.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/coaster.svg"))
 	}
 	editor.AsNode3D().SetVisible(true).
 		AsNode().SetProcessMode(Node.ProcessModeInherit)

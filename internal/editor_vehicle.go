@@ -10,7 +10,6 @@ import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Basis"
 	"graphics.gd/variant/Euler"
@@ -48,7 +47,7 @@ func (editor *VehicleEditor) Ready() {
 	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
 	editor.entity_to_mirror = make(map[musical.Entity]Node3D.ID)
 
-	base := Resource.Load[PackedScene.Is[Node.Instance]]("res://base.obj")
+	base := LoadSync[PackedScene.Is[Node.Instance]]("res://base.obj")
 	instance := base.Instantiate()
 	editor.AsNode().AddChild(instance)
 	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.3))

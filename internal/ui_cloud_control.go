@@ -19,7 +19,6 @@ import (
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/ProgressBar"
 	"graphics.gd/classdb/PropertyTweener"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/RichTextLabel"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/Shader"
@@ -184,7 +183,7 @@ func (ui *CloudControl) Ready() {
 		}
 		if !ui.sharing {
 			ui.sharing = true
-			var spinner = Resource.Load[Shader.Instance]("res://shader/spinner.gdshader")
+			var spinner = LoadSync[Shader.Instance]("res://shader/spinner.gdshader")
 			var material = ShaderMaterial.New()
 			material.SetShader(spinner)
 			ui.JoinCode.ShareButton.AsCanvasItem().SetMaterial(material.AsMaterial())

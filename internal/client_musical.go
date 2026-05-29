@@ -104,7 +104,7 @@ func (world musicalImpl) Import(uri musical.Import) error {
 		// the console; skip the load for those — we still want the
 		// URI→Design mapping registered for later lookup.
 		if !isKeepImporterPath(uri.Import) {
-			res := Object.Leak(Resource.Load[Resource.Instance](uri.Import))
+			res := Object.Leak(LoadSync[Resource.Instance](uri.Import))
 			switch {
 			case Object.Is[PackedScene.Instance](res):
 				world.packed_scenes[uri.Design] = Object.To[PackedScene.Instance](res).ID()
@@ -261,7 +261,7 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 			PropertyTweener.Make(tween, avatar.AsObject(), "rotation", view.Angles, 0.1)
 			return
 		}
-		avatar := Resource.Load[PackedScene.Is[Node3D.Instance]]("res://library/everything/avatar/bald_eagle.glb").Instantiate().
+		avatar := LoadSync[PackedScene.Is[Node3D.Instance]]("res://library/everything/avatar/bald_eagle.glb").Instantiate().
 			SetPosition(view.Offset).
 			SetRotation(view.Angles).
 			SetScale(Vector3.New(0.1, 0.1, 0.1))

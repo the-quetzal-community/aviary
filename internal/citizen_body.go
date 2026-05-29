@@ -11,7 +11,6 @@ import (
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Color"
@@ -183,7 +182,7 @@ func AttachCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh, targe
 	// the eyetint slider's albedo colour via StandardMaterial3D's
 	// implicit modulation, so the slider tints the texture rather
 	// than replacing it.
-	if eyeTex := Resource.Load[Texture2D.Instance]("res://library/makehuman/citizen_eye.png"); eyeTex != Texture2D.Nil {
+	if eyeTex := LoadSync[Texture2D.Instance]("res://library/makehuman/citizen_eye.png"); eyeTex != Texture2D.Nil {
 		body.eyeMaterial.AsBaseMaterial3D().SetAlbedoTexture(eyeTex)
 	}
 	// The hm08 eye spheres come from the helper-l-eye / helper-r-eye
@@ -759,7 +758,7 @@ func loadDressingMaterial(objPath string) StandardMaterial3D.Instance {
 		if !FileAccess.FileExists(path + ".import") {
 			continue
 		}
-		tex := Resource.Load[Texture2D.Instance](path)
+		tex := LoadSync[Texture2D.Instance](path)
 		if tex == Texture2D.Nil {
 			continue
 		}

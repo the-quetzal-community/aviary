@@ -39,7 +39,6 @@ import (
 	"graphics.gd/classdb/QuadMesh"
 	"graphics.gd/classdb/RayCast3D"
 	"graphics.gd/classdb/RenderingServer"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SubViewport"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
@@ -460,7 +459,7 @@ func (world *Client) Ready() {
 	world.CitizenEditor.client = world
 	world.CritterEditor.client = world
 	world.CoasterEditor.client = world
-	editor_scene := Resource.Load[PackedScene.Instance]("res://ui/editor.tscn")
+	editor_scene := LoadSync[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
 	if ok {

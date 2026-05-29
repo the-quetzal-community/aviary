@@ -16,7 +16,6 @@ import (
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
@@ -43,7 +42,7 @@ type FoliageEditor struct {
 func (*FoliageEditor) Views() []string          { return nil }
 func (*FoliageEditor) SwitchToView(view string) {}
 
-func (fe *FoliageEditor) Name() string  { return "foliage" }
+func (fe *FoliageEditor) Name() string { return "foliage" }
 
 // ExportSubtree implements the Exporter interface (see export.go).
 // We duplicate the procedural tree's MeshInstance3D onto a fresh root
@@ -83,12 +82,12 @@ func (fe *FoliageEditor) Ready() {
 	fe.Mesh.SetMesh(fe.tree.AsMesh())
 
 	fe.leafletMaterial = StandardMaterial3D.New().
-		AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/leaflet.png")).
+		AsBaseMaterial3D().SetAlbedoTexture(LoadSync[Texture2D.Instance]("res://default/leaflet.png")).
 		AsBaseMaterial3D().SetTransparency(BaseMaterial3D.TransparencyAlphaScissor)
 	fe.Mesh.Mesh().SurfaceSetMaterial(1, fe.leafletMaterial.AsMaterial())
 
 	fe.timbersMaterial = StandardMaterial3D.New().
-		AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/timbers.png"))
+		AsBaseMaterial3D().SetAlbedoTexture(LoadSync[Texture2D.Instance]("res://default/timbers.png"))
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, fe.timbersMaterial.AsMaterial())
 }
 
@@ -141,7 +140,7 @@ func (client *Client) resolveMaterialTexture(design musical.Design) Texture2D.In
 	if tex, ok := client.textures[design].Instance(); ok {
 		return tex
 	}
-	return Resource.Load[Texture2D.Instance](uri)
+	return LoadSync[Texture2D.Instance](uri)
 }
 
 type regionSidecar struct {
@@ -158,7 +157,7 @@ func loadRegionTexture(uri string) Texture2D.Instance {
 	if err := json.Unmarshal([]byte(f.GetAsText()), &sidecar); err != nil {
 		return Texture2D.Nil
 	}
-	mat := Resource.Load[BaseMaterial3D.Instance](sidecar.Material)
+	mat := LoadSync[BaseMaterial3D.Instance](sidecar.Material)
 	if mat == BaseMaterial3D.Nil {
 		return Texture2D.Nil
 	}

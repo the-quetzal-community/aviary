@@ -24,7 +24,6 @@ import (
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/PhysicsDirectSpaceState3D"
 	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SphereMesh"
 	"graphics.gd/classdb/SphereShape3D"
 	"graphics.gd/classdb/StandardMaterial3D"
@@ -482,7 +481,7 @@ func (ce *CritterEditor) ensureLoaded() {
 		// +Z points along the arrow). Scaled to half its native
 		// size so it doesn't visually dwarf the critter. Loaded
 		// first so it lays underneath the body in the scene tree.
-		base := Resource.Load[PackedScene.Is[Node.Instance]]("res://base.obj")
+		base := LoadSync[PackedScene.Is[Node.Instance]]("res://base.obj")
 		baseInst := base.Instantiate()
 		ce.AsNode3D().AsNode().AddChild(baseInst)
 		if g, ok := Object.As[Node3D.Instance](baseInst); ok {

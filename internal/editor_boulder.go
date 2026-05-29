@@ -9,7 +9,6 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
@@ -47,7 +46,7 @@ func (fe *BoulderEditor) Ready() {
 	fe.Mesh.SetMesh(fe.rock.AsMesh())
 
 	fe.mineralMaterial = StandardMaterial3D.New().
-		AsBaseMaterial3D().SetAlbedoTexture(Resource.Load[Texture2D.Instance]("res://default/mineral.jpg")).
+		AsBaseMaterial3D().SetAlbedoTexture(LoadSync[Texture2D.Instance]("res://default/mineral.jpg")).
 		AsBaseMaterial3D().SetUv1Triplanar(true)
 	fe.Mesh.Mesh().SurfaceSetMaterial(0, fe.mineralMaterial.AsMaterial())
 }

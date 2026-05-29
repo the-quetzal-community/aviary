@@ -11,7 +11,6 @@ import (
 	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/RenderingServer"
-	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
@@ -54,9 +53,9 @@ func (selector *ViewSelector) Refresh(view int, views []string) {
 		} else {
 			var button = TextureButton.New()
 			if FileAccess.FileExists("res://ui/" + view + ".svg.import") {
-				button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/" + view + ".svg"))
+				button.SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/" + view + ".svg"))
 			} else {
-				button.SetTextureNormal(Resource.Load[Texture2D.Instance]("res://ui/dressing.svg"))
+				button.SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/dressing.svg"))
 			}
 			button.
 				SetIgnoreTextureSize(true).
