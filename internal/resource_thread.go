@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"runtime"
+
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/MeshInstance3D"
@@ -67,6 +69,7 @@ var loaderRunning bool
 func StartResourceThread() {
 	loaderRunning = true
 	go func() {
+		runtime.LockOSThread()
 		onLoaderThread = true
 		for {
 			select {
