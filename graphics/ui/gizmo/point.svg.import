@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dwodcy8axfahv"
-path="res://.godot/imported/moving.svg-83e9a1fc1b9977a139072fc7063aff68.ctex"
+uid="uid://cgenijo08vjch"
+path="res://.godot/imported/point.svg-1ada2c6e381826740c9e6cd32f6a7d31.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/moving.svg"
-dest_files=["res://.godot/imported/moving.svg-83e9a1fc1b9977a139072fc7063aff68.ctex"]
+source_file="res://ui/gizmo/point.svg"
+dest_files=["res://.godot/imported/point.svg-1ada2c6e381826740c9e6cd32f6a7d31.ctex"]
 
 [params]
 

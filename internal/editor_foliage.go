@@ -39,6 +39,8 @@ type FoliageEditor struct {
 	client *Client
 
 	last_slider_sculpt time.Time
+
+	lighting // private lighting for this editor
 }
 
 func (*FoliageEditor) Views() []string          { return nil }
@@ -99,6 +101,8 @@ func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
 }
 func (fe *FoliageEditor) EnableEditor() {
 	fe.client.SetGizmos(nil)
+	fe.lighting.apply(fe.client)
+	fe.lighting.ensureSeeded(fe.client)
 }
 func (fe *FoliageEditor) ChangeEditor() {}
 
@@ -163,6 +167,12 @@ func (fe *FoliageEditor) applyMaterials() {
 }
 
 func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
+	if strings.HasPrefix(brush.Slider, "environment/") {
+		if fe.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
+			fe.lighting.apply(fe.client)
+			return nil
+		}
+	}
 	switch brush.Slider {
 	case "leaflet", "timbers":
 		texture := fe.client.resolveMaterialTexture(brush.Design)

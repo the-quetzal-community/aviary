@@ -157,6 +157,8 @@ type CritterEditor struct {
 	// is active; controlExit nils it back out on the way out. See
 	// editor_critter_control.go for the rest of the implementation.
 	control *controlVis
+
+	lighting // private lighting for this editor
 }
 
 // proceduralPart is the per-frame contract for any procedurally-
@@ -449,6 +451,8 @@ func (ce *CritterEditor) EnableEditor() {
 		GizmoSpace, GizmoClone, GizmoTrash,
 	})
 	ce.ensureLoaded()
+	ce.lighting.apply(ce.client)
+	ce.lighting.ensureSeeded(ce.client)
 }
 
 func (ce *CritterEditor) ChangeEditor() {
@@ -682,6 +686,12 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 // Everything else falls through to the legacy macro slider system
 // (body shape sliders) so existing scenes replay correctly.
 func (ce *CritterEditor) Sculpt(brush musical.Sculpt) error {
+	if strings.HasPrefix(brush.Slider, "environment/") {
+		if ce.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
+			ce.lighting.apply(ce.client)
+			return nil
+		}
+	}
 	if strings.HasPrefix(brush.Slider, "bone/") {
 		ce.applyBoneSculpt(brush.Slider, float32(brush.Amount))
 		return nil

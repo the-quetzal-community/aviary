@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cgenijo08vjch"
-path="res://.godot/imported/cursor.svg-d3c1451a682937c5766d881b968cd00f.ctex"
+uid="uid://qrqs88rqwn0n"
+path="res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/gizmo/cursor.svg"
-dest_files=["res://.godot/imported/cursor.svg-d3c1451a682937c5766d881b968cd00f.ctex"]
+source_file="res://ui/gizmo/float.svg"
+dest_files=["res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"]
 
 [params]
 
@@ -37,7 +37,7 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=2
+detect_3d/compress_to=1
 svg/scale=1.0
 editor/scale_with_editor_scale=false
 editor/convert_colors_with_editor_theme=false

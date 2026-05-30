@@ -28,11 +28,15 @@ type BoulderEditor struct {
 	client *Client
 
 	last_slider_sculpt time.Time
+
+	lighting // private lighting for this editor
 }
 
 func (fe *BoulderEditor) Name() string { return "boulder" }
 func (fe *BoulderEditor) EnableEditor() {
 	fe.client.SetGizmos(nil)
+	fe.lighting.apply(fe.client)
+	fe.lighting.ensureSeeded(fe.client)
 }
 func (fe *BoulderEditor) ChangeEditor() {
 
@@ -56,6 +60,12 @@ func (fe *BoulderEditor) ExitTree() {
 }
 
 func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
+	if strings.HasPrefix(brush.Slider, "environment/") {
+		if fe.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
+			fe.lighting.apply(fe.client)
+			return nil
+		}
+	}
 	editing := brush.Slider
 	value := float64(brush.Amount)
 	switch editing {

@@ -158,6 +158,11 @@ type TerrainEditor struct {
 	pendingGrass []musical.Sculpt
 
 	client *Client
+
+	// lighting holds the shared world lighting used by both Terrain and
+	// Scenery. All other editors that embed lighting get their own private
+	// copy.
+	lighting
 }
 
 // cardinalDirs are the four neighbour offsets used by the chunk
@@ -254,10 +259,16 @@ func (tr *TerrainEditor) tileForWorld(pos Vector3.XYZ) *TerrainTile {
 func (fe *TerrainEditor) Name() string { return "terrain" }
 
 func (fe *TerrainEditor) EnableEditor() {
-	fe.client.SetGizmos(nil)
+	// Terrain is a brush editor: it sculpts/paints the ground rather than
+	// selecting & transforming placed entities, so it offers only the brush
+	// tool. Declaring it here also makes the brush the active gizmo (the
+	// neutral Point tool is not in the set, so SetGizmos switches off it) —
+	// the brush-size slider then anchors to this button.
+	fe.client.SetGizmos([]Gizmo{GizmoBrush})
 	fe.shader.SetShaderParameter("brush_active", true)
 	fe.shader_buried.SetShaderParameter("brush_active", true)
 	fe.setArrowsVisible(true)
+	fe.lighting.apply(fe.client)
 }
 
 func (fe *TerrainEditor) ChangeEditor() {
@@ -741,6 +752,19 @@ func (tr *TerrainEditor) HeightAt(pos Vector3.XYZ) Float.X {
 	return tile.HeightAt(pos)
 }
 
+// WaterSurfaceAt returns the world-Y of the water surface at a world position:
+// the local river surface where one has been carved, otherwise the global lake
+// level. The underwater post-process samples this under the camera so the
+// waterline tracks rivers (not just the flat global plane). Falls back to the
+// global level where no tile is loaded.
+func (tr *TerrainEditor) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
+	tile := tr.tileForWorld(pos)
+	if tile == nil {
+		return tr.WaterLevel
+	}
+	return tile.WaterSurfaceAt(pos)
+}
+
 // NormalAt looks up the terrain normal at the given world position.
 // Returns world-up if no tile has been instantiated there.
 func (tr *TerrainEditor) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
@@ -817,6 +841,13 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	if brush.Slider == "editing/water_level" {
 		vr.applyWaterLevel(Float.X(brush.Amount))
 		return nil
+	}
+	// Environment sliders for the shared world look (terrain + scenery).
+	if strings.HasPrefix(brush.Slider, "environment/") {
+		if vr.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
+			vr.lighting.apply(vr.client)
+			return nil
+		}
 	}
 	// Terrain processes its own height/paint sculpts (legacy Editor "")
 	// and the dressing sculpts it authors (Editor "terrain"). Anything
@@ -1605,6 +1636,72 @@ func (tile *TerrainTile) HeightAt(pos Vector3.XYZ) Float.X {
 	return (h0*(1-sz) + h1*sz)
 }
 
+// WaterSurfaceAt mirrors reloadWater's waterAt: where a river has been carved
+// (riverDepth above the floor within the bank collar) the surface sits at the
+// original ground minus the small lip; otherwise it is the global lake level.
+// Used by the underwater post-process to place the waterline on rivers.
+func (tile *TerrainTile) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
+	n := tile.size
+	if n == 0 {
+		n = terrainDefaultSize
+	}
+	hm := n + 1
+	level := Float.X(0)
+	if tile.editor != nil {
+		level = tile.editor.WaterLevel
+	}
+	if len(tile.groundHeights) < hm*hm || len(tile.riverDepth) < hm*hm {
+		return level
+	}
+	maxF := Float.X(n)
+	local := Vector3.Sub(pos, tile.Mesh.AsNode3D().GlobalPosition())
+	x := max(0.0, min(maxF, local.X))
+	z := max(0.0, min(maxF, local.Z))
+	x0 := int(x)
+	z0 := int(z)
+	x1 := x0 + 1
+	z1 := z0 + 1
+	if x1 > n {
+		x1 = n
+	}
+	if z1 > n {
+		z1 = n
+	}
+	// Water present if the nearest cell — or any neighbour within the bank
+	// collar — has been carved into a channel (matches waterAt's dilation).
+	present := false
+	cx, cz := int(x+0.5), int(z+0.5)
+	for dz := -riverBankCollar; dz <= riverBankCollar && !present; dz++ {
+		for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
+			gx, gz := cx+dx, cz+dz
+			if gx < 0 || gz < 0 || gx >= hm || gz >= hm {
+				continue
+			}
+			if tile.riverDepth[gx+gz*hm] > waterFloorEps {
+				present = true
+				break
+			}
+		}
+	}
+	if !present {
+		return level
+	}
+	// Bilinear original ground, then the river surface (or the lake if higher).
+	g00 := Float.X(tile.groundHeights[x0+z0*hm])
+	g10 := Float.X(tile.groundHeights[x1+z0*hm])
+	g01 := Float.X(tile.groundHeights[x0+z1*hm])
+	g11 := Float.X(tile.groundHeights[x1+z1*hm])
+	sx := x - Float.X(x0)
+	sz := z - Float.X(z0)
+	g0 := g00*(1-sx) + g10*sx
+	g1 := g01*(1-sx) + g11*sx
+	ground := g0*(1-sz) + g1*sz
+	if level > ground {
+		return level
+	}
+	return ground - waterSurfaceDrop
+}
+
 // NormalAt returns the surface normal of the terrain mesh at the given position.
 func (tile *TerrainTile) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
 	size := tile.size
@@ -1958,6 +2055,39 @@ func (tile *TerrainTile) reloadWater() {
 		}
 		return surface, fx, fz
 	}
+	// slopeAlongFlow returns how steeply the water surface drops in the flow
+	// direction at grid (x,y): a central-difference gradient of the surface
+	// height (which follows groundHeights) projected onto the (already
+	// normalised) flow vector. Cells are ~1 world unit, so this is rise/run
+	// (a tangent); 0 on flat or off-river points. The shader uses it to speed
+	// up the current and grow whitewater on steeper, faster stretches.
+	slopeAlongFlow := func(x, y int, fx, fz float32) float32 {
+		if !hasRiver || (fx == 0 && fz == 0) {
+			return 0
+		}
+		xm, xp, ym, yp := x-1, x+1, y-1, y+1
+		if xm < 0 {
+			xm = 0
+		}
+		if xp >= hm {
+			xp = hm - 1
+		}
+		if ym < 0 {
+			ym = 0
+		}
+		if yp >= hm {
+			yp = hm - 1
+		}
+		gradX := (tile.groundHeights[xp+y*hm] - tile.groundHeights[xm+y*hm]) / float32(xp-xm)
+		gradZ := (tile.groundHeights[x+yp*hm] - tile.groundHeights[x+ym*hm]) / float32(yp-ym)
+		// Flow runs downhill, so the surface drops along it: the downhill
+		// component is the negated gradient·flow. Clamp away uphill noise.
+		s := -(gradX*fx + gradZ*fz)
+		if s < 0 {
+			s = 0
+		}
+		return s
+	}
 	addw := func(index int, x, y int) {
 		// Node is at local y=0, so mesh-local y == world Y. The waves/normal
 		// maps key off world position, so a simple UV is fine.
@@ -1969,9 +2099,10 @@ func (tile *TerrainTile) reloadWater() {
 		if hasHeights {
 			floor = tile.heights[x+y*hm]
 		}
-		floors_water[index*4+0] = floor // .r = terrain floor (channel bottom)
-		floors_water[index*4+1] = fx    // .g = flow X (world, normalised)
-		floors_water[index*4+2] = fz    // .b = flow Z (world, normalised)
+		floors_water[index*4+0] = floor                        // .r = terrain floor (channel bottom)
+		floors_water[index*4+1] = fx                           // .g = flow X (world, normalised)
+		floors_water[index*4+2] = fz                           // .b = flow Z (world, normalised)
+		floors_water[index*4+3] = slopeAlongFlow(x, y, fx, fz) // .a = downhill slope along flow
 	}
 	for x := 0; x < n; x++ {
 		for y := 0; y < n; y++ {

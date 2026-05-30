@@ -7,12 +7,14 @@ import (
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DisplayServer"
+	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/HSlider"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
@@ -20,11 +22,14 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/Tween"
+	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector2"
+
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 // guideURL is the online guide opened by the toolbar's Help button.
@@ -52,6 +57,7 @@ type UI struct {
 		Redo     TextureButton.Instance
 		Export   TextureButton.Instance
 		Help     TextureButton.Instance
+		Shading  TextureButton.Instance // lighting / environment rolldown trigger
 	}
 
 	// SettingsMenu is the panel that rolls out from the Toolbar triangle
@@ -62,6 +68,12 @@ type UI struct {
 	// graphics-quality slider — are declared in editor.tscn and wired up
 	// by buildSettingsMenu.
 	SettingsMenu Panel.Instance
+
+	// EnvironmentMenu is the lighting/fog/weather rolldown (sun azimuth/
+	// elevation, energy, fog density). Triggered from the Shading button
+	// in the Toolbar. Uses the same Rollout mechanism as SettingsMenu.
+	// Its 4 sliders are created dynamically so the .tscn change stays tiny.
+	EnvironmentMenu Panel.Instance
 
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
@@ -79,6 +91,10 @@ type UI struct {
 	// settingsRollout drives the Settings cog menu's slide animation,
 	// sharing the same Rollout helper as the editor switcher.
 	settingsRollout Rollout
+
+	// environmentRollout drives the new Shading/lighting rolldown.
+	// Mutually exclusive with the other two top-right rollouts.
+	environmentRollout Rollout
 
 	// undoSpin/redoSpin remember each button's resting rotation so the
 	// click spin can return to the designed tilt instead of snapping
@@ -124,6 +140,9 @@ func (ui *UI) Setup() {
 	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("HelpMe")); ok {
 		ui.Toolbar.Help = btn
 	}
+	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Shading")); ok {
+		ui.Toolbar.Shading = btn
+	}
 	ui.Toolbar.Settings.AsBaseButton().OnPressed(ui.toggleSettings)
 	ui.Toolbar.Undo.AsBaseButton().OnPressed(ui.undo)
 	ui.Toolbar.Redo.AsBaseButton().OnPressed(ui.redo)
@@ -134,14 +153,20 @@ func (ui *UI) Setup() {
 	ui.Toolbar.Help.AsBaseButton().OnPressed(func() {
 		OS.ShellOpen(guideURL)
 	})
+	ui.Toolbar.Shading.AsBaseButton().OnPressed(ui.toggleEnvironment)
+
 	ui.buildSettingsMenu()
-	// The Settings menu and the editor switcher roll out of the same
-	// top-right corner, so make them mutually exclusive: opening either
-	// slides the other shut, leaving only one panel revealed at a time.
-	ui.settingsRollout.exclusive = []*Rollout{&ui.EditorIndicator.rollout}
-	ui.EditorIndicator.rollout.exclusive = []*Rollout{&ui.settingsRollout}
-	// Spin the cog each time its menu rolls out or in.
+	ui.buildEnvironmentMenu()
+
+	// The three top-right rollouts (editor switcher, settings, lighting)
+	// are mutually exclusive — only one may be open at a time.
+	ui.settingsRollout.exclusive = []*Rollout{&ui.EditorIndicator.rollout, &ui.environmentRollout}
+	ui.EditorIndicator.rollout.exclusive = []*Rollout{&ui.settingsRollout, &ui.environmentRollout}
+	ui.environmentRollout.exclusive = []*Rollout{&ui.settingsRollout, &ui.EditorIndicator.rollout}
+
+	// Spin the cog / shading icon each time its menu rolls out or in.
 	ui.settingsRollout.icon = ui.Toolbar.Settings.AsControl()
+	ui.environmentRollout.icon = ui.Toolbar.Shading.AsControl()
 }
 
 // buildSettingsMenu wires the graphics-quality slider that lives in the
@@ -192,10 +217,151 @@ func (ui *UI) buildSettingsMenu() {
 	defaultGraphicsQuality.Apply(ui.AsNode())
 }
 
+// buildEnvironmentMenu creates the slider content for the lighting rolldown
+// (Time of Day, Sun Angle, Fog, Clouds). The outer Panel lives in editor.tscn
+// (EnvironmentMenu) so it participates in the same Rollout + scaling machinery
+// as SettingsMenu. Content is built in code to keep the .tscn diff tiny and
+// the layout easy to adjust.
+func (ui *UI) buildEnvironmentMenu() {
+	if ui.EnvironmentMenu.AsControl() == Control.Nil {
+		return
+	}
+	// Ensure we have a container to host the rows.
+	containerNode := ui.EnvironmentMenu.AsNode().GetNode("Types")
+	var container VBoxContainer.Instance
+	if c, ok := Object.As[VBoxContainer.Instance](containerNode); ok {
+		container = c
+	} else {
+		container = VBoxContainer.New()
+		container.AsControl().SetAnchorsPreset(Control.PresetFullRect)
+		ui.EnvironmentMenu.AsNode().AddChild(container.AsNode())
+	}
+
+	// Make sure the content is pushed below the rotated Toolbar triangle
+	// (same pattern as the QualitySpacer in SettingsMenu).
+	if container.AsNode().GetChildCount() == 0 {
+		spacer := Control.New()
+		spacer.SetCustomMinimumSize(Vector2.New(0, 520))
+		spacer.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
+		container.AsNode().AddChild(spacer.AsNode())
+	}
+
+	// Downscale grabber exactly like the quality slider.
+	const grabberSize = 64
+	var smallGrabber Texture2D.Instance
+	if tex := LoadSync[Texture2D.Instance]("res://ui/slider.png"); tex != Texture2D.Nil {
+		if img := tex.GetImage(); img != Image.Nil {
+			img.Resize(grabberSize, grabberSize)
+			smallGrabber = ImageTexture.CreateFromImage(img).AsTexture2D()
+		}
+	}
+
+	// Helper to make one labeled row.
+	makeRow := func(labelText string, minV, maxV, step, initV Float.X, onChange func(Float.X)) {
+		row := HBoxContainer.New()
+		row.AsControl().SetCustomMinimumSize(Vector2.New(0, 28))
+
+		lbl := Label.New()
+		lbl.SetText(labelText)
+		lbl.AsControl().SetCustomMinimumSize(Vector2.New(90, 0))
+		// Small readable size for the compact rolldown.
+		lbl.AsControl().AddThemeFontSizeOverride("font_size", 14)
+
+		sld := HSlider.Advanced(HSlider.New())
+		sld.AsControl().SetCustomMinimumSize(Vector2.New(140, 24))
+		sld.AsRange().SetMin(float64(minV))
+		sld.AsRange().SetMax(float64(maxV))
+		sld.AsRange().SetStep(float64(step))
+		sld.AsRange().SetValue(float64(initV))
+
+		if smallGrabber != Texture2D.Nil {
+			h := HSlider.Instance(sld)
+			for _, nm := range []string{"grabber", "grabber_highlight", "grabber_disabled"} {
+				h.AsControl().AddThemeIconOverride(nm, smallGrabber)
+			}
+		}
+
+		Range.Instance(sld.AsRange()).OnValueChanged(onChange)
+
+		row.AsNode().AddChild(lbl.AsNode())
+		row.AsNode().AddChild(HSlider.Instance(sld).AsNode())
+		container.AsNode().AddChild(row.AsNode())
+	}
+
+	// Seed the friendly controls from the authoritative lighting state so the
+	// menu opens on the real current values (each axis stays independent
+	// because the state stores them directly, not a lossy re-derivation from
+	// the light's rotation).
+	tod := Float.X(0.38) // sensible daytime default before the world exists
+	sunAng := Float.X(0.08)
+	fg := Float.X(0.0)
+	cl := Float.X(0.0)
+	if ui.client != nil {
+		tod, sunAng, fg, cl = ui.client.GetLightingMenuState()
+	}
+
+	// Friendly, non-technical controls. We drive them through
+	// ApplyLightingMenuState so each axis stays completely independent.
+	makeRow("Time of Day", 0, 1, 0.005, tod, func(v Float.X) {
+		if ui.client != nil {
+			_, angle, fog, clouds := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(v, angle, fog, clouds)
+		}
+		// Still send the Sculpt for networking + persistence
+		ui.sendEnvironmentSlider("environment/time_of_day", v)
+	})
+	makeRow("Sun Angle", 0, 1, 0.005, sunAng, func(v Float.X) {
+		if ui.client != nil {
+			tod, _, fog, clouds := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, v, fog, clouds)
+		}
+		ui.sendEnvironmentSlider("environment/sun_angle", v)
+	})
+	makeRow("Fog / Atmosphere", 0, 1, 0.01, fg, func(v Float.X) {
+		if ui.client != nil {
+			tod, angle, _, clouds := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, v, clouds)
+		}
+		ui.sendEnvironmentSlider("environment/fog", v)
+	})
+	makeRow("Clouds", 0, 1, 0.01, cl, func(v Float.X) {
+		if ui.client != nil {
+			tod, angle, fog, _ := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, v)
+		}
+		ui.sendEnvironmentSlider("environment/clouds", v)
+	})
+}
+
+// sendEnvironmentSlider builds a Sculpt with the correct Editor routing key
+// for the active editor (so it lands in the right editor's Sculpt handler)
+// and also applies immediately for snappy local feedback.
+func (ui *UI) sendEnvironmentSlider(slider string, value Float.X) {
+	if ui.client == nil || ui.client.space == nil {
+		// Fallback: still push to renderer so the menu works even before join.
+		ui.client.applyLightingStateFromSlider(slider, value)
+		return
+	}
+	key := ui.client.activeLightingEditorKey()
+	ui.client.space.Sculpt(musical.Sculpt{
+		Editor: key,
+		Slider: slider,
+		Amount: value,
+		Commit: true,
+	})
+	// Immediate local apply (the round-trip will re-apply the same value).
+	ui.client.applyLightingStateFromSlider(slider, value)
+}
+
 // toggleSettings rolls the Settings menu in and out from behind the
 // Toolbar triangle, sharing the Rollout helper with the editor switcher.
 func (ui *UI) toggleSettings() {
 	ui.settingsRollout.Toggle(ui.SettingsMenu.AsControl())
+}
+
+// toggleEnvironment rolls the lighting/fog/weather menu (Shading button).
+func (ui *UI) toggleEnvironment() {
+	ui.environmentRollout.Toggle(ui.EnvironmentMenu.AsControl())
 }
 
 func (ui *UI) SetMode(mode Mode) {

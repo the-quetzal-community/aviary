@@ -4,13 +4,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"graphics.gd/classdb/BaseButton"
-	"graphics.gd/classdb/CanvasItem"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GradientTexture2D"
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/HSeparator"
 	"graphics.gd/classdb/HSlider"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/ImageTexture"
@@ -81,12 +80,11 @@ type CloudControl struct {
 	GizmoTypes struct {
 		VBoxContainer.Instance
 
-		// The four gizmo buttons sit at scene indices 0..3 so
-		// set_gizmo can address them with GetChild(int(gizmo)).
-		// Duplicate / Delete live in the same column underneath an
-		// HSeparator — Ready() limits the gizmo OnPressed wire-up to
-		// the gizmo prefix so the action buttons don't get hooked as
-		// extra gizmos.
+		// Duplicate and Delete are the persistent action buttons for
+		// GizmoClone / GizmoTrash. Their OnPressed handlers are wired
+		// once in UI.Ready. They are never passed through AddChild
+		// (they are Godot-owned nodes from the .tscn). SetGizmos only
+		// reorders them via MoveChild to honour the editor's list.
 		Duplicate TextureButton.Instance
 		Delete    TextureButton.Instance
 	}
@@ -117,6 +115,14 @@ type CloudControl struct {
 	// the size slider and feeds the "dressing/density" slider channel.
 	densitySlider      HSlider.Instance
 	densitySliderReady bool
+
+	// gizmoButtons maps the Gizmo values currently present in the toolbar
+	// (per the active editor's SetGizmos order) to their TextureButton (or
+	// Control for the action buttons). These are always *borrowed*
+	// references (obtained via GetNode/GetChild after the nodes are in the
+	// tree) so that gizmoControl and the slider positioning helpers can
+	// safely query Position/Size without any ownership-transfer issues.
+	gizmoButtons map[Gizmo]Control.Instance
 }
 
 type Gizmo int
@@ -190,7 +196,10 @@ func (ui *CloudControl) Input(event InputEvent.Instance) {
 
 func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
 	ui.Gizmo = gizmo
-	child := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(gizmo)))
+	child := ui.gizmoControl(gizmo)
+	if child == Control.Nil {
+		return
+	}
 	types := ui.GizmoTypes.AsControl()
 	indicator := ui.GizmoIndicator.AsControl()
 	childCenter := Vector2.Add(
@@ -203,18 +212,10 @@ func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
 }
 
 func (ui *CloudControl) Ready() {
-	// First four GizmoTypes children are the gizmo TextureButtons in
-	// the enum order GizmoPoint/Shift/Twist/Scale. Children after
-	// that are the action group (HSeparator, Duplicate, Delete) and
-	// must not be hooked as extra gizmos — their OnPressed is wired
-	// from UI.Ready instead so the client reference is available.
-	const gizmoCount = 4
-	for i := 0; i < gizmoCount; i++ {
-		child := ui.GizmoTypes.AsNode().GetChild(i)
-		Object.To[BaseButton.Instance](child).OnPressed(func() {
-			ui.set_gizmo(Gizmo(i))
-		})
-	}
+	// Gizmo buttons are now created dynamically by SetGizmos (which
+	// runs on every editor switch) and wired at creation time in
+	// newGizmoButton. The persistent Duplicate/Delete action buttons
+	// have their OnPressed handlers wired from UI.Ready.
 	ui.JoinCode.ShareButton.AsBaseButton().OnPressed(func() {
 		if time.Now().After(UserState.Aviary.TogetherUntil) {
 			OS.ShellOpen("https://the.quetzal.community/aviary/together?authorise=" + UserState.Secret)
@@ -410,14 +411,15 @@ func (ui *CloudControl) setDensitySliderVisible(v bool) {
 }
 
 // positionSizeSlider pins the size slider just to the right of the Shift
-// gizmo button each frame while it's visible, mirroring the maths
-// set_gizmo uses to place the gizmo indicator so the slider tracks the
-// button across window/layout changes.
+// gizmo button each frame while it's visible, using the same lookup as
+// set_gizmo so the slider tracks the (possibly dynamically ordered) button.
 func (ui *CloudControl) positionSizeSlider() {
 	if !ui.sizeSliderReady || !ui.sizeSlider.AsCanvasItem().Visible() {
 		return
 	}
-	shift := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(GizmoShift)))
+	// The size slider is only shown for the terrain editor, whose sole gizmo
+	// is the brush, so pin it next to that button.
+	shift := ui.gizmoControl(GizmoBrush)
 	if shift == Control.Nil {
 		return
 	}
@@ -437,12 +439,13 @@ func (ui *CloudControl) positionSizeSlider() {
 
 // positionDensitySlider pins the dressing-density slider just below the
 // brush-size slider's slot (both sit to the right of the Shift button), so
-// the two stack vertically in the toolbar.
+// the two stack vertically in the toolbar. It uses gizmoControl for lookup.
 func (ui *CloudControl) positionDensitySlider() {
 	if !ui.densitySliderReady || !ui.densitySlider.AsCanvasItem().Visible() {
 		return
 	}
-	shift := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(GizmoShift)))
+	// Stacks under the size slider, anchored to the same terrain brush button.
+	shift := ui.gizmoControl(GizmoBrush)
 	if shift == Control.Nil {
 		return
 	}
@@ -470,16 +473,265 @@ func (ui *CloudControl) isGizmoAllowed(g Gizmo) bool {
 	return ui.allowedGizmos[g]
 }
 
+// gizmoIconName returns the basename (without extension) for the
+// texture that represents this gizmo. The texture is loaded from
+// res://ui/gizmo/<name>.svg when the button is first needed.
+func gizmoIconName(g Gizmo) string {
+	switch g {
+	case GizmoPoint:
+		return "point"
+	case GizmoShift:
+		return "shift"
+	case GizmoTwist:
+		return "twist"
+	case GizmoFloat:
+		return "float"
+	case GizmoBrush:
+		return "brush"
+	case GizmoPower:
+		return "power"
+	case GizmoScale:
+		return "scale"
+	case GizmoErase:
+		return "erase"
+	case GizmoClone:
+		return "clone"
+	case GizmoTrash:
+		return "trash"
+	default:
+		return ""
+	}
+}
+
+// newGizmoButton creates a fresh TextureButton for the given gizmo kind
+// (always a new owned object via .New()). The caller is responsible for
+// AddChild'ing it exactly once. It loads the icon from the named path
+// under ui/gizmo/ and wires the press handler. Returns Nil for unknown
+// gizmos.
+func (ui *CloudControl) newGizmoButton(g Gizmo) TextureButton.Instance {
+	name := gizmoIconName(g)
+	if name == "" {
+		return TextureButton.Nil
+	}
+	path := "res://ui/gizmo/" + name + ".svg"
+	tex := LoadSync[Texture2D.Instance](path)
+
+	btn := TextureButton.New()
+	btn.
+		SetIgnoreTextureSize(true).
+		SetStretchMode(TextureButton.StretchKeepAspectCentered).
+		AsControl().SetCustomMinimumSize(Vector2.New(42, 42))
+	if tex != Texture2D.Nil {
+		btn.SetTextureNormal(tex)
+	}
+
+	// The closure captures the specific Gizmo value for this button.
+	gVal := g
+	btn.AsBaseButton().OnPressed(func() {
+		ui.set_gizmo(gVal)
+	})
+
+	// Give it a stable name so later (after AddChild) we can safely
+	// obtain a borrowed reference via GetNode for the gizmoButtons map
+	// and for positioning without ever holding a transferable Instance
+	// across ownership boundaries.
+	btn.AsNode().SetName("Gizmo_" + name)
+
+	return TextureButton.Instance(btn)
+}
+
+// newGizmoSeparator creates a fresh thin horizontal rule (always a new
+// owned object). The caller AddChild's it once.
+func (ui *CloudControl) newGizmoSeparator() HSeparator.Instance {
+	sep := HSeparator.New()
+	HSeparator.Instance(sep).AsControl().SetCustomMinimumSize(Vector2.New(42, 8))
+	// Name is not strictly needed for separators (they are never looked
+	// up in gizmoButtons), but helps during debugging.
+	HSeparator.Instance(sep).AsNode().SetName("GizmoSpace")
+	return HSeparator.Instance(sep)
+}
+
+// gizmoControl returns the Control that visually represents g in the
+// current toolbar (if any). Used for indicator positioning and slider
+// attachment. All entries are borrowed references (safe for Position/
+// Size queries). Returns Nil for separators and for gizmos not offered.
+func (ui *CloudControl) gizmoControl(g Gizmo) Control.Instance {
+	if ui.gizmoButtons != nil {
+		if c, ok := ui.gizmoButtons[g]; ok && c != Control.Nil {
+			return c
+		}
+	}
+	// Fallbacks for the two permanent action buttons (they are always
+	// children of GizmoTypes once the first rebuild has run).
+	switch g {
+	case GizmoClone:
+		return ui.GizmoTypes.Duplicate.AsControl()
+	case GizmoTrash:
+		return ui.GizmoTypes.Delete.AsControl()
+	}
+	return Control.Nil
+}
+
+// borrowedGizmoButton returns a safe borrowed reference to a dynamic
+// gizmo button we previously created (we give them stable names
+// "Gizmo_<name>"). It is obtained via GetNode so it is always a
+// LetObject borrow (never a transferable ownership reference).
+func (ui *CloudControl) borrowedGizmoButton(name string) Control.Instance {
+	if ui.GizmoTypes.AsNode() == Node.Nil {
+		return Control.Nil
+	}
+	n := ui.GizmoTypes.AsNode().GetNode("Gizmo_" + name)
+	if n == Node.Nil {
+		return Control.Nil
+	}
+	// Most dynamic buttons are TextureButtons; fall back to Control.
+	if b, ok := Object.As[TextureButton.Instance](n); ok && b != TextureButton.Nil {
+		return b.AsControl()
+	}
+	if c, ok := Object.As[Control.Instance](n); ok {
+		return c
+	}
+	return Control.Nil
+}
+
+// rebuildGizmoToolbar arranges the GizmoTypes VBox exactly as the
+// supplied slice requests. Dynamic buttons and separators are always
+// created fresh (via .New()) and AddChild'ed exactly once. The two
+// Godot-owned action buttons (Duplicate/Delete) are never passed to
+// AddChild; they are reordered in place with MoveChild.
+func (ui *CloudControl) rebuildGizmoToolbar(gizmos []Gizmo) {
+	vbox := ui.GizmoTypes.AsNode()
+	if vbox == Node.Nil {
+		return
+	}
+
+	// Remove only children we created (the old baked anonymous buttons
+	// from the .tscn and any previous dynamic ones). Leave the two
+	// named action buttons alone — we will MoveChild them into the
+	// positions the editor requested.
+	//
+	// Identity must be tested by instance ID, not by Go's == on the
+	// Instance structs: two references to the same engine node (one
+	// from GetChild, one from the stored Duplicate/Delete field) carry
+	// different borrow sentinel/revision bookkeeping and never compare
+	// equal. Using == here freed the action buttons (RemoveChild +
+	// QueueFree), so the later MoveChild logged "Child is not a child
+	// of this node" and UI.Process then SIGSEGV'd touching the dangling
+	// Delete reference.
+	dupID := ui.GizmoTypes.Duplicate.AsNode().ID()
+	delID := ui.GizmoTypes.Delete.AsNode().ID()
+	for i := vbox.GetChildCount() - 1; i >= 0; i-- {
+		child := vbox.GetChild(i)
+		if id := child.ID(); id == dupID || id == delID {
+			continue
+		}
+		vbox.RemoveChild(child)
+		// The nodes we created are no longer referenced by any Go
+		// cache, so QueueFree is the right thing to do.
+		child.QueueFree()
+	}
+
+	// Track where we want the two action buttons to end up (by their
+	// final child index after we have inserted the dynamics). We do a
+	// two-pass approach: first insert all the requested dynamics (and
+	// separators), then MoveChild the actions into the correct slots.
+	type actionPlacement struct {
+		g     Gizmo
+		index int // desired index among the final children
+	}
+	var placements []actionPlacement
+
+	ui.gizmoButtons = make(map[Gizmo]Control.Instance, len(gizmos))
+
+	insertIndex := 0 // current insertion point as we walk the request list
+	for _, g := range gizmos {
+		switch g {
+		case GizmoSpace:
+			sep := ui.newGizmoSeparator()
+			vbox.AddChild(sep.AsNode())
+			// Move it to the logical position if earlier insertions
+			// (e.g. actions we will place later) require it. For a
+			// pure append-and-reorder strategy we can just let them
+			// append and fix with MoveChild in a final pass, but
+			// doing it incrementally is also fine.
+			vbox.MoveChild(sep.AsNode(), insertIndex)
+			insertIndex++
+
+		case GizmoClone:
+			placements = append(placements, actionPlacement{GizmoClone, insertIndex})
+			insertIndex++ // reserve the slot
+
+		case GizmoTrash:
+			placements = append(placements, actionPlacement{GizmoTrash, insertIndex})
+			insertIndex++
+
+		default:
+			btn := ui.newGizmoButton(g)
+			if btn == TextureButton.Nil {
+				continue
+			}
+			vbox.AddChild(btn.AsNode())
+			vbox.MoveChild(btn.AsNode(), insertIndex)
+			// Store a *borrowed* reference obtained via the stable
+			// name we gave the button. This is always safe.
+			if c := ui.borrowedGizmoButton(gizmoIconName(g)); c != Control.Nil {
+				ui.gizmoButtons[g] = c
+			} else {
+				// Fallback: the just-inserted node as a borrow.
+				ui.gizmoButtons[g] = btn.AsControl()
+			}
+			insertIndex++
+		}
+	}
+
+	// Now place the action buttons (which have remained children the
+	// whole time) at the exact indices the editor asked for.
+	for _, p := range placements {
+		var action Node.Instance
+		var setVisible func(bool)
+		if p.g == GizmoClone {
+			action = ui.GizmoTypes.Duplicate.AsNode()
+			setVisible = func(v bool) { ui.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(v) }
+		} else {
+			action = ui.GizmoTypes.Delete.AsNode()
+			setVisible = func(v bool) { ui.GizmoTypes.Delete.AsCanvasItem().SetVisible(v) }
+		}
+		if action != Node.Nil {
+			vbox.MoveChild(action, p.index)
+			setVisible(true)
+		}
+	}
+
+	// As a final safety step, make sure any action button that was
+	// *not* mentioned in the slice is hidden (the Process() override
+	// will still run every frame for the selection-dependent case).
+	// Also populate the (borrowed) map entries for the actions so that
+	// gizmoControl has a uniform source of truth.
+	if ui.isGizmoAllowed(GizmoClone) {
+		ui.gizmoButtons[GizmoClone] = ui.GizmoTypes.Duplicate.AsControl()
+	} else {
+		ui.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(false)
+	}
+	if ui.isGizmoAllowed(GizmoTrash) {
+		ui.gizmoButtons[GizmoTrash] = ui.GizmoTypes.Delete.AsControl()
+	} else {
+		ui.GizmoTypes.Delete.AsCanvasItem().SetVisible(false)
+	}
+}
+
 // SetGizmos restricts the visible gizmo tools in the toolbar to exactly
-// the supplied list. Editors should call this (via client.SetGizmos)
-// from their EnableEditor so that only the tools relevant to that editor
-// are offered.
+// the supplied list, in the order given. Editors should call this (via
+// client.SetGizmos) from their EnableEditor so that only the tools
+// relevant to that editor are offered, and in the order the editor
+// prefers them to appear.
 //
-// The primary transform gizmos (Point..Float) map to the first four
-// buttons. GizmoSpace controls the separator. GizmoClone and GizmoTrash
-// control Duplicate and Delete respectively. Unknown or future gizmo
-// values (Brush, Power, etc.) are ignored until corresponding buttons
-// exist.
+// GizmoSpace inserts a visual separator at that point in the column.
+// GizmoClone and GizmoTrash insert the Duplicate and Delete action
+// buttons respectively.
+//
+// Each gizmo button (except the two actions, which reuse the persistent
+// scene nodes) loads its icon from res://ui/gizmo/<name>.svg using the
+// mapping in gizmoIconName (GizmoPoint → "point.svg", etc.).
 func (ui *CloudControl) SetGizmos(gizmos []Gizmo) {
 	allowed := make(map[Gizmo]bool, len(gizmos))
 	for _, g := range gizmos {
@@ -487,28 +739,14 @@ func (ui *CloudControl) SetGizmos(gizmos []Gizmo) {
 	}
 	ui.allowedGizmos = allowed
 
-	// Primary transform buttons are children 0-3 (indices match Gizmo iota).
-	for i := 0; i < 4; i++ {
-		g := Gizmo(i)
-		child := ui.GizmoTypes.AsNode().GetChild(i)
-		Object.To[CanvasItem.Instance](child).SetVisible(allowed[g])
-	}
+	ui.rebuildGizmoToolbar(gizmos)
 
-	// Separator (index 4)
-	sep := ui.GizmoTypes.AsNode().GetChild(4)
-	showSep := allowed[GizmoSpace] || allowed[GizmoClone] || allowed[GizmoTrash]
-	Object.To[CanvasItem.Instance](sep).SetVisible(showSep)
-
-	// Action buttons (Duplicate ~ Clone, Delete ~ Trash)
-	ui.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(allowed[GizmoClone])
-	ui.GizmoTypes.Delete.AsCanvasItem().SetVisible(allowed[GizmoTrash])
-
-	// If the currently active gizmo is no longer allowed, pick the first
-	// visible primary one so the indicator doesn't point at a hidden button.
+	// If the currently active gizmo is no longer allowed by the new
+	// set, pick the first non-action gizmo from the supplied order
+	// (respecting the editor's preferred default by list position).
 	if !ui.isGizmoAllowed(ui.Gizmo) {
-		for i := 0; i < 4; i++ {
-			g := Gizmo(i)
-			if ui.isGizmoAllowed(g) {
+		for _, g := range gizmos {
+			if g != GizmoSpace && g != GizmoClone && g != GizmoTrash && ui.isGizmoAllowed(g) {
 				ui.set_gizmo(g)
 				break
 			}

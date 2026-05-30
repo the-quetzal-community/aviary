@@ -25,7 +25,7 @@
 [ext_resource type="Texture2D" uid="uid://47rl4j222xrm" path="res://ui/shelter.svg" id="20_i6rcl"]
 [ext_resource type="Texture2D" uid="uid://d3nq482anjp6c" path="res://ui/vehicle.svg" id="20_sb7vj"]
 [ext_resource type="Texture2D" uid="uid://bgdasw0ni1og3" path="res://ui/rounded.svg" id="21_bs2fd"]
-[ext_resource type="Texture2D" uid="uid://cgenijo08vjch" path="res://ui/cursor.svg" id="25_0ad7g"]
+[ext_resource type="Texture2D" uid="uid://cgenijo08vjch" path="res://ui/gizmo/cursor.svg" id="25_0ad7g"]
 [ext_resource type="Texture2D" uid="uid://cavxbxorbvylu" path="res://ui/toaster.svg" id="25_hvudo"]
 [ext_resource type="Texture2D" uid="uid://clkb7u0w8sh2k" path="res://ui/helpme.svg" id="26_ckd56"]
 [ext_resource type="Texture2D" uid="uid://bynlkojambmd3" path="res://ui/quality.svg" id="26_hvudo"]
@@ -210,9 +210,9 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -1.236041
-offset_top = -179.00037
-offset_right = 3837.5327
-offset_bottom = 180.99976
+offset_top = -1440.0
+offset_right = -769.2361
+offset_bottom = -1080.0
 grow_horizontal = 2
 grow_vertical = 0
 scale = Vector2(0.5, 0.5)
@@ -663,12 +663,11 @@ anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -503.05518
-offset_top = -856.89337
+offset_top = -856.8934
 offset_right = 11.31665
-offset_bottom = 0.0
 grow_horizontal = 0
 scale = Vector2(0.5, 0.5)
-pivot_offset = Vector2(503.0359, 0)
+pivot_offset = Vector2(514.3718, 0)
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
@@ -714,6 +713,38 @@ texture = ExtResource("26_hvudo")
 expand_mode = 1
 stretch_mode = 5
 
+[node name="EnvironmentMenu" type="Panel" parent="." unique_id=1700005000]
+z_index = -1
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -456.8579
+offset_top = -920
+offset_right = 47.820557
+offset_bottom = 0
+grow_horizontal = 0
+scale = Vector2(0.5, 0.5)
+pivot_offset = Vector2(420, 0)
+theme = ExtResource("1_hi2iw")
+theme_override_styles/panel = ExtResource("14_nqww0")
+
+[node name="Types" type="VBoxContainer" parent="EnvironmentMenu" unique_id=1700005001]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_right = -12.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Spacer" type="Control" parent="EnvironmentMenu/Types" unique_id=1700005002]
+custom_minimum_size = Vector2(0, 520)
+layout_mode = 2
+mouse_filter = 2
+
 [node name="Toolbar" type="Triangle" parent="." unique_id=1700002000]
 right_angled = true
 color = Color(0.18, 0.18, 0.18, 1)
@@ -737,6 +768,16 @@ offset_top = 324.15732
 offset_right = 82.990524
 offset_bottom = 402.15594
 texture_normal = ExtResource("33_settings")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Shading" type="TextureButton" parent="Toolbar" unique_id=1614308388]
+layout_mode = 0
+offset_left = 95.0
+offset_top = 305.0
+offset_right = 173.0
+offset_bottom = 383.0
+texture_normal = ExtResource("3_c55ig")
 ignore_texture_size = true
 stretch_mode = 5
 

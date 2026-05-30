@@ -139,7 +139,11 @@ func (world *Client) attachUIToVR(ui *UI, leftAnchor, rightAnchor Node3D.Instanc
 		if parent := child.GetParent(); parent != Node.Nil {
 			parent.RemoveChild(child)
 		}
-		wrap.AsNode().AddChild(child)
+		// Reparent is the safe way to change parents for nodes we do
+		// not own from Go (scene-instantiated nodes, or nodes that
+		// have already had ownership transferred). It does not go
+		// through PointerWithOwnershipTransferredToGodot.
+		child.Reparent(wrap.AsNode())
 	}
 	if ui.EditorIndicator != nil {
 		reparentTo(rightWrap, ui.EditorIndicator.AsNode())

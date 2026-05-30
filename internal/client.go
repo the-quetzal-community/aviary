@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"graphics.gd/classdb/InputEventPanGesture"
 	"graphics.gd/classdb/InputEventScreenDrag"
 	"graphics.gd/classdb/Light3D"
+	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
@@ -39,6 +41,9 @@ import (
 	"graphics.gd/classdb/QuadMesh"
 	"graphics.gd/classdb/RayCast3D"
 	"graphics.gd/classdb/RenderingServer"
+	"graphics.gd/classdb/Shader"
+	"graphics.gd/classdb/ShaderMaterial"
+	"graphics.gd/classdb/Sky"
 	"graphics.gd/classdb/SubViewport"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
@@ -82,6 +87,25 @@ type Client struct {
 
 	Light DirectionalLight3D.Instance
 
+	// Environment and WorldEnvironment are the live resources/nodes
+	// for global scene lighting + fog. They are mutated by editor-
+	// specific environment sliders (routed as special Sculpt records
+	// with Slider "environment/..."). Terrain owns the shared "world"
+	// values used by scenery+terrain; other editors have private ones.
+	Environment      Environment.Instance
+	WorldEnvironment WorldEnvironment.Instance
+
+	// lightingMenuState holds the current friendly values for the lighting
+	// rolldown (Time of Day, Sun Angle, Fog, Clouds). This is the source of
+	// truth while the user is interacting with the menu so the sliders stay
+	// independent.
+	lightingMenuState struct {
+		timeOfDay Float.X
+		sunAngle  Float.X
+		fog       Float.X
+		clouds    Float.X
+	}
+
 	// FocalPoint is the point in the scene that the camera is
 	// focused on, it is used to determine which areas should be
 	// loaded and which should be unloaded.
@@ -98,6 +122,16 @@ type Client struct {
 			}
 		}
 	}
+
+	// underwater is the fullscreen post-process material applied to the camera
+	// cover by default (tints the view + draws a waterline below the water
+	// plane). Editors that borrow the cover (the shelter grid) hand it back via
+	// applyCoverDefault.
+	underwater ShaderMaterial.Instance
+
+	// sky is the ShaderMaterial backing the Environment's procedural sky. The
+	// Clouds slider drives its "coverage" parameter via applyCloudDensity.
+	sky ShaderMaterial.Instance
 
 	mouseOver chan Vector3.XYZ
 
@@ -479,9 +513,11 @@ func (world *Client) Ready() {
 		SetPosition(Vector3.New(0, 1, 3)).
 		LookAt(Vector3.Zero)
 
-	world.Light.AsNode3D().SetRotation(Euler.Radians{X: Angle.InRadians(-17), Y: Angle.InRadians(30), Z: Angle.InRadians(11)})
 	world.Light.
 		SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal).
+		// Contribute to the sky shader (LIGHT0) so the procedural sky's sun
+		// disk and day/night blend follow this light automatically.
+		SetSkyMode(DirectionalLight3D.SkyModeLightAndSky).
 		AsLight3D().
 		SetLightEnergy(1).
 		SetShadowEnabled(true).
@@ -490,8 +526,19 @@ func (world *Client) Ready() {
 		SetShadowBlur(2.0)
 	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
 
+	// Procedural sky with drifting clouds. The shader reacts to the directional
+	// light (LIGHT0); only the cloud coverage is pushed in, by the Clouds slider.
+	skyMaterial := ShaderMaterial.New()
+	skyMaterial.SetShader(LoadSync[Shader.Instance]("res://shader/sky.gdshader"))
+	skyMaterial.SetShaderParameter("coverage", 0.0)
+	world.sky = skyMaterial
+	sky := Sky.New()
+	sky.SetSkyMaterial(skyMaterial.AsMaterial())
+	sky.SetRadianceSize(Sky.RadianceSize256)
+
 	env := Environment.New().
-		SetBackgroundMode(Environment.BgClearColor).
+		SetBackgroundMode(Environment.BgSky).
+		SetSky(sky).
 		SetAmbientLightColor(Color.X11.White).
 		SetAmbientLightSkyContribution(0).
 		SetAmbientLightSource(Environment.AmbientSourceColor).
@@ -500,12 +547,32 @@ func (world *Client) Ready() {
 	worldenv := WorldEnvironment.New().SetEnvironment(env)
 
 	world.AsNode().AddChild(worldenv.AsNode())
+	world.Environment = env
+	world.WorldEnvironment = worldenv
+
+	// Start the world in daytime. Driving the initial look through the same
+	// friendly path the rolldown uses keeps lightingMenuState authoritative,
+	// so the menu opens on the real values and every editor's lighting seeds
+	// from a lit world rather than the zero-value (midnight / energy 0 / black).
+	world.ApplyLightingMenuState(0.38, 0.08, 0.0, 0.0)
+
 	RenderingServer.SetDebugGenerateWireframes(true)
 
 	world.FocalPoint.Lens.Camera.Cover.
 		SetMesh(QuadMesh.New().AsPlaneMesh().SetSize(Vector2.New(2, 2)).AsMesh()).
 		AsGeometryInstance3D().SetExtraCullMargin(16384).
 		AsNode3D().RotateObjectLocal(Vector3.New(0, 1, 0), Angle.Pi)
+
+	// Underwater post-process: tints the view and draws a waterline whenever the
+	// camera approaches/crosses the global water plane. Lives on the camera
+	// cover by default; the shelter grid temporarily borrows the cover and hands
+	// it back through applyCoverDefault.
+	underwater := ShaderMaterial.New()
+	underwater.SetShader(LoadSync[Shader.Instance]("res://shader/underwater.gdshader"))
+	// Rock texture for the "buried" fill — the same mineral the terrain sides use.
+	underwater.SetShaderParameter("rock_sampler", LoadSync[Texture2D.Instance]("res://default/mineral.jpg"))
+	world.underwater = underwater
+	world.applyCoverDefault()
 
 	fmt.Println("Client setup complete")
 
@@ -515,10 +582,34 @@ func (world *Client) Ready() {
 	world.setupXR()
 }
 
+// applyCoverDefault restores the camera cover's default fullscreen material
+// (the underwater post-process). Editors that borrow the cover for their own
+// fullscreen pass (the shelter grid) call this to hand it back instead of
+// clearing it to nil.
+func (world *Client) applyCoverDefault() {
+	var mat Material.Instance
+	if world.underwater != (ShaderMaterial.Instance{}) {
+		mat = world.underwater.AsMaterial()
+	}
+	world.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, mat)
+}
+
 const speed = 8
 
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
+
+	// Keep the underwater post-process in sync with the water surface AND terrain
+	// floor under the camera: the LOCAL river surface where one is carved (else
+	// the global lake level), and the terrain height. The shader shows water only
+	// where the floor is below the surface; otherwise (lens inside a hill) it
+	// fills with rock, so going below the water plane into the ground reads as
+	// being buried rather than underwater.
+	if world.underwater != (ShaderMaterial.Instance{}) && world.TerrainEditor != nil {
+		camPos := world.FocalPoint.Lens.Camera.AsNode3D().GlobalPosition()
+		world.underwater.SetShaderParameter("water_level", float64(world.TerrainEditor.WaterSurfaceAt(camPos)))
+		world.underwater.SetShaderParameter("terrain_level", float64(world.TerrainEditor.HeightAt(camPos)))
+	}
 
 	if world.member && time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
 		camNode := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D()
@@ -566,6 +657,16 @@ func (world *Client) Process(dt Float.X) {
 			} else {
 				te.PaintDressing()
 			}
+			world.last_PaintAt = time.Now()
+		}
+	}
+
+	// The river paint/erase brush is a drag-paint tool driven exactly like
+	// dressing: each throttled segment commits one Sculpt (PaintRiver carries
+	// its own movement-spacing guard, which also establishes the flow heading).
+	if world.TerrainEditor.riverBrushActive() && world.TerrainEditor.brushStrokeActive {
+		if time.Since(world.last_PaintAt) > time.Second/5 {
+			world.TerrainEditor.PaintRiver()
 			world.last_PaintAt = time.Now()
 		}
 	}
@@ -1058,4 +1159,170 @@ func (tc *TimingCoordinator) Follow(t musical.Timing) {
 		tc.target = musical.Timing(time.Now().Add(-avgDelay).UnixNano())
 		tc.future = musical.Timing(time.Now().Add(avgDelay).UnixNano())
 	}
+}
+
+// applyLightingState writes the four lighting parameters into the live
+// DirectionalLight and Environment. Angles are in radians. This is the
+// single place that actually touches the renderer nodes; all per-editor
+// environment Sculpt handlers and the lighting menu call it (or wrappers).
+func (world *Client) applyLightingState(azimuth, elevation, energy, fogDensity Float.X) {
+	if world.Light != DirectionalLight3D.Nil {
+		// elevation is the sun's pitch in radians (0 at the horizon, negative
+		// tilts the light down from overhead) and azimuth is its compass
+		// orientation. A directional light points along its local -Z, so its
+		// direction is fully described by pitch (X) + yaw (Y). The previous
+		// code put the height on Z (roll), which is a no-op for a directional
+		// light, so the sun never actually rose or set with the time of day.
+		world.Light.AsNode3D().SetRotation(Euler.Radians{
+			X: Angle.Radians(elevation),
+			Y: Angle.Radians(azimuth),
+			Z: 0,
+		})
+		world.Light.AsLight3D().SetLightEnergy(energy)
+	}
+	if world.Environment != Environment.Nil {
+		world.Environment.SetFogEnabled(fogDensity > 0.0001)
+		world.Environment.SetFogDensity(fogDensity)
+		world.Environment.SetFogSunScatter(0.25)
+		// Gentle ambient reduction in heavy fog for atmosphere.
+		amb := Float.X(0.5)
+		if fogDensity > 0.008 {
+			amb = 0.32
+		}
+		world.Environment.SetAmbientLightEnergy(amb)
+	}
+}
+
+// activeLightingEditorKey returns the musical Editor routing key that
+// should be stamped on environment Sculpt records from the lighting menu.
+// scenery and terrain share the world lighting owned by the "terrain" editor.
+// The map keys (not Name()) are used for dispatch.
+func (world *Client) activeLightingEditorKey() string {
+	if world.Editing == Editing.Scenery || world.Editing == Editing.Terrain {
+		return "terrain"
+	}
+	switch world.Editing {
+	case Editing.Foliage:
+		return "foliage"
+	case Editing.Mineral:
+		return "mineral"
+	case Editing.Shelter:
+		return "shelter"
+	case Editing.Vehicle:
+		return "vehicle"
+	case Editing.Citizen:
+		return "citizen"
+	case Editing.Critter:
+		return "critter"
+	case Editing.Coaster:
+		return "coaster"
+	}
+	return "terrain"
+}
+
+// applyLightingStateFromSlider is called by the lighting menu for immediate
+// local feedback (and for legacy technical slider names from saves).
+// We have removed support for the old technical names ("azimuth", "elevation", "energy")
+// since no public release has shipped yet.
+func (world *Client) applyLightingStateFromSlider(slider string, value Float.X) {
+	switch slider {
+	case "environment/time_of_day":
+		_, angle, fog, clouds := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(value, angle, fog, clouds)
+
+	case "environment/sun_angle":
+		tod, _, fog, clouds := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, value, fog, clouds)
+
+	case "environment/fog":
+		tod, angle, _, clouds := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, value, clouds)
+
+	case "environment/clouds":
+		tod, angle, fog, _ := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, value)
+
+	// Old technical names are no longer supported (pre-release).
+	default:
+		// Fallback: treat as direct low-level for any remaining old records
+		// (harmless if none exist).
+		az, el, en, fg := Float.X(0.52), Float.X(0.19), Float.X(1.0), Float.X(0.0)
+		if world.Light != DirectionalLight3D.Nil {
+			r := world.Light.AsNode3D().Rotation()
+			az, el, en = Float.X(r.Y), Float.X(r.Z), world.Light.AsLight3D().LightEnergy()
+		}
+		if world.Environment != Environment.Nil {
+			fg = world.Environment.FogDensity()
+		}
+		switch slider {
+		case "environment/azimuth":
+			az = value
+		case "environment/elevation":
+			el = value
+		case "environment/energy":
+			en = value
+		case "environment/fog":
+			fg = value
+		}
+		world.applyLightingState(az, el, en, fg)
+	}
+}
+
+// ApplyLightingMenuState is the single authoritative way to drive the
+// friendly lighting controls (Time of Day + Sun Angle + Fog + Clouds).
+// It updates the stored friendly state and immediately applies the
+// corresponding low-level lighting.
+func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds Float.X) {
+	world.lightingMenuState.timeOfDay = timeOfDay
+	world.lightingMenuState.sunAngle = sunAngle
+	world.lightingMenuState.fog = fog
+	world.lightingMenuState.clouds = clouds
+
+	az, el, en, fd := world.mapTimeOfDaySunAngleFog(timeOfDay, sunAngle, fog)
+	world.applyLightingState(az, el, en, fd)
+	world.applyCloudDensity(clouds)
+}
+
+// applyCloudDensity pushes the cloud coverage (0 = clear, 1 = overcast) into
+// the procedural sky shader. Safe to call before the sky exists.
+func (world *Client) applyCloudDensity(clouds Float.X) {
+	if world.sky != (ShaderMaterial.Instance{}) {
+		world.sky.SetShaderParameter("coverage", clouds)
+	}
+}
+
+// GetLightingMenuState returns the current friendly lighting values.
+func (world *Client) GetLightingMenuState() (timeOfDay, sunAngle, fog, clouds Float.X) {
+	return world.lightingMenuState.timeOfDay,
+		world.lightingMenuState.sunAngle,
+		world.lightingMenuState.fog,
+		world.lightingMenuState.clouds
+}
+
+// mapTimeOfDaySunAngleFog converts the friendly, artist-friendly slider values
+// used in the lighting menu into the low-level technical parameters that
+// actually drive the light and environment.
+func (world *Client) mapTimeOfDaySunAngleFog(timeOfDay, sunAngle, fog Float.X) (az, el, energy, fogDensity Float.X) {
+	// timeOfDay: 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset, 1 = midnight.
+	phase := (float64(timeOfDay) - 0.25) * 2 * math.Pi
+	height := math.Sin(phase) // -1 at deepest night .. +1 at noon
+
+	// Sun pitch: near the horizon (0) around sunrise/sunset, tilted up toward
+	// overhead (~ -80°) at noon. Negative tilts the directional light down
+	// toward the ground (it points along -Z). Driving X here is what actually
+	// makes the sun rise and set as the time of day changes.
+	el = Float.X(-height * math.Pi * 0.45)
+
+	// Energy: a broad, bright daytime plateau that rolls off softly through
+	// twilight to a dim — but not pitch-black — night.
+	day := math.Max(0, height)
+	energy = Float.X(0.15 + day*1.6)
+
+	// Azimuth: the artist-controlled Sun Angle, a full circle around 0..1.
+	az = Float.X(float64(sunAngle) * 2 * math.Pi)
+
+	// Fog / atmosphere amount (user-facing 0-1 maps to reasonable density).
+	fogDensity = fog * 0.055
+
+	return az, el, energy, fogDensity
 }

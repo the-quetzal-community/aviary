@@ -32,6 +32,8 @@ type CitizenEditor struct {
 	// doesn't pay the O(N targets × rebuilds) cost up-front when
 	// the user may never open the citizen editor at all.
 	pendingSculpts []musical.Sculpt
+
+	lighting // private lighting for this editor
 }
 
 func (*CitizenEditor) Name() string    { return "citizen" }
@@ -46,6 +48,8 @@ func (*CitizenEditor) Views() []string { return nil }
 func (ce *CitizenEditor) EnableEditor() {
 	ce.client.SetGizmos(nil)
 	ce.ensureLoaded()
+	ce.lighting.apply(ce.client)
+	ce.lighting.ensureSeeded(ce.client)
 	if len(ce.pendingSculpts) == 0 {
 		return
 	}
@@ -332,6 +336,12 @@ func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, 
 // once instead of at world load, so opening to any other editor stays
 // snappy.
 func (ce *CitizenEditor) Sculpt(brush musical.Sculpt) error {
+	if strings.HasPrefix(brush.Slider, "environment/") {
+		if ce.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
+			ce.lighting.apply(ce.client)
+			return nil
+		}
+	}
 	if ce.body.citizen == nil {
 		ce.pendingSculpts = append(ce.pendingSculpts, brush)
 		return nil

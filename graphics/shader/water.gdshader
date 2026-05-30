@@ -19,11 +19,10 @@ shader_type spatial;
 //     normal-map ripples.
 //   * Anything driven by TIME is kept BOUNDED so it can't decay over a long
 //     session (an unbounded `dir * speed * TIME` offset loses float precision
-//     and the surface degrades into stepped bands): the normal maps use a
-//     two-phase flow-map (offsets fract()'d into [0,1), half-cycle cross-blend
-//     hides the reset); the foam scrolls a single sample along a flow-aligned
-//     axis so it wraps seamlessly at the texture period (no cross-blend, so it
-//     never pulses crisp/blurry); the Gerstner phase is wrapped to [0,2π).
+//     and the surface degrades into stepped bands): the normal maps AND the
+//     foam use a two-phase flow-map (offsets fract()'d into [0,1), half-cycle
+//     cross-blend hides the reset), made contrast-preserving in flow_sample()
+//     so it doesn't pulse crisp/blurry; the Gerstner phase is wrapped to [0,2π).
 //   * Water that sits below the terrain floor is simply occluded by the opaque
 //     terrain (no clamp needed).
 // ============================================================================
@@ -46,6 +45,7 @@ uniform float distort_scale = 0.12;                    // tiling of the UV disto
 uniform float distort_strength = 0.03;
 uniform float still_speed = 0.05;                      // drift speed of still (lake) water
 uniform float flow_speed = 0.40;                       // advection speed of flowing water (world u/s)
+uniform float flow_slope_gain : hint_range(0.0, 12.0) = 2.5; // how much surface slope speeds the current
 uniform float cycle_seconds = 2.5;                     // flow-map cycle length
 
 // --- Sea swell (geometric Gerstner waves, still water only) -----------------
@@ -68,6 +68,8 @@ uniform float refraction = 0.04;
 uniform float foam_amount : hint_range(0.0, 2.0) = 0.25;
 uniform float foam_edge : hint_range(0.0, 4.0) = 0.7;  // shoreline foam distance
 uniform float foam_scale = 0.22;                       // world tiling of the foam texture
+uniform float river_foam_amount : hint_range(0.0, 2.0) = 0.25; // wispy whitewater across the flowing surface
+uniform float slope_foam_gain : hint_range(0.0, 8.0) = 2.5;    // how much surface slope grows whitewater
 uniform float shallow_calm : hint_range(0.0, 2.0) = 0.5;
 uniform float flow_opacity : hint_range(0.0, 0.8) = 0.30; // extra opacity for rivers
 uniform float min_alpha : hint_range(0.0, 1.0) = 0.45;
@@ -80,6 +82,7 @@ varying vec3 world_pos;   // world position (XZ used for texture lookups)
 varying float v_surface;  // per-vertex base water surface (world Y)
 varying float v_floor;    // per-vertex terrain floor (world Y)
 varying vec2 v_flow;      // per-vertex normalised world-XZ flow
+varying float v_slope;    // per-vertex downhill surface slope along flow (rise/run)
 
 // Single Gerstner wave: displaces `pos` and accumulates the analytic tangent /
 // binormal so a surface normal can be derived. The phase is wrapped to [0,2π)
@@ -105,6 +108,7 @@ void vertex() {
 	v_surface = world_pos.y;
 	v_floor = CUSTOM0.r;
 	v_flow = CUSTOM0.gb;
+	v_slope = CUSTOM0.a;
 
 	// Swell only on open, still, deep water: off on rivers (flow), faded out in
 	// shallow water near the shore so crests never rise through the terrain.
@@ -133,18 +137,27 @@ void vertex() {
 	BINORMAL = normalize(binormal);
 }
 
-// Two-phase flow-map sample. `adv` is the per-cycle advection vector (in the
-// same UV space as `uv`). p0/p1 are half-cycle-offset phases kept in [0,1) by
-// fract(), so the sampling offset is ALWAYS bounded — this is what stops the
-// long-run precision decay. The triangle weight cross-blends the two phases so
-// the per-cycle reset of either phase is never visible.
-vec3 flow_sample(sampler2D tex, vec2 uv, vec2 adv, float phase) {
+// Two-phase flow-map sample with CONTRAST PRESERVATION. `adv` is the per-cycle
+// advection vector (same UV space as `uv`); p0/p1 are half-cycle-offset phases
+// kept in [0,1) by fract(), so the sampling offset is ALWAYS bounded — no
+// long-run precision decay — and the triangle cross-blend hides each phase's
+// per-cycle reset.
+//
+// The plain cross-blend averages two decorrelated samples at the half-cycle
+// midpoint, which halves the variance: the texture looks blurry there and crisp
+// at the phase ends — a visible crisp<->blurry pulse. Dividing the deviation
+// from `neutral` by sqrt((1-w)^2 + w^2) (= 1 at the ends, ~0.707 at the
+// midpoint) restores the variance, so the apparent sharpness stays constant
+// across the cycle and the pulse is gone.
+vec3 flow_sample(sampler2D tex, vec2 uv, vec2 adv, float phase, vec3 neutral) {
 	float p0 = fract(phase);
 	float p1 = fract(phase + 0.5);
 	float w = abs(1.0 - 2.0 * p0);
 	vec3 s0 = texture(tex, uv - adv * p0).rgb;
 	vec3 s1 = texture(tex, uv - adv * p1).rgb;
-	return mix(s0, s1, w);
+	vec3 b = mix(s0, s1, w);
+	float norm = sqrt((1.0 - w) * (1.0 - w) + w * w);
+	return neutral + (b - neutral) / norm;
 }
 
 void fragment() {
@@ -157,13 +170,21 @@ void fragment() {
 	// still water. `adv` is in WORLD units per cycle; it is scaled into each
 	// map's UV space at the call site so both maps move the same distance.
 	float fl = length(v_flow);
+	float slope = clamp(v_slope, 0.0, 1.0);   // downhill steepness of the surface
 	float phase = TIME / cycle_seconds;
+	// Steeper water runs faster: scale the RIPPLE advection by the surface slope.
+	float river_speed = flow_speed * (1.0 + flow_slope_gain * slope);
 	vec2 adv = (fl > 0.001)
+		? (v_flow / fl) * (river_speed * cycle_seconds)
+		: vec2(0.7, 0.4) * (still_speed * cycle_seconds);
+	// Foam advects at the BASE speed regardless of slope (slope only grows its
+	// DENSITY, below) — so steep water foams up more without the foam racing.
+	vec2 adv_foam = (fl > 0.001)
 		? (v_flow / fl) * (flow_speed * cycle_seconds)
 		: vec2(0.7, 0.4) * (still_speed * cycle_seconds);
 
-	vec3 na = flow_sample(normalmap_a_sampler, buv * normal_scale + distort, adv * normal_scale, phase);
-	vec3 nb = flow_sample(normalmap_b_sampler, buv * normal_detail_scale + distort, adv * normal_detail_scale, phase + 0.37);
+	vec3 na = flow_sample(normalmap_a_sampler, buv * normal_scale + distort, adv * normal_scale, phase, vec3(0.5, 0.5, 1.0));
+	vec3 nb = flow_sample(normalmap_b_sampler, buv * normal_detail_scale + distort, adv * normal_detail_scale, phase + 0.37, vec3(0.5, 0.5, 1.0));
 	vec3 nmap = mix(na, nb, 0.4);                 // tangent-space normal, [0,1]
 	vec2 perturb = nmap.xy * 2.0 - 1.0;           // decoded XY for refraction
 
@@ -188,19 +209,35 @@ void fragment() {
 	vec3 col = mix(behind, dye, clamp(fade + 0.25, 0.0, 1.0));
 
 	// --- Foam ---------------------------------------------------------------
-	// Soft shoreline band (shallow water / riverbanks), eased in with smoothstep
-	// so there is no hard edge. It DRIFTS without ever pulsing crisp/blurry: a
-	// single foam sample scrolled along the flow axis (the sampling frame is
-	// rotated so the flow direction is the texture's U axis), which wraps
-	// seamlessly at the 1.0 texture period — so the offset stays bounded (no
-	// decay) and there is no two-phase cross-blend. Kept low-contrast and soft.
+	// Two soft contributions, both drifting with the surface via the contrast-
+	// preserving flow-map so neither pulses crisp<->blurry:
+	//   * shoreline band — soft white where the water is shallow / meets a bank,
+	//     eased in with smoothstep so there is no hard edge.
+	//   * river streaks  — wispy whitewater across the flowing surface, gated on
+	//     flow AND scaled by the surface SLOPE: gentle stretches stay calm, only
+	//     steeper/faster water turns white (this is what keeps it from reading as
+	//     a hard, opaque sheet on flat rivers).
+	float f0 = flow_sample(foam_sampler, buv * foam_scale + distort * 2.0, adv_foam * foam_scale, phase, vec3(0.5)).r;
+
 	float shore = 1.0 - smoothstep(0.0, foam_edge, depth);
-	vec2 fdir = (fl > 0.001) ? (v_flow / fl) : normalize(vec2(0.7, 0.4));
-	vec2 fperp = vec2(-fdir.y, fdir.x);
-	vec2 foam_uv = vec2(dot(buv, fdir), dot(buv, fperp)) * foam_scale + distort * 2.0;
-	foam_uv.x -= fract(phase); // drift downstream; seamless because the texture tiles at 1.0
-	float tex = texture(foam_sampler, foam_uv).r;
-	float foam = shore * mix(0.65, 1.0, tex) * calm * foam_amount;
+	float shore_foam = shore * mix(0.65, 1.0, f0) * foam_amount;
+
+	// Second octave at a different scale/phase so the streaks don't visibly tile;
+	// the product is the raw foam field. SLOPE drives the foam DENSITY: on a flat
+	// river a high threshold keeps only the brightest peaks (sparse, soft wisps),
+	// and as the surface steepens the threshold drops so more and more of the
+	// field turns white, tending toward a solid waterfall sheet. The amount also
+	// ramps from the soft river_foam_amount up to full white over the same range.
+	float f1 = flow_sample(foam_sampler, buv * foam_scale * 2.7 - distort * 1.5, adv_foam * foam_scale * 2.7, phase + 0.5, vec3(0.5)).r;
+	float field = f0 * f1 * 2.0;
+	float density = clamp(slope * slope_foam_gain, 0.0, 1.0); // 0 flat -> 1 waterfall
+	float lo = mix(0.9, -0.1, density);     // sparse peaks -> nearly everything
+	float hi = mix(1.5, 0.45, density);
+	float wisp = smoothstep(lo, hi, field);
+	float flow_mask = smoothstep(0.03, 0.15, fl);
+	float flow_foam = flow_mask * wisp * mix(river_foam_amount, 1.0, density);
+
+	float foam = (shore_foam + flow_foam) * calm;
 	col = mix(col, vec3(1.0), clamp(foam, 0.0, 1.0));
 
 	// Flatten the ripple normal in very shallow water for a still, glassy look.

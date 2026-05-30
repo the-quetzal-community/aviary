@@ -5,7 +5,9 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Enum"
+	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector3"
+
 	"the.quetzal.community/aviary/internal/musical"
 )
 
@@ -123,7 +125,7 @@ func (world *Client) StartEditing(subject Subject) {
 // SetGizmos configures which gizmo tools are visible in the toolbar while
 // the caller is the active editor. Editors should invoke this (typically
 // once, from their EnableEditor method) with the subset of [Gizmo] values
-// they want to offer.
+// they want to offer, in the exact vertical order they want them rendered.
 //
 // Example usage inside an editor:
 //
@@ -131,9 +133,14 @@ func (world *Client) StartEditing(subject Subject) {
 //	    e.client.SetGizmos([]Gizmo{GizmoShift, GizmoTwist})
 //	}
 //
-// Passing an empty slice hides the primary transform gizmos (and actions
-// if GizmoClone/GizmoTrash are omitted). If SetGizmos is never called,
-// all gizmos remain visible (the historical default).
+// Each gizmo button loads its icon from res://ui/gizmo/<name>.svg
+// (GizmoPoint → point.svg, GizmoShift → shift.svg, etc.).
+//
+// GizmoSpace inserts a separator. GizmoClone/GizmoTrash insert the
+// Duplicate/Delete action buttons at that position in the list.
+//
+// Passing an empty (or nil) slice hides the entire gizmo column.
+// If SetGizmos is never called, the historical default set remains.
 func (world *Client) SetGizmos(gizmos []Gizmo) {
 	if world.ui == nil || world.ui.CloudControl == nil {
 		return
@@ -202,6 +209,64 @@ type ClickableEditor interface {
 	// sub-views (critter's ribcage/limbone/control own their own drag
 	// interactions) return false while those views are active.
 	GizmoManipulable() bool
+}
+
+// lighting is a small embeddable helper that gives an editor (or the shared
+// world state on TerrainEditor) the friendly world-lighting controls: Time of
+// Day, Sun Angle, Fog and Clouds. It stores these friendly values directly so
+// that adjusting one axis never discards the others (the previous design kept
+// only the derived technical az/el/energy and had to guess the missing axis on
+// every networked round-trip, which lost the Sun Angle and forced the scene to
+// night). The actual renderer mutation lives in Client.ApplyLightingMenuState
+// so there is one place that touches the DirectionalLight + Environment nodes.
+type lighting struct {
+	timeOfDay Float.X
+	sunAngle  Float.X
+	fog       Float.X
+	clouds    Float.X
+
+	// seeded is used so that the first time an editor becomes active it can
+	// inherit the current world look instead of snapping to zero values
+	// (timeOfDay 0 is midnight, which would render the scene pitch black).
+	seeded bool
+}
+
+// handleEnvironmentSlider updates a single friendly lighting axis, leaving the
+// others untouched. It returns true if it consumed the message.
+func (l *lighting) handleEnvironmentSlider(slider string, v Float.X) bool {
+	switch slider {
+	case "environment/time_of_day":
+		l.timeOfDay = v
+	case "environment/sun_angle":
+		l.sunAngle = v
+	case "environment/fog":
+		l.fog = v
+	case "environment/clouds":
+		l.clouds = v
+	default:
+		return false
+	}
+	return true
+}
+
+// apply pushes the current values to the live renderer via the Client.
+func (l *lighting) apply(c *Client) {
+	if c == nil {
+		return
+	}
+	l.ensureSeeded(c)
+	c.ApplyLightingMenuState(l.timeOfDay, l.sunAngle, l.fog, l.clouds)
+}
+
+// ensureSeeded copies the current world lighting state into this lighting the
+// first time it is used, so a newly-activated editor inherits the world look
+// instead of snapping to zero values (midnight / energy 0 / black).
+func (l *lighting) ensureSeeded(c *Client) {
+	if l.seeded || c == nil {
+		return
+	}
+	l.timeOfDay, l.sunAngle, l.fog, l.clouds = c.GetLightingMenuState()
+	l.seeded = true
 }
 
 // BuiltinDesign is one procedural/builtin entry that an editor wants

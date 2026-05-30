@@ -12,7 +12,6 @@ import (
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/InputEventMouseMotion"
-	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
@@ -196,7 +195,9 @@ func (editor *ShelterEditor) EnableEditor() {
 	editor.client.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, shader.AsMaterial())
 }
 func (editor *ShelterEditor) ChangeEditor() {
-	editor.client.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, Material.Nil)
+	// Hand the cover back to the default underwater post-process rather than
+	// clearing it, so the waterline/underwater effect survives leaving shelter.
+	editor.client.applyCoverDefault()
 }
 
 func (editor *ShelterEditor) SelectDesign(mode Mode, design string) {
