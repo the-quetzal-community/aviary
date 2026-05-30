@@ -26,6 +26,9 @@
 [ext_resource type="Texture2D" uid="uid://d3nq482anjp6c" path="res://ui/vehicle.svg" id="20_sb7vj"]
 [ext_resource type="Texture2D" uid="uid://bgdasw0ni1og3" path="res://ui/rounded.svg" id="21_bs2fd"]
 [ext_resource type="Texture2D" uid="uid://cgenijo08vjch" path="res://ui/cursor.svg" id="25_0ad7g"]
+[ext_resource type="Texture2D" uid="uid://cavxbxorbvylu" path="res://ui/toaster.svg" id="25_hvudo"]
+[ext_resource type="Texture2D" uid="uid://clkb7u0w8sh2k" path="res://ui/helpme.svg" id="26_ckd56"]
+[ext_resource type="Texture2D" uid="uid://bynlkojambmd3" path="res://ui/quality.svg" id="26_hvudo"]
 [ext_resource type="Texture2D" uid="uid://dwodcy8axfahv" path="res://ui/moving.svg" id="26_nmgcu"]
 [ext_resource type="Texture2D" uid="uid://ba27w1ohk0wrl" path="res://ui/rotate.svg" id="27_nterg"]
 [ext_resource type="Texture2D" uid="uid://bme16r67ciq1p" path="res://ui/scales.svg" id="28_nterg"]
@@ -206,13 +209,13 @@ anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -1.0
-offset_top = 1038.6666
-offset_right = 2791.3477
-offset_bottom = 1398.6666
+offset_left = -1.236041
+offset_top = -179.00037
+offset_right = 3837.5327
+offset_bottom = 180.99976
 grow_horizontal = 2
 grow_vertical = 0
-scale = Vector2(0.93703705, 0.93703705)
+scale = Vector2(0.5, 0.5)
 theme = ExtResource("1_hi2iw")
 theme_override_constants/separation = 0
 
@@ -257,7 +260,7 @@ offset_top = -42.0
 offset_right = 210.0
 grow_horizontal = 2
 grow_vertical = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(210, 42)
 mouse_filter = 1
 theme_override_colors/font_color = Color(0, 0, 0, 1)
@@ -292,11 +295,11 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = 1272.0
-offset_right = 1312.0
+offset_left = -1152.0
+offset_right = -1112.0
 offset_bottom = 40.0
 grow_horizontal = 2
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(20, 0.09)
 
 [node name="Pointer" type="TextureRect" parent="ViewSelector" unique_id=1142122943]
@@ -323,7 +326,7 @@ offset_left = 8.9975
 offset_top = 4.00561
 offset_right = 400.997
 offset_bottom = 135.006
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 mouse_filter = 2
 
 [node name="Triangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
@@ -653,78 +656,19 @@ visible = false
 z_index = 2
 layout_mode = 1
 
-[node name="Toolbar" type="Triangle" parent="." unique_id=1700002000]
-right_angled = true
-color = Color(0.18, 0.18, 0.18, 1)
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -0.00024414063
-offset_top = 0.71878624
-offset_right = 312.9569
-offset_bottom = 313.6759
-grow_horizontal = 0
-rotation = 1.5707964
-scale = Vector2(0.9625, 0.9625)
-mouse_filter = 2
-
-[node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
-layout_mode = 0
-offset_left = 13.389814
-offset_top = 187.02136
-offset_right = 68.69715
-offset_bottom = 242.32869
-texture_normal = ExtResource("33_settings")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Undo" type="TextureButton" parent="Toolbar" unique_id=1700003002]
-layout_mode = 0
-offset_left = 59.13846
-offset_top = 131.98495
-offset_right = 126.71414
-offset_bottom = 199.56064
-rotation = -0.21123604
-texture_normal = ExtResource("9_75vv8")
-ignore_texture_size = true
-stretch_mode = 5
-flip_h = true
-
-[node name="Redo" type="TextureButton" parent="Toolbar" unique_id=1700003003]
-layout_mode = 0
-offset_left = 114.209206
-offset_top = 122.66872
-offset_right = 182.63206
-offset_bottom = 191.09161
-rotation = -1.3089969
-texture_normal = ExtResource("9_75vv8")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Export" type="TextureButton" parent="Toolbar" unique_id=1700003004]
-layout_mode = 0
-offset_left = 184.89096
-offset_top = 70.764694
-offset_right = 248.14267
-offset_bottom = 134.01642
-rotation = -1.5707964
-texture_normal = ExtResource("36_export")
-ignore_texture_size = true
-stretch_mode = 5
-
 [node name="SettingsMenu" type="Panel" parent="." unique_id=1700004100]
 z_index = -1
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -313.0
-offset_top = -400.0
-offset_right = 0.0
+offset_left = -503.05518
+offset_top = -856.89337
+offset_right = 11.31665
 offset_bottom = 0.0
 grow_horizontal = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
+pivot_offset = Vector2(503.0359, 0)
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
@@ -733,8 +677,116 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+offset_left = 0.044189453
+offset_right = 0.82421875
+offset_bottom = 0.4414673
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="QualitySpacer" type="Control" parent="SettingsMenu/SettingsTypes" unique_id=1700004102]
+custom_minimum_size = Vector2(0, 500)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="QualityRow" type="HBoxContainer" parent="SettingsMenu/SettingsTypes" unique_id=1700004103]
+layout_mode = 2
+
+[node name="Low" type="TextureRect" parent="SettingsMenu/SettingsTypes/QualityRow" unique_id=1700004104]
+custom_minimum_size = Vector2(128, 0)
+layout_mode = 2
+mouse_filter = 2
+texture = ExtResource("25_hvudo")
+expand_mode = 2
+stretch_mode = 3
+
+[node name="Quality" type="HSlider" parent="SettingsMenu/SettingsTypes/QualityRow" unique_id=1700004105]
+custom_minimum_size = Vector2(160, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 3.0
+value = 2.0
+
+[node name="High" type="TextureRect" parent="SettingsMenu/SettingsTypes/QualityRow" unique_id=1700004106]
+custom_minimum_size = Vector2(128, 28)
+layout_mode = 2
+mouse_filter = 2
+texture = ExtResource("26_hvudo")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Toolbar" type="Triangle" parent="." unique_id=1700002000]
+right_angled = true
+color = Color(0.18, 0.18, 0.18, 1)
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -0.31640625
+offset_top = 1.3947111
+offset_right = 383.3125
+offset_bottom = 505.84955
+grow_horizontal = 0
+rotation = 1.5707964
+scale = Vector2(0.5, 0.5)
+mouse_filter = 2
+
+[node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
+layout_mode = 0
+offset_left = 4.991914
+offset_top = 324.15732
+offset_right = 82.990524
+offset_bottom = 402.15594
+texture_normal = ExtResource("33_settings")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="HelpMe" type="TextureButton" parent="Toolbar" unique_id=374080249]
+layout_mode = 0
+offset_left = 233.70523
+offset_top = 99.557686
+offset_right = 324.00238
+offset_bottom = 189.85477
+rotation = -1.5707964
+texture_normal = ExtResource("26_ckd56")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Undo" type="TextureButton" parent="Toolbar" unique_id=1700003002]
+layout_mode = 0
+offset_left = 46.595074
+offset_top = 255.28516
+offset_right = 136.52458
+offset_bottom = 345.21466
+rotation = -0.21123604
+texture_normal = ExtResource("9_75vv8")
+ignore_texture_size = true
+stretch_mode = 5
+flip_h = true
+
+[node name="Redo" type="TextureButton" parent="Toolbar" unique_id=1700003003]
+layout_mode = 0
+offset_left = 101.669075
+offset_top = 240.77432
+offset_right = 194.12512
+offset_bottom = 333.23044
+rotation = -1.3089969
+texture_normal = ExtResource("9_75vv8")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Export" type="TextureButton" parent="Toolbar" unique_id=1700003004]
+layout_mode = 0
+offset_left = 173.39366
+offset_top = 179.8468
+offset_right = 263.6908
+offset_bottom = 270.1439
+rotation = -1.5707964
+texture_normal = ExtResource("36_export")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Help" type="TextureButton" parent="Toolbar" unique_id=65171044]
+layout_mode = 0
 
 [node name="EditorIndicator" type="EditorIndicator" parent="." unique_id=1166549893]
 layout_mode = 1
@@ -744,7 +796,7 @@ anchor_right = 1.0
 offset_left = -200.0
 offset_bottom = 200.0
 grow_horizontal = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(208.68042, -3.5928783)
 mouse_filter = 2
 
@@ -754,9 +806,14 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+offset_left = -27.91092
+offset_top = 29.500954
+offset_right = -27.77771
+offset_bottom = 96.868195
 grow_horizontal = 2
 grow_vertical = 2
 rotation = 1.5707964
+scale = Vector2(1.2781104, 1.2592566)
 pivot_offset = Vector2(100, 100)
 mouse_filter = 2
 
@@ -838,20 +895,20 @@ grow_vertical = 0
 
 [node name="EditorIcon" type="TextureButton" parent="EditorIndicator" unique_id=1042978839]
 layout_mode = 0
-offset_left = 80.00005
-offset_top = 0.04991579
-offset_right = 208.00006
-offset_bottom = 100.04992
+offset_left = 45.90574
+offset_top = 1.6280613
+offset_right = 197.57944
+offset_bottom = 120.12313
 pivot_offset = Vector2(59.656982, 53.900574)
 texture_normal = ExtResource("14_8sq1u")
 stretch_mode = 4
 
 [node name="Arrows" type="TextureRect" parent="EditorIndicator" unique_id=1048505585]
 layout_mode = 1
-offset_left = 122.946335
-offset_top = 86.07677
-offset_right = 160.39362
-offset_bottom = 123.52404
+offset_left = 98.81948
+offset_top = 102.306656
+offset_right = 149.58871
+offset_bottom = 153.0759
 mouse_filter = 2
 texture = ExtResource("15_ny7lf")
 expand_mode = 1

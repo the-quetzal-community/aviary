@@ -57,8 +57,16 @@ bool in_brush(vec2 uv) {
 void fragment() {
     vec2 base_uv = UV;
 
-    vec4 blended = pow(weights, vec4(blend_sharpness));
-    blended /= (blended.x + blended.y + blended.z + blended.w);
+    // MSAA evaluates varyings at each sample position; for a pixel on a
+    // triangle edge some samples land just outside the triangle and
+    // extrapolate `weights` below 0. pow() of a negative base is undefined
+    // in GLSL and returns NaN, which shows up as the black dotted speckle
+    // along every terrain edge once MSAA is enabled. Clamp to [0,1] (a
+    // no-op for the in-triangle samples) so every sample stays defined, and
+    // guard the normalisation against an all-zero sum.
+    vec4 w = clamp(weights, vec4(0.0), vec4(1.0));
+    vec4 blended = pow(w, vec4(blend_sharpness));
+    blended /= max(blended.x + blended.y + blended.z + blended.w, 1e-5);
 
     // texture has top-left, top-right, bottom-left, bottom-right
     // samples of the terrain around the vertex, we will interpolate

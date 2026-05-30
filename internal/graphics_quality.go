@@ -18,23 +18,25 @@ const (
 	// QualityToaster: no MSAA, no AA, hard (unfiltered) shadows, small
 	// shadow atlas. Cheapest — the low end of the slider.
 	QualityToaster GraphicsQuality = iota
-	// QualityLow: FXAA only, very-low soft shadows.
-	QualityLow
-	// QualityHigh: 4× MSAA, low soft shadows, larger atlas.
-	QualityHigh
-	// QualityFerrari: 8× MSAA + TAA, high soft shadows, large atlas.
-	// Most expensive — the high end of the slider.
-	QualityFerrari
+	// QualityAverage: FXAA only, very-low soft shadows.
+	QualityAverage
+	// QualityRefined: 2× MSAA, low soft shadows, larger atlas.
+	QualityRefined
+	// QualityHighest: 4× MSAA, high soft shadows, large atlas.
+	// Most expensive — the high end of the slider. (We deliberately stop
+	// at 4× MSAA and leave TAA off: 8× MSAA + TAA together stalled the
+	// renderer hard on first runtime apply.)
+	QualityHighest
 )
 
 // graphicsQualitySteps is the number of discrete positions on the
 // slider; the HSlider is configured 0..graphicsQualitySteps-1.
-const graphicsQualitySteps = 4
+const graphicsQualitySteps = QualityHighest + 1
 
 // defaultGraphicsQuality is the level applied on launch and the slider's
-// initial position. QualityHigh keeps the previous look (4× MSAA-ish)
-// without forcing the most expensive tier on first run.
-const defaultGraphicsQuality = QualityHigh
+// initial position. QualityHigh (2× MSAA) gives a smooth look without
+// forcing the most expensive tier on first run.
+const defaultGraphicsQuality = QualityRefined
 
 // directionalShadowAtlasSize maps each quality level to the directional
 // shadow atlas resolution. project.godot ships 8192; we only shrink it
@@ -43,9 +45,9 @@ func (q GraphicsQuality) directionalShadowAtlasSize() int {
 	switch q {
 	case QualityToaster:
 		return 1024
-	case QualityLow:
+	case QualityAverage:
 		return 2048
-	case QualityHigh:
+	case QualityRefined:
 		return 4096
 	default: // QualityFerrari
 		return 8192
@@ -66,18 +68,18 @@ func (q GraphicsQuality) Apply(anyNode Node.Instance) {
 			vp.SetMsaa3d(Viewport.MsaaDisabled)
 			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
 			vp.SetUseTaa(false)
-		case QualityLow:
+		case QualityAverage:
 			vp.SetMsaa3d(Viewport.MsaaDisabled)
 			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaFxaa)
 			vp.SetUseTaa(false)
-		case QualityHigh:
+		case QualityRefined:
+			vp.SetMsaa3d(Viewport.Msaa2x)
+			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
+			vp.SetUseTaa(false)
+		default: // QualityHighest
 			vp.SetMsaa3d(Viewport.Msaa4x)
 			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
 			vp.SetUseTaa(false)
-		default: // QualityFerrari
-			vp.SetMsaa3d(Viewport.Msaa8x)
-			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
-			vp.SetUseTaa(true)
 		}
 	}
 
@@ -85,11 +87,11 @@ func (q GraphicsQuality) Apply(anyNode Node.Instance) {
 	switch q {
 	case QualityToaster:
 		shadow = RenderingServer.ShadowQualityHard
-	case QualityLow:
+	case QualityAverage:
 		shadow = RenderingServer.ShadowQualitySoftVeryLow
-	case QualityHigh:
+	case QualityRefined:
 		shadow = RenderingServer.ShadowQualitySoftLow
-	default: // QualityFerrari
+	default: // QualityHighest
 		shadow = RenderingServer.ShadowQualitySoftHigh
 	}
 	RenderingServer.DirectionalSoftShadowFilterSetQuality(shadow)

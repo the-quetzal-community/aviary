@@ -1,27 +1,34 @@
 package internal
 
 import (
+	"math"
+
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Button"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DisplayServer"
-	"graphics.gd/classdb/HBoxContainer"
 	"graphics.gd/classdb/HSlider"
+	"graphics.gd/classdb/Image"
+	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
+	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Range"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
-	"graphics.gd/classdb/TextureRect"
-	"graphics.gd/classdb/VBoxContainer"
+	"graphics.gd/classdb/Tween"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 	"graphics.gd/variant/Vector2"
 )
+
+// guideURL is the online guide opened by the toolbar's Help button.
+const guideURL = "https://the.quetzal.community/aviary/guide"
 
 /*
 UI for editing a space in Aviary.
@@ -44,13 +51,16 @@ type UI struct {
 		Undo     TextureButton.Instance
 		Redo     TextureButton.Instance
 		Export   TextureButton.Instance
+		Help     TextureButton.Instance
 	}
 
-	// SettingsMenu is the (initially empty) panel that rolls out from
-	// the Toolbar triangle when the Settings cog is pressed, mirroring
-	// the editor switcher's EditorSelector rollout. It's a root-level
-	// sibling so it stays axis-aligned (the Toolbar itself is rotated)
-	// and is sized to the Toolbar triangle's width in the scene.
+	// SettingsMenu is the panel that rolls out from the Toolbar triangle
+	// when the Settings cog is pressed, mirroring the editor switcher's
+	// EditorSelector rollout. It's a root-level sibling so it stays
+	// axis-aligned (the Toolbar itself is rotated) and is sized to the
+	// Toolbar triangle's width in the scene. Its contents — the
+	// graphics-quality slider — are declared in editor.tscn and wired up
+	// by buildSettingsMenu.
 	SettingsMenu Panel.Instance
 
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
@@ -69,6 +79,19 @@ type UI struct {
 	// settingsRollout drives the Settings cog menu's slide animation,
 	// sharing the same Rollout helper as the editor switcher.
 	settingsRollout Rollout
+
+	// undoSpin/redoSpin remember each button's resting rotation so the
+	// click spin can return to the designed tilt instead of snapping
+	// upright (see spinControl).
+	undoSpin, redoSpin spinState
+}
+
+// spinState caches a toolbar button's resting rotation. rest is captured
+// lazily on the first spin (when the button is at rest) so subsequent
+// spins triggered mid-animation still return to the designed orientation.
+type spinState struct {
+	rest Float.X
+	got  bool
 }
 
 func (ui *UI) Setup() {
@@ -98,72 +121,71 @@ func (ui *UI) Setup() {
 	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Export")); ok {
 		ui.Toolbar.Export = btn
 	}
+	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("HelpMe")); ok {
+		ui.Toolbar.Help = btn
+	}
 	ui.Toolbar.Settings.AsBaseButton().OnPressed(ui.toggleSettings)
-	ui.Toolbar.Undo.AsBaseButton().OnPressed(func() {
-		ui.client.Undo()
-	})
-	ui.Toolbar.Redo.AsBaseButton().OnPressed(func() {
-		ui.client.Redo()
-	})
+	ui.Toolbar.Undo.AsBaseButton().OnPressed(ui.undo)
+	ui.Toolbar.Redo.AsBaseButton().OnPressed(ui.redo)
 	ui.Toolbar.Export.AsBaseButton().OnPressed(func() {
 		ui.client.Export()
 	})
+	// The Help button opens the online guide in the user's browser.
+	ui.Toolbar.Help.AsBaseButton().OnPressed(func() {
+		OS.ShellOpen(guideURL)
+	})
 	ui.buildSettingsMenu()
+	// The Settings menu and the editor switcher roll out of the same
+	// top-right corner, so make them mutually exclusive: opening either
+	// slides the other shut, leaving only one panel revealed at a time.
+	ui.settingsRollout.exclusive = []*Rollout{&ui.EditorIndicator.rollout}
+	ui.EditorIndicator.rollout.exclusive = []*Rollout{&ui.settingsRollout}
+	// Spin the cog each time its menu rolls out or in.
+	ui.settingsRollout.icon = ui.Toolbar.Settings.AsControl()
 }
 
-// buildSettingsMenu populates the (otherwise empty) Settings rollout
-// with the graphics-quality slider: a gray toaster icon on the low end,
-// a gray sports-car icon on the high end, and an HSlider between them
-// that drives [GraphicsQuality] from QualityToaster..QualityFerrari.
-// Built in code (rather than the .tscn) so the icons load via
-// Resource.Load without needing committed .import sidecars, matching how
-// the design explorer loads its library thumbnails. The icons are PNGs
-// from The Noun Project, tinted gray to read on the light drawer (see
-// graphics/License for attribution).
+// buildSettingsMenu wires the graphics-quality slider that lives in the
+// Settings rollout. The layout — a gray toaster icon, the HSlider, and a
+// gray sports-car icon, pushed below the rotated Toolbar triangle by a
+// spacer — is declared in editor.tscn under
+// SettingsMenu/SettingsTypes/QualityRow. The icons are PNGs from The Noun
+// Project, tinted gray to read on the light drawer (see graphics/License).
+// Code only handles what the scene can't: shrinking the oversized themed
+// grabber for this compact row, syncing the launch level into both the
+// handle and the live renderer, and applying [GraphicsQuality] on each move.
 func (ui *UI) buildSettingsMenu() {
 	if ui.SettingsMenu.AsControl() == Control.Nil {
 		return
 	}
-	typesNode := ui.SettingsMenu.AsNode().GetNode("SettingsTypes")
-	types, ok := Object.As[VBoxContainer.Instance](typesNode)
+	sliderNode := ui.SettingsMenu.AsNode().GetNode("SettingsTypes/QualityRow/Quality")
+	slider, ok := Object.As[HSlider.Instance](sliderNode)
 	if !ok {
 		return
 	}
 
-	row := HBoxContainer.New()
-	row.AsControl().SetMouseFilter(Control.MouseFilterPass)
-
-	const iconSize = 28
-	makeIcon := func(path string) TextureRect.Instance {
-		rect := TextureRect.New()
-		if tex := LoadSync[Texture2D.Instance](path); tex != Texture2D.Nil {
-			rect.SetTexture(tex)
+	// The themed grabber (res://ui/slider.png) is 128×128 — sized for the
+	// full-size sliders elsewhere — and Godot draws the handle at the
+	// texture's native size, so it dwarfs this compact row. Downscale a
+	// copy to roughly the row height and override it on just this slider.
+	const grabberSize = 64
+	if tex := LoadSync[Texture2D.Instance]("res://ui/slider.png"); tex != Texture2D.Nil {
+		if img := tex.GetImage(); img != Image.Nil {
+			img.Resize(grabberSize, grabberSize)
+			small := ImageTexture.CreateFromImage(img).AsTexture2D()
+			for _, name := range []string{"grabber", "grabber_highlight", "grabber_disabled"} {
+				slider.AsControl().AddThemeIconOverride(name, small)
+			}
 		}
-		rect.SetExpandMode(TextureRect.ExpandIgnoreSize)
-		rect.SetStretchMode(TextureRect.StretchKeepAspectCentered)
-		rect.AsControl().SetCustomMinimumSize(Vector2.New(iconSize, iconSize))
-		rect.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
-		return rect
 	}
 
-	low := makeIcon("res://ui/quality_low.png")   // toaster
-	high := makeIcon("res://ui/quality_high.png") // sports car
-
-	slider := HSlider.New()
-	slider.AsRange().SetMinValue(0)
-	slider.AsRange().SetMaxValue(graphicsQualitySteps - 1)
-	slider.AsRange().SetStep(1)
+	// Pin the handle to the launch level (keeping it in lockstep with the
+	// renderer regardless of the value baked into the scene), then react to
+	// every move. Set the value before connecting so this seed doesn't fire
+	// the handler — the explicit Apply below covers the initial render.
 	slider.AsRange().SetValue(Float.X(defaultGraphicsQuality))
-	slider.AsControl().SetSizeFlagsHorizontal(Control.SizeExpandFill)
-	slider.AsControl().SetCustomMinimumSize(Vector2.New(160, iconSize))
 	Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
 		GraphicsQuality(int(value)).Apply(ui.AsNode())
 	})
-
-	row.AsNode().AddChild(low.AsNode())
-	row.AsNode().AddChild(slider.AsNode())
-	row.AsNode().AddChild(high.AsNode())
-	types.AsNode().AddChild(row.AsNode())
 
 	// Apply the launch default so the renderer matches the slider's
 	// initial position before the user ever opens the menu.
@@ -262,16 +284,95 @@ func (ui *UI) Input(event InputEvent.Instance) {
 			// command above without checking focus either.
 			if event.Keycode() == Input.KeyZ && Input.IsKeyPressed(Input.KeyCtrl) && ui.client != nil {
 				if Input.IsKeyPressed(Input.KeyShift) {
-					ui.client.Redo()
+					ui.redo()
 				} else {
-					ui.client.Undo()
+					ui.undo()
 				}
 			}
 			if event.Keycode() == Input.KeyY && Input.IsKeyPressed(Input.KeyCtrl) && ui.client != nil {
-				ui.client.Redo()
+				ui.redo()
 			}
 		}
 	}
+}
+
+// undo runs the client's undo and spins the Undo button one full turn
+// counter-clockwise (matching the icon's arrow direction). Shared by the
+// toolbar button and the Ctrl+Z keyboard shortcut so both animate.
+func (ui *UI) undo() {
+	spinFull(ui.Toolbar.Undo.AsControl(), &ui.undoSpin, -1)
+	if ui.client != nil {
+		ui.client.Undo()
+	}
+}
+
+// redo mirrors [UI.undo], spinning the Redo button one full turn clockwise.
+func (ui *UI) redo() {
+	spinFull(ui.Toolbar.Redo.AsControl(), &ui.redoSpin, 1)
+	if ui.client != nil {
+		ui.client.Redo()
+	}
+}
+
+// spinDuration is the slide length of one full-turn icon spin, shared by the
+// toolbar buttons and the rollout indicators.
+const spinDuration = 0.4
+
+// spinFull spins ctrl one full turn about its center over spinDuration.
+// screenDir is the desired on-screen direction: +1 clockwise, -1
+// counter-clockwise.
+func spinFull(ctrl Control.Instance, st *spinState, screenDir Float.X) {
+	spinControl(ctrl, st, screenDir*2*math.Pi, spinDuration)
+}
+
+// spinControl tweens ctrl by screenDelta radians (signed; + = clockwise on
+// screen) about its own center over duration, leaving it at restingTilt +
+// screenDelta.
+//
+// Several of these controls rest at a designed tilt in the scene (e.g. the
+// Redo button at ~-75°), so the resting angle is cached in st on first use
+// and every spin starts from it — a full turn then lands on rest±2π, which
+// is visually identical to rest, instead of snapping the icon upright. The
+// cache also means a spin retriggered mid-animation still resolves to the
+// designed orientation rather than drifting.
+//
+// Pinning the pivot to the center moves an already-rotated/scaled rect, so
+// the position is compensated by the displacement (I - R·S)·Δpivot — R the
+// resting rotation, S the scale — to keep the control visually put (zero
+// for an axis-aligned, unscaled control). A mirrored (negative-determinant)
+// control additionally has its delta flipped so the visible spin still goes
+// the requested way.
+func spinControl(ctrl Control.Instance, st *spinState, screenDelta, duration Float.X) {
+	if ctrl == Control.Nil {
+		return
+	}
+	if !st.got {
+		st.rest = ctrl.Rotation()
+		st.got = true
+	}
+	scale := ctrl.Scale()
+	pivot0 := ctrl.PivotOffset()
+	center := Vector2.MulX(ctrl.Size(), 0.5)
+	// Displacement from re-pivoting: d - R·S·d, where d = center - pivot0
+	// and R·S is Godot's Control linear transform (scale then rotate).
+	dx := float64(center.X - pivot0.X)
+	dy := float64(center.Y - pivot0.Y)
+	sin, cos := math.Sincos(float64(st.rest))
+	sx, sy := float64(scale.X), float64(scale.Y)
+	shift := Vector2.New(
+		Float.X(dx-(sx*cos*dx-sy*sin*dy)),
+		Float.X(dy-(sx*sin*dx+sy*cos*dy)),
+	)
+	ctrl.SetPosition(Vector2.Sub(ctrl.Position(), shift))
+	ctrl.SetPivotOffset(center)
+	ctrl.SetRotation(st.rest)
+	if scale.X*scale.Y < 0 {
+		screenDelta = -screenDelta
+	}
+	PropertyTweener.Make(
+		ctrl.AsNode().CreateTween(), ctrl.AsObject(),
+		"rotation", st.rest+screenDelta, duration,
+	).SetEase(Tween.EaseOut)
 }
 
 func (ui *UI) Ready() {
@@ -368,10 +469,16 @@ func (ui *UI) scaling() {
 	ui.scaleDefault(ui.ExpansionIndicator.AsControl())
 	ui.scaleDefault(ui.EditorIndicator.AsControl())
 	ui.scaleDefault(ui.Toolbar.AsControl())
-	// Scale the Settings rollout with the same factor as the Toolbar so
-	// it keeps the triangle's width across display sizes.
-	if ui.SettingsMenu.AsControl() != Control.Nil {
-		ui.scaleDefault(ui.SettingsMenu.AsControl())
+	// Scale the Settings rollout with the same factor as the Toolbar so it
+	// keeps the triangle's width across display sizes. Pin the pivot to the
+	// panel's actual right edge first: it's anchored left/right at 1.0, so
+	// its width is the authored offset span, and scaling around the right
+	// edge keeps it flush to the top-right corner. A hard-coded pivot would
+	// drift the moment the panel is resized in the editor, scaling it
+	// inward and opening a right-side gap that grows as the window shrinks.
+	if sm := ui.SettingsMenu.AsControl(); sm != Control.Nil {
+		sm.SetPivotOffset(Vector2.New(sm.Size().X, 0))
+		ui.scaleDefault(sm)
 	}
 
 	// ViewSelector needs to be centered to the top center

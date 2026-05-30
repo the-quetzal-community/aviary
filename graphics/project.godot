@@ -25,6 +25,8 @@ config/icon="uid://c0x02yjix1yk"
 
 [display]
 
+window/size/viewport_width=3840
+window/size/viewport_height=2160
 window/stretch/aspect="ignore"
 
 [gui]

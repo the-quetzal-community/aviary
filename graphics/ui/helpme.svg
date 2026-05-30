@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   version="1.1"
+   viewBox="0 0 100 100"
+   width="100"
+   height="100"
+   id="svg1"
+   sodipodi:docname="helpme.svg"
+   xml:space="preserve"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><defs
+     id="defs1" /><sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="true"
+     inkscape:deskcolor="#d1d1d1"
+     showborder="true"
+     inkscape:zoom="4"
+     inkscape:cx="53.75"
+     inkscape:cy="23"
+     inkscape:window-width="1848"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" /><path
+     d="m 50.998487,10.740466 c -22.503731,0 -40.748489,18.244758 -40.748489,40.748487 0,22.503733 18.244758,39.757697 40.748489,39.757697 22.503736,0 40.748494,-17.254719 40.748494,-39.757697 0,-22.502975 -18.244758,-40.748487 -40.748494,-40.748487 z m 0,14.202358 c 8.068201,0 14.690586,6.646382 14.690586,14.742651 0,3.859107 -1.496222,7.413965 -3.933361,10.038466 -3.540739,3.816622 -6.961202,7.329072 -6.961202,9.871697 0,2.104658 -1.697853,3.809535 -3.795418,3.809535 -2.097566,0 -3.79542,-1.704949 -3.79542,-3.809535 0,-7.378568 5.988443,-11.821586 8.994851,-15.064865 1.184954,-1.276933 1.899481,-2.953588 1.899481,-4.849525 0,-3.979316 -3.133932,-7.123888 -7.099137,-7.123888 -3.965205,0 -7.099146,3.144572 -7.099146,7.123888 0,2.10466 -1.701398,3.80953 -3.798965,3.80953 -2.097566,0 -3.798966,-1.704946 -3.795418,-3.80953 0,-8.096872 6.625176,-14.74265 14.693604,-14.74265 z m 0,42.683289 c 2.667066,0 4.831792,2.17182 4.831792,4.845971 0,2.677642 -2.164801,4.849532 -4.831792,4.849532 -2.666985,0 -4.835332,-2.171819 -4.835332,-4.849532 0,-2.677614 2.164801,-4.849518 4.835332,-4.845971 z"
+     fill="#ffffff"
+     id="path1"
+     style="stroke-width:0.0754599" /></svg>

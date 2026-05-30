@@ -672,6 +672,23 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
 					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
 				}
+			} else if world.Editing == Editing.Terrain {
+				// Shift+wheel resizes the terrain brush (and nudges the gizmo-
+				// toolbar size slider) instead of dollying the camera. WheelUp
+				// grows the brush; WheelDown shrinks it.
+				var delta Float.X
+				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+					delta = brushRadiusScrollStep
+				}
+				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+					delta = -brushRadiusScrollStep
+				}
+				if delta != 0 {
+					r := world.TerrainEditor.NudgeBrushRadius(delta)
+					if world.ui != nil && world.ui.CloudControl != nil {
+						world.ui.CloudControl.setSizeSliderValue(float64(r))
+					}
+				}
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select

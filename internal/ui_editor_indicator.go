@@ -4,6 +4,7 @@ import (
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Object"
 )
@@ -20,6 +21,10 @@ type EditorIndicator struct {
 		EditorTypes VBoxContainer.Instance
 	}
 
+	// Arrows is the up/down chevron overlaid on the editor icon; it spins
+	// when the selector rolls out and in (wired as the rollout's icon).
+	Arrows TextureRect.Instance
+
 	rollout Rollout
 
 	client *Client
@@ -28,6 +33,7 @@ type EditorIndicator struct {
 func (ed *EditorIndicator) Ready() {
 	ed.Triangle.AsControl().SetAnchorsPreset(Control.PresetFullRect)
 	ed.EditorIcon.AsBaseButton().OnPressed(ed.toggle)
+	ed.rollout.icon = ed.Arrows.AsControl()
 	for i, child := range ed.EditorSelector.EditorTypes.AsNode().GetChildren() {
 		button, ok := Object.As[TextureButton.Instance](child)
 		if ok {

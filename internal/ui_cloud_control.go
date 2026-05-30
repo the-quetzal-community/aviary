@@ -10,20 +10,26 @@ import (
 	"graphics.gd/classdb/GradientTexture2D"
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/HBoxContainer"
+	"graphics.gd/classdb/HSlider"
+	"graphics.gd/classdb/Image"
+	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/Material"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/ProgressBar"
 	"graphics.gd/classdb/PropertyTweener"
+	"graphics.gd/classdb/Range"
 	"graphics.gd/classdb/RichTextLabel"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/TextEdit"
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/Tween"
@@ -93,6 +99,13 @@ type CloudControl struct {
 	sharing    bool
 	client     *Client
 	on_process chan func(*CloudControl)
+
+	// sizeSlider is the terrain brush-size slider built in code and
+	// parented to CloudControl (a sibling of GizmoTypes, like
+	// GizmoIndicator). It only shows while the terrain editor is active
+	// and is pinned next to the Shift gizmo button each frame.
+	sizeSlider      HSlider.Instance
+	sizeSliderReady bool
 }
 
 type Gizmo int
@@ -201,6 +214,7 @@ func (ui *CloudControl) Ready() {
 		}
 	})
 
+	ui.buildSizeSlider()
 }
 
 func (ui *CloudControl) set_update_available(restart func(), available bool) {
@@ -242,6 +256,7 @@ func (ui *CloudControl) set_join_code(code networking.Code) {
 }
 
 func (ui *CloudControl) Process(dt Float.X) {
+	ui.positionSizeSlider()
 	for {
 		select {
 		case fn := <-ui.on_process:
@@ -252,4 +267,101 @@ func (ui *CloudControl) Process(dt Float.X) {
 			return
 		}
 	}
+}
+
+// buildSizeSlider creates the terrain brush-size slider shown in the
+// gizmo toolbar beside the Shift button. It's created hidden; the editor
+// switch (setSizeSliderVisible) reveals it only while the terrain editor
+// is active, and positionSizeSlider keeps it pinned next to Shift. The
+// value is forwarded to the terrain editor through the same
+// SliderHandle/SliderConfig contract the design explorer used.
+func (ui *CloudControl) buildSizeSlider() {
+	slider := HSlider.Advanced(HSlider.New())
+	slider.AsRange().SetMin(0)
+	slider.AsRange().SetMax(10)
+	slider.AsRange().SetStep(0.01)
+	slider.AsRange().SetValue(2)
+	// Make the hit rect as tall as the grabber (64) — not the slim 24 the
+	// track needs — so pressing anywhere on the visible handle lands on the
+	// control. With MouseFilterStop, Godot then consumes the whole drag and
+	// it never falls through to terrain sculpt/paint or selection in the world.
+	HSlider.Instance(slider).AsControl().SetCustomMinimumSize(Vector2.New(280, 64))
+	HSlider.Instance(slider).AsControl().SetMouseFilter(Control.MouseFilterStop)
+	HSlider.Instance(slider).AsCanvasItem().SetVisible(false)
+	// Match the Settings menu slider's handle: the themed grabber
+	// (res://ui/slider.png) is 128×128 and Godot draws it at its native
+	// size, so downscale a copy and override it on just this slider.
+	const grabberSize = 64
+	if tex := LoadSync[Texture2D.Instance]("res://ui/slider.png"); tex != Texture2D.Nil {
+		if img := tex.GetImage(); img != Image.Nil {
+			img.Resize(grabberSize, grabberSize)
+			small := ImageTexture.CreateFromImage(img).AsTexture2D()
+			for _, name := range []string{"grabber", "grabber_highlight", "grabber_disabled"} {
+				HSlider.Instance(slider).AsControl().AddThemeIconOverride(name, small)
+			}
+		}
+	}
+	Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
+		if ui.client == nil {
+			return
+		}
+		ui.client.TerrainEditor.SliderHandle(ModeGeometry, "editing/radius", float64(value), false)
+	})
+	ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
+	ui.sizeSlider = HSlider.Instance(slider)
+	ui.sizeSliderReady = true
+}
+
+// setSizeSliderVisible reveals or hides the terrain brush-size slider.
+// When revealing, it syncs the slider's range and current value from the
+// terrain editor so it reflects the live brush radius.
+func (ui *CloudControl) setSizeSliderVisible(v bool) {
+	if !ui.sizeSliderReady {
+		return
+	}
+	if v && ui.client != nil {
+		init, min, max, step := ui.client.TerrainEditor.SliderConfig(ModeGeometry, "editing/radius")
+		r := Range.Advanced(ui.sizeSlider.AsRange())
+		r.SetMin(min)
+		r.SetMax(max)
+		r.SetStep(step)
+		ui.sizeSlider.AsRange().SetValueNoSignal(Float.X(init))
+	}
+	ui.sizeSlider.AsCanvasItem().SetVisible(v)
+}
+
+// setSizeSliderValue moves the size slider's handle to v without
+// re-emitting value_changed — the caller has already applied the radius
+// (e.g. Shift+scroll resizing the terrain brush).
+func (ui *CloudControl) setSizeSliderValue(v float64) {
+	if !ui.sizeSliderReady {
+		return
+	}
+	ui.sizeSlider.AsRange().SetValueNoSignal(Float.X(v))
+}
+
+// positionSizeSlider pins the size slider just to the right of the Shift
+// gizmo button each frame while it's visible, mirroring the maths
+// set_gizmo uses to place the gizmo indicator so the slider tracks the
+// button across window/layout changes.
+func (ui *CloudControl) positionSizeSlider() {
+	if !ui.sizeSliderReady || !ui.sizeSlider.AsCanvasItem().Visible() {
+		return
+	}
+	shift := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(GizmoShift)))
+	if shift == Control.Nil {
+		return
+	}
+	types := ui.GizmoTypes.AsControl()
+	// Right-edge vertical-centre of the Shift button in CloudControl space.
+	edge := Vector2.Add(
+		types.Position(),
+		Vector2.Mul(
+			Vector2.Add(shift.Position(), Vector2.New(shift.Size().X, shift.Size().Y*0.5)),
+			types.Scale(),
+		),
+	)
+	const gap = 12
+	size := ui.sizeSlider.AsControl().Size()
+	ui.sizeSlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
 }

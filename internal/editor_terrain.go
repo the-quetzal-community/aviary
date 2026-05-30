@@ -213,9 +213,10 @@ func (*TerrainEditor) SwitchToView(view string) {}
 func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
-		return []string{
-			"editing/radius",
-		}
+		// The brush-size ("radius") slider used to be rendered here as an
+		// "editing/radius" tab in the design explorer; it now lives in the
+		// gizmo toolbar (CloudControl.sizeSlider) instead.
+		return nil
 	case ModeMaterial:
 		return []string{
 			"terrain/aquatic",
@@ -249,6 +250,27 @@ func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, 
 
 func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
 	return float64(fe.BrushRadius), 0, 10, 0.01
+}
+
+// brushRadiusScrollStep is how much one mouse-wheel notch changes the
+// terrain brush radius when Shift is held (see Client.handleScroll).
+const brushRadiusScrollStep Float.X = 0.5
+
+// NudgeBrushRadius changes the brush radius by delta, clamped to the
+// slider's configured range, and pushes it to the shader. It returns the
+// new radius so callers can sync the gizmo-toolbar size slider. Used by
+// the Shift+wheel shortcut.
+func (fe *TerrainEditor) NudgeBrushRadius(delta Float.X) Float.X {
+	_, min, max, _ := fe.SliderConfig(ModeGeometry, "editing/radius")
+	r := fe.BrushRadius + delta
+	if r < Float.X(min) {
+		r = Float.X(min)
+	}
+	if r > Float.X(max) {
+		r = Float.X(max)
+	}
+	fe.SliderHandle(ModeGeometry, "editing/radius", float64(r), false)
+	return fe.BrushRadius
 }
 
 func (tr *TerrainEditor) Ready() {
@@ -968,7 +990,11 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				}
 			}
 		}
-	} else {
+	} else if !Input.IsKeyPressed(Input.KeyShift) {
+		// Holding Shift freezes the brush: skip mouse-motion tracking so
+		// the brush target (and its highlight) stays put instead of
+		// following the cursor, letting the user keep sculpting a fixed
+		// spot. Button presses handled above are unaffected.
 		select {
 		case tile.brushEvents <- terrainBrushEvent{
 			BrushTarget: pos,
@@ -995,12 +1021,12 @@ func (tile *TerrainTile) addArrow(dir tileCoord) {
 	arrow.tile = tile
 	arrow.direction = dir
 	half := Float.X(terrainDefaultSize) / 2
-	// Position the arrow just past the open edge, lifted to sit
-	// clearly above the terrain so it's clickable even if the seam is
-	// raised by sculpting.
+	// Position the arrow just past the open edge, sunk below ground
+	// level so it reads as a "grow here" marker tucked under the rim
+	// rather than floating up high.
 	arrow_pos := Vector3.New(
 		Float.X(dir.X)*(half+1),
-		2,
+		-1.5,
 		Float.X(dir.Z)*(half+1),
 	)
 	tile.AsNode().AddChild(arrow.AsNode())
@@ -1045,21 +1071,35 @@ type TerrainTileArrow struct {
 }
 
 func (a *TerrainTileArrow) Ready() {
+	material := StandardMaterial3D.New().AsBaseMaterial3D().
+		SetAlbedoColor(Color.RGBA{R: 1, G: 1, B: 1, A: 1})
+
+	// Arrowhead cone at the far end, half the old size. Its apex points
+	// +Y by default; rotate so it points along the tile's local -Z,
+	// away from the shaft (the parent's yaw then aims it outward).
 	cone := CylinderMesh.New().
 		SetTopRadius(0).
-		SetBottomRadius(1.0).
-		SetHeight(2.5)
-	material := StandardMaterial3D.New().AsBaseMaterial3D().
-		SetAlbedoColor(Color.RGBA{R: 0.35, G: 0.85, B: 0.35, A: 1})
+		SetBottomRadius(0.5).
+		SetHeight(0.6)
 	cone.AsPrimitiveMesh().SetMaterial(material.AsMaterial())
-	mesh := MeshInstance3D.New().SetMesh(cone.AsMesh())
-	// Cone's apex points +Y by default; rotate so it points along the
-	// tile's local +Z (which we'll then re-orient outward via the
-	// parent's yaw).
-	mesh.AsNode3D().Rotate(Vector3.XYZ{1, 0, 0}, -Angle.Pi/2)
-	a.AsNode().AddChild(mesh.AsNode())
+	head := MeshInstance3D.New().SetMesh(cone.AsMesh())
+	head.AsNode3D().Rotate(Vector3.XYZ{1, 0, 0}, -Angle.Pi/2)
+	head.AsNode3D().SetPosition(Vector3.New(0, 0, -0.6))
+	a.AsNode().AddChild(head.AsNode())
+
+	// Cylinder shaft (the handle) behind the head.
+	stem := CylinderMesh.New().
+		SetTopRadius(0.18).
+		SetBottomRadius(0.18).
+		SetHeight(0.7)
+	stem.AsPrimitiveMesh().SetMaterial(material.AsMaterial())
+	shaft := MeshInstance3D.New().SetMesh(stem.AsMesh())
+	shaft.AsNode3D().Rotate(Vector3.XYZ{1, 0, 0}, -Angle.Pi/2)
+	shaft.AsNode3D().SetPosition(Vector3.New(0, 0, 0.05))
+	a.AsNode().AddChild(shaft.AsNode())
+
 	col := CollisionShape3D.New()
-	box := BoxShape3D.New().SetSize(Vector3.New(2.5, 2.5, 2.5))
+	box := BoxShape3D.New().SetSize(Vector3.New(1.25, 1.25, 1.25))
 	col.SetShape(box.AsShape3D())
 	a.AsNode().AddChild(col.AsNode())
 }

@@ -97,6 +97,11 @@ func (world *Client) StartEditing(subject Subject) {
 	editor.EnableEditor()
 	world.ui.ViewSelector.Refresh(0, editor.Views())
 	world.ui.Editor.Refresh(subject, "", world.ui.mode)
+	if world.ui.CloudControl != nil {
+		// The terrain brush-size slider lives in the gizmo toolbar and is
+		// only relevant while sculpting/painting terrain.
+		world.ui.CloudControl.setSizeSliderVisible(subject == Editing.Terrain)
+	}
 	UserState.Editor = subject
 	world.saveUserState()
 }
