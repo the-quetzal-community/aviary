@@ -171,13 +171,13 @@ type TerrainEditor struct {
 // fills its side.
 var cardinalDirs = [4]tileCoord{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
 
-// tileAt returns the tile at the given grid coord, creating it on
-// demand. New tiles are positioned in world space at coord*size and
-// share the editor's shader instances so the brush highlight + paint
-// textures stay consistent across chunks. After creating a tile we
-// also clear the "extend" arrow on each existing neighbour that
-// pointed toward this coord, and spawn arrows on the new tile's open
-// sides.
+// tileAt returns the tile at the given grid coord, creating it HIDDEN on
+// demand. New tiles are positioned in world space at coord*size and share the
+// editor's shader instances so the brush highlight + paint textures stay
+// consistent across chunks. A freshly created tile holds + accumulates edits
+// (so a brush spilling over an edge, or a replayed sculpt, builds it up) but
+// renders nothing and is not pickable until reveal() promotes it into the
+// world. Use revealTile to both create and reveal — the explicit "extend".
 func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 	if tile, ok := tr.tiles[coord]; ok {
 		return tile
@@ -198,30 +198,29 @@ func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 		0,
 		Float.X(coord.Z*terrainDefaultSize),
 	))
-	// Remove arrows on existing neighbours that pointed at us.
-	// Also drop any now-internal side wall on the neighbour.
-	for _, dir := range cardinalDirs {
-		neighbour, ok := tr.tiles[tileCoord{coord.X + dir.X, coord.Z + dir.Z}]
-		if !ok || neighbour == tile {
-			continue
-		}
-		neighbour.removeArrow(tileCoord{-dir.X, -dir.Z})
-		neighbour.reloadSides()
-	}
-	// Spawn arrows for our own open sides.
-	tile.spawnArrows()
-	// New tiles created while the water layer is showing must match its
-	// visibility (mirrors how arrows track arrowsVisible).
-	if tile.Water != (MeshInstance3D.Instance{}) {
-		tile.Water.AsNode3D().SetVisible(tr.waterVisible)
-	}
+	// Hidden until explicitly revealed: invisible, not pickable, and counted as
+	// absent by neighbours (so they keep their edge wall + extend arrow).
+	// generateBase (run synchronously on AddChild) already applied the hidden
+	// state via applyRevealState; set the node hidden here too in case Ready
+	// has not run yet, to avoid a one-frame flash of an ungenerated mesh.
+	tile.AsNode3D().SetVisible(false)
 	return tile
 }
 
-// tilesIntersecting returns every tile whose AABB intersects the
-// given world-space brush sphere, creating tiles on demand. Sculpts
-// straddling a tile boundary apply to all overlapping chunks so the
-// brush effect is continuous across the seam.
+// revealTile creates (if needed) and reveals the tile at coord — the explicit
+// "extend the world" step. Idempotent: revealing an already-revealed tile is a
+// no-op.
+func (tr *TerrainEditor) revealTile(coord tileCoord) *TerrainTile {
+	tile := tr.tileAt(coord)
+	tile.reveal()
+	return tile
+}
+
+// tilesIntersecting returns every tile whose AABB intersects the given
+// world-space brush sphere, creating any missing ones on demand (HIDDEN — a
+// brush spilling over an edge builds up the neighbour's data without revealing
+// it; see tileAt/reveal). Sculpts straddling a tile boundary apply to all
+// overlapping chunks so the brush effect is continuous across the seam.
 //
 // Tile (cx, _) covers world X in [cx*size - half, cx*size + half].
 // Solving for overlap with [target.X - radius, target.X + radius]
@@ -244,16 +243,23 @@ func (tr *TerrainEditor) tilesIntersecting(target Vector3.XYZ, radius Float.X) [
 	return tiles
 }
 
+// coordForWorld returns the grid coord of the tile whose AABB contains the
+// given world position, whether or not a tile exists there yet.
+func (tr *TerrainEditor) coordForWorld(pos Vector3.XYZ) tileCoord {
+	size := Float.X(terrainDefaultSize)
+	half := size / 2
+	return tileCoord{
+		int(Float.Floor((pos.X + half) / size)),
+		int(Float.Floor((pos.Z + half) / size)),
+	}
+}
+
 // tileForWorld returns the tile whose AABB contains the given world
 // position, or nil if no tile has yet been instantiated there. Used
 // by HeightAt/NormalAt so scenery, action_renderer and the like land
 // on the right chunk.
 func (tr *TerrainEditor) tileForWorld(pos Vector3.XYZ) *TerrainTile {
-	size := Float.X(terrainDefaultSize)
-	half := size / 2
-	cx := int(Float.Floor((pos.X + half) / size))
-	cz := int(Float.Floor((pos.Z + half) / size))
-	return tr.tiles[tileCoord{cx, cz}]
+	return tr.tiles[tr.coordForWorld(pos)]
 }
 
 func (fe *TerrainEditor) Name() string { return "terrain" }
@@ -530,9 +536,9 @@ func (tr *TerrainEditor) Ready() {
 	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
 	tr.normal_maps = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
 	tr.uploadTextureArrays()
-	// Spawn the starter tile so the world is clickable before any
-	// sculpt arrives.
-	tr.tileAt(tileCoord{0, 0})
+	// Spawn + reveal the starter tile so the world is clickable before any
+	// sculpt arrives (every other tile starts hidden until an explicit extend).
+	tr.revealTile(tileCoord{0, 0})
 }
 
 // uploadTextureArrays rebuilds the Texture2DArray (and bumpmap
@@ -842,6 +848,17 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		vr.applyWaterLevel(Float.X(brush.Amount))
 		return nil
 	}
+	// "Extend the world" reveals a tile, and is the ONLY way the visible grid
+	// grows. It is an explicit, observable mutation (emitted by an arrow click)
+	// so every client and every replay reveals the same chunk; the tile's data
+	// was already built up implicitly (brush spill-over / replayed sculpts), so
+	// revealing it shows the accumulated edits seamlessly. Without routing this
+	// through the log, a tile revealed only on the authoring client would be
+	// missing elsewhere and its revealed neighbours would wall into the gap.
+	if brush.Editor == "terrain" && brush.Slider == extendSlider {
+		vr.revealTile(vr.coordForWorld(brush.Target))
+		return nil
+	}
 	// Environment sliders for the shared world look (terrain + scenery).
 	if strings.HasPrefix(brush.Slider, "environment/") {
 		if vr.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
@@ -944,6 +961,13 @@ const (
 	riverEraseSlider = "river/erase"
 )
 
+// extendSlider tags the explicit "extend the world" mutation an arrow click
+// emits. Target carries the new chunk's world-space center; TerrainEditor.Sculpt
+// reveals exactly that tile on every client, so the visible world grows only
+// through an observable, reproducible step (never silently from a brush
+// spilling over an edge).
+const extendSlider = "extend"
+
 func isRiverSlider(s string) bool { return s == riverSlider || s == riverEraseSlider }
 
 // waterFloorEps is the minimum carve depth (groundHeights-heights) below which
@@ -1012,6 +1036,13 @@ type TerrainTile struct {
 	editor    *TerrainEditor // back-pointer for shared mapper/albedos
 	coord     tileCoord      // grid position; world center = coord * size
 	generated bool
+	// revealed reports whether this tile is an explicit part of the world.
+	// A hidden (un-revealed) tile still holds + accumulates edits (brush
+	// spill-over, replayed sculpts) but renders nothing, is not pickable, and
+	// is treated as absent by its neighbours — so they keep their edge wall +
+	// extend arrow. An explicit, observable "extend" mutation reveals it (see
+	// reveal); the starter tile is revealed in Ready.
+	revealed  bool
 	reloading bool
 	sculpts   []musical.Sculpt
 
@@ -1191,10 +1222,12 @@ func (tile *TerrainTile) generateBase() {
 		tile.AsNode().AddChild(tile.Water.AsNode())
 	}
 	tile.Water.AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
-	tile.Water.AsNode3D().SetVisible(tile.editor != nil && tile.editor.waterVisible)
 	// Texture arrays are owned by the editor (shared across tiles).
 	tile.reloadSides()
 	tile.reloadWater()
+	// Sync visibility + pickability to the reveal state (tiles start hidden;
+	// applyRevealState also gates the water mesh on revealed && waterVisible).
+	tile.applyRevealState()
 }
 
 // Reload applies any pending sculpt operations to the terrain tile.
@@ -1256,6 +1289,14 @@ func (tile *TerrainTile) Reload() {
 			for i := range tile.sculpts {
 				sculpt := tile.sculpts[i]
 				if sculpt.Design != (musical.Design{}) || isRiverSlider(sculpt.Slider) {
+					continue
+				}
+				// A zero-radius stroke would make the falloff 0/0 = NaN at the
+				// target vertex; that NaN accumulates into groundHeights (and
+				// thus heights), and the GPU discards every triangle touching a
+				// NaN vertex — a permanent hole in the mesh. Skip it, mirroring
+				// the river path's `if r2 <= 0 { continue }` guard.
+				if sculpt.Radius <= 0 {
 					continue
 				}
 				dx := pos.X - sculpt.Target.X
@@ -1407,16 +1448,57 @@ func (tile *TerrainTile) Reload() {
 	}))
 }
 
-// hasNeighbour reports whether another TerrainTile exists at the
-// adjacent grid coord in the given direction. Used by reloadSides
-// to decide which vertical walls to emit (only the outer-most sides,
-// i.e. those with no neighbour).
+// hasNeighbour reports whether a REVEALED TerrainTile exists at the adjacent
+// grid coord in the given direction. Used by reloadSides + spawnArrows to
+// decide which vertical walls + extend arrows to emit: a hidden (un-revealed)
+// neighbour counts as absent, so the tile keeps its edge wall + arrow there
+// until that neighbour is explicitly revealed.
 func (tile *TerrainTile) hasNeighbour(dir tileCoord) bool {
 	if tile.editor == nil {
 		return false
 	}
-	_, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]
-	return ok
+	n, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]
+	return ok && n.revealed
+}
+
+// reveal promotes a hidden tile into the world: it becomes visible + pickable,
+// drops the edge walls it shares with now-adjacent revealed neighbours, takes
+// over the extend arrows for its still-hidden sides, and clears the matching
+// arrow on each revealed neighbour. Idempotent.
+func (tile *TerrainTile) reveal() {
+	if tile.revealed {
+		return
+	}
+	tile.revealed = true
+	tile.applyRevealState()
+	// We now count as a neighbour: drop the shared wall + extend arrow on each
+	// already-revealed neighbour and refresh its sides.
+	for _, dir := range cardinalDirs {
+		neighbour, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]
+		if !ok || neighbour == tile || !neighbour.revealed {
+			continue
+		}
+		neighbour.removeArrow(tileCoord{-dir.X, -dir.Z})
+		neighbour.reloadSides()
+	}
+	// Recompute our own walls against the revealed neighbours and plant extend
+	// arrows on the sides still facing a hidden/absent neighbour.
+	tile.reloadSides()
+	tile.spawnArrows()
+}
+
+// applyRevealState syncs the tile's render + pick + water state to whether it
+// has been revealed. A hidden tile keeps its mesh + collision shape (so its
+// data + edits survive) but renders nothing and is not pickable, so a brush
+// spilling over an edge builds it up invisibly until an explicit extend.
+func (tile *TerrainTile) applyRevealState() {
+	tile.AsNode3D().SetVisible(tile.revealed)
+	if tile.collision != (CollisionShape3D.Instance{}) {
+		tile.collision.SetDisabled(!tile.revealed)
+	}
+	if tile.Water != (MeshInstance3D.Instance{}) {
+		tile.Water.AsNode3D().SetVisible(tile.revealed && tile.editor != nil && tile.editor.waterVisible)
+	}
 }
 
 // reloadSides updates the side meshes to match the current terrain heights.
@@ -1817,12 +1899,15 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 	}
 }
 
-// spawnArrows creates an extend-the-world arrow on each of the four
-// cardinal sides that doesn't already have a neighbour tile. Called
-// once when a tile is first created.
+// spawnArrows creates an extend-the-world arrow on each cardinal side that does
+// not have a revealed neighbour. Called when a tile is revealed; idempotent, so
+// it skips sides that already carry an arrow.
 func (tile *TerrainTile) spawnArrows() {
 	for _, dir := range cardinalDirs {
-		if _, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]; ok {
+		if tile.hasNeighbour(dir) {
+			continue
+		}
+		if _, exists := tile.arrows[dir]; exists {
 			continue
 		}
 		tile.addArrow(dir)
@@ -1928,9 +2013,30 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 	if a.tile == nil || a.tile.editor == nil {
 		return
 	}
-	a.tile.editor.tileAt(tileCoord{
+	coord := tileCoord{
 		X: a.tile.coord.X + a.direction.X,
 		Z: a.tile.coord.Z + a.direction.Z,
+	}
+	// Extending the world is a shared mutation, so route it through the space
+	// rather than revealing the tile locally — that is what makes the new chunk
+	// observable by every client and reproducible on replay (the local client
+	// reveals it when the mutation loops back through Sculpt). Before a space
+	// exists (e.g. not yet joined) fall back to a direct local reveal.
+	ed := a.tile.editor
+	if ed.client == nil || ed.client.space == nil {
+		ed.revealTile(coord)
+		return
+	}
+	ed.client.space.Sculpt(musical.Sculpt{
+		Author: ed.client.id,
+		Editor: "terrain",
+		Slider: extendSlider,
+		Target: Vector3.New(
+			Float.X(coord.X*terrainDefaultSize),
+			0,
+			Float.X(coord.Z*terrainDefaultSize),
+		),
+		Commit: true,
 	})
 }
 
@@ -1955,7 +2061,8 @@ func (tr *TerrainEditor) SetWaterVisible(v bool) {
 	tr.waterVisible = v
 	for _, tile := range tr.tiles {
 		if tile.Water != (MeshInstance3D.Instance{}) {
-			tile.Water.AsNode3D().SetVisible(v)
+			// Hidden tiles never show water, even when the layer is on.
+			tile.Water.AsNode3D().SetVisible(v && tile.revealed)
 		}
 	}
 }
