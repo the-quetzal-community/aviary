@@ -532,19 +532,34 @@ func (world *Client) Process(dt Float.X) {
 		}
 	}
 
-	if world.TerrainEditor.PaintActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
+	// Any release of the left button (even while the pointer is over 2D UI)
+	// ends the current world stroke. Terrain tile releases also clear it,
+	// but this catches releases that happen while the mouse is over the
+	// design explorer or other UI.
+	if !Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
+		world.TerrainEditor.brushStrokeActive = false
+	}
+
+	// Texture painting and dressing only produce strokes when the user
+	// is actively holding the left button after a press that actually
+	// landed on terrain geometry (see TerrainTile.InputEvent). This
+	// prevents clicks inside the 2D design explorer from ever starting
+	// a paint or dressing action at the last-known BrushTarget.
+	if world.TerrainEditor.PaintActive && world.TerrainEditor.brushStrokeActive {
 		if time.Since(world.last_PaintAt) > time.Second/5 {
 			world.TerrainEditor.Paint()
 			world.last_PaintAt = time.Now()
 		}
 	}
 
-	// Dressing strokes commit on the same throttle as painting (paint and
-	// dressing are mutually exclusive — different editor modes — so they
-	// can share last_PaintAt). PaintDressing self-gates on brush movement.
-	if world.TerrainEditor.DressActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
+	if world.TerrainEditor.DressActive && world.TerrainEditor.brushStrokeActive {
+		te := world.TerrainEditor
 		if time.Since(world.last_PaintAt) > time.Second/5 {
-			world.TerrainEditor.PaintDressing()
+			if Input.IsKeyPressed(Input.KeyCtrl) && Input.IsKeyPressed(Input.KeyShift) {
+				te.EraseDressing()
+			} else {
+				te.PaintDressing()
+			}
 			world.last_PaintAt = time.Now()
 		}
 	}

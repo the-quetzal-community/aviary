@@ -34,7 +34,8 @@ type grassPatch struct {
 	target Vector3.XYZ
 	radius Float.X
 
-	mm MultiMesh.Instance
+	mm     MultiMesh.Instance
+	mmNode MultiMeshInstance3D.Instance
 
 	// Per-instance scatter, kept so a later height sculpt can re-plant the
 	// instances on the reshaped surface. bases hold world X/Z (Y is
@@ -127,10 +128,11 @@ func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset)
 		patch.scales[i] = scale
 		mm.SetInstanceTransform(i, vr.grassTransform(base, yaw, scale, asset.xform))
 	}
-	node := MultiMeshInstance3D.New()
-	node.SetMultimesh(mm)
-	vr.AsNode().AddChild(node.AsNode())
+	mmi := MultiMeshInstance3D.New()
+	mmi.SetMultimesh(mm)
+	vr.AsNode().AddChild(mmi.AsNode())
 	patch.mm = mm
+	patch.mmNode = mmi
 	vr.grassPatches = append(vr.grassPatches, patch)
 }
 
@@ -144,15 +146,71 @@ func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
 			continue
 		}
 		for i := range patch.bases {
-			// We don't have the asset here; re-use the xform that was baked
-			// into the patch at creation time? For reproject we must look it
-			// up or store the xform per-patch too. For simplicity we store
-			// the xform on the patch when building (but to avoid schema
-			// change we recompute from the cache — safe because the cache
-			// is stable once loaded).
 			if a, ok := vr.grassMeshes[patch.design]; ok {
 				patch.mm.SetInstanceTransform(i, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], a.xform))
 			}
+		}
+	}
+}
+
+// eraseGrass removes instances of the given Design whose scatter centers
+// lie inside the brush disc. It filters the per-patch instance lists in
+// place and rebuilds the corresponding MultiMeshes so the deletion is
+// immediately visible and is reproduced identically on every client that
+// replays the (negative-Amount) sculpt.
+func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
+	asset, ok := vr.grassMeshes[brush.Design]
+	if !ok {
+		// The mesh for this design hasn't arrived yet; we can't safely
+		// rebuild the MultiMesh transforms. Skip — the erase will have
+		// no visual effect until the asset is present (extremely rare
+		// in normal play).
+		return
+	}
+	center := brush.Target
+	r2 := float64(brush.Radius) * float64(brush.Radius)
+
+	for i := len(vr.grassPatches) - 1; i >= 0; i-- {
+		p := vr.grassPatches[i]
+		if p.design != brush.Design {
+			continue
+		}
+
+		// Cheap disc-overlap reject before per-instance work.
+		dx := float64(p.target.X - center.X)
+		dz := float64(p.target.Z - center.Z)
+		sumR := float64(p.radius) + float64(brush.Radius)
+		if dx*dx+dz*dz > sumR*sumR {
+			continue
+		}
+
+		keptB := p.bases[:0]
+		keptY := p.yaws[:0]
+		keptS := p.scales[:0]
+		for j := range p.bases {
+			dbx := float64(p.bases[j].X - center.X)
+			dbz := float64(p.bases[j].Z - center.Z)
+			if dbx*dbx+dbz*dbz > r2 {
+				keptB = append(keptB, p.bases[j])
+				keptY = append(keptY, p.yaws[j])
+				keptS = append(keptS, p.scales[j])
+			}
+		}
+
+		if len(keptB) == 0 {
+			if p.mmNode != MultiMeshInstance3D.Nil {
+				p.mmNode.AsNode().QueueFree()
+			}
+			vr.grassPatches = append(vr.grassPatches[:i], vr.grassPatches[i+1:]...)
+			continue
+		}
+
+		p.bases = keptB
+		p.yaws = keptY
+		p.scales = keptS
+		p.mm.SetInstanceCount(len(keptB))
+		for k := range keptB {
+			p.mm.SetInstanceTransform(k, vr.grassTransform(keptB[k], keptY[k], keptS[k], asset.xform))
 		}
 	}
 }
@@ -166,10 +224,12 @@ func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, sca
 	yawB := Basis.FromEuler(Euler.Radians{Y: yaw}, Angle.OrderYXZ)
 	scaledYaw := Basis.Scaled(yawB, Vector3.New(scale, scale, scale))
 
-	// Fixed correction that maps a model's local +Z direction to world +Y.
-	// The yughues grasses (and similar packs) export with blades along Z;
-	// without this they lie flat ("sideways") when only Y-yaw is applied.
-	zToY := Basis.FromEuler(Euler.Radians{X: Angle.Pi / 2}, Angle.OrderYXZ)
+	// Fixed correction that maps a model's local +Z direction to world +Y
+	// (after the source glb's own node transforms have been applied).
+	// The yughues grasses export blades primarily along Z (with a 180° Y
+	// node flip that does not change the up axis); the sign here is chosen
+	// so that after the source basis the tips point +Y.
+	zToY := Basis.FromEuler(Euler.Radians{X: -Angle.Pi / 2}, Angle.OrderYXZ)
 
 	// Compose order: source (authored node xform) first, then the Z-to-Y
 	// stand-up, then the per-instance yaw+scale. This makes authored
@@ -186,25 +246,26 @@ func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, sca
 	return Transform3D.BasisOrigin{Basis: corrected, Origin: finalOrigin}
 }
 
-// grassMeshFor resolves (and caches) the Mesh to instance for a dressing
-// Design. Returns ok=false until the Design's .glb has been imported.
-func (vr *TerrainEditor) grassMeshFor(design musical.Design) (Mesh.Instance, bool) {
-	if m, ok := vr.grassMeshes[design]; ok {
-		return m, m != Mesh.Nil
+// grassMeshFor resolves (and caches) the Mesh (plus its source-scene
+// transform) to instance for a dressing Design. Returns ok=false until
+// the Design's .glb has been imported.
+func (vr *TerrainEditor) grassMeshFor(design musical.Design) (grassAsset, bool) {
+	if a, ok := vr.grassMeshes[design]; ok {
+		return a, a.mesh != Mesh.Nil
 	}
 	sceneID, ok := vr.client.packed_scenes[design]
 	if !ok {
-		return Mesh.Nil, false
+		return grassAsset{}, false
 	}
 	scene, ok := sceneID.Instance()
 	if !ok {
-		return Mesh.Nil, false
+		return grassAsset{}, false
 	}
 	root := Object.To[Node3D.Instance](scene.Instantiate())
-	mi, found := firstMeshInstance(root.AsNode())
+	mi, sourceXform, found := firstMeshInstance(root.AsNode())
 	if !found {
 		root.AsNode().QueueFree()
-		return Mesh.Nil, false
+		return grassAsset{}, false
 	}
 	mesh := Object.Leak(mi.Mesh())
 	// Promote any surface override materials onto the shared Mesh so the
@@ -216,23 +277,40 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design) (Mesh.Instance, boo
 		}
 	}
 	root.AsNode().QueueFree()
-	vr.grassMeshes[design] = mesh
-	return mesh, true
+	asset := grassAsset{mesh: mesh, xform: sourceXform}
+	vr.grassMeshes[design] = asset
+	return asset, true
 }
 
 // firstMeshInstance returns the first MeshInstance3D found in a (possibly
-// nested) imported scene tree — .glb roots usually wrap the mesh a couple
-// of nodes deep.
-func firstMeshInstance(n Node.Instance) (MeshInstance3D.Instance, bool) {
+// nested) imported scene tree together with the accumulated transform
+// (relative to the scene root) that was applied to it by the glTF nodes.
+// .glb roots usually wrap the mesh a couple of nodes deep; preserving the
+// transform ensures authored pivots and orientation fixes are not lost
+// when the raw mesh is fed to a MultiMesh.
+func firstMeshInstance(n Node.Instance) (MeshInstance3D.Instance, Transform3D.BasisOrigin, bool) {
+	identity := Transform3D.BasisOrigin{Basis: Basis.Identity, Origin: Vector3.Zero}
+	return firstMeshRecursive(n, identity)
+}
+
+func firstMeshRecursive(n Node.Instance, parentXform Transform3D.BasisOrigin) (MeshInstance3D.Instance, Transform3D.BasisOrigin, bool) {
+	// Compute the transform of *this* node (if it is a Node3D) composed
+	// onto the parent. This becomes the global xform for any MI here.
+	nodeXform := parentXform
+	if n3d, ok := Object.As[Node3D.Instance](n); ok {
+		local := n3d.Transform()
+		nodeXform = Transform3D.Mul(parentXform, local)
+	}
+
 	if mi, ok := Object.As[MeshInstance3D.Instance](n); ok {
-		return mi, true
+		return mi, nodeXform, true
 	}
 	for i := 0; i < n.GetChildCount(); i++ {
-		if mi, ok := firstMeshInstance(n.GetChild(i)); ok {
-			return mi, true
+		if mi, xf, ok := firstMeshRecursive(n.GetChild(i), nodeXform); ok {
+			return mi, xf, true
 		}
 	}
-	return MeshInstance3D.Nil, false
+	return MeshInstance3D.Nil, Transform3D.BasisOrigin{}, false
 }
 
 // grassCount derives the instance count for a stroke from its disc area

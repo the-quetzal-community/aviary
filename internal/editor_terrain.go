@@ -128,6 +128,14 @@ type TerrainEditor struct {
 	dressLast    Vector3.XYZ
 	dressLastSet bool
 
+	// brushStrokeActive is true only while the user is actively holding the
+	// left mouse button over actual terrain geometry after a press that
+	// landed on the world (not on 2D UI). This is the authoritative signal
+	// for continuous painting / dressing / height sculpting. UI clicks in
+	// the design explorer can never set this, preventing accidental strokes
+	// when selecting a design.
+	brushStrokeActive bool
+
 	// grassPatches holds the rendered scatter for every committed dressing
 	// sculpt, so height sculpts can re-project the instances back onto the
 	// surface (see reprojectGrass). grassMeshes caches the Mesh pulled from
@@ -250,6 +258,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.BrushActive = false
 	fe.PaintActive = false
 	fe.DressActive = false
+	fe.brushStrokeActive = false
 	fe.setArrowsVisible(false)
 }
 
@@ -306,6 +315,8 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 		fe.DressDesign = design
 		fe.DressTab = path.Base(path.Dir(design))
 		fe.BrushDesign = design
+		// Allow the very next user-initiated stroke after picking a design
+		// to fire without the movement-spacing guard (original behaviour).
 		fe.dressLastSet = false
 		fe.EnableEditor()
 		return
@@ -498,6 +509,7 @@ func (tr *TerrainEditor) CancelPaint() bool {
 	}
 	if tr.DressActive {
 		tr.DressActive = false
+		tr.brushStrokeActive = false
 		active = true
 	}
 	return active
@@ -532,6 +544,38 @@ func (tr *TerrainEditor) PaintDressing() {
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
 		Amount: tr.BrushDensity,
+		Design: tr.client.MusicalDesign(tr.DressDesign),
+		Commit: true,
+	})
+}
+
+// EraseDressing commits an erase stroke for the current dressing brush.
+// It removes any instances of the selected design whose centers fall
+// inside the brush disc. Amount is sent negative so the receiver knows
+// this is a removal rather than an add. Uses the same movement-spacing
+// throttle as painting to keep the musical log from growing with
+// redundant identical erases.
+func (tr *TerrainEditor) EraseDressing() {
+	if !tr.DressActive || tr.DressDesign == "" {
+		return
+	}
+	if tr.dressLastSet {
+		dx := tr.BrushTarget.X - tr.dressLast.X
+		dz := tr.BrushTarget.Z - tr.dressLast.Z
+		spacing := tr.BrushRadius * 0.5
+		if dx*dx+dz*dz < spacing*spacing {
+			return
+		}
+	}
+	tr.dressLast = tr.BrushTarget
+	tr.dressLastSet = true
+	tr.client.space.Sculpt(musical.Sculpt{
+		Author: tr.client.id,
+		Editor: "terrain",
+		Slider: tr.DressTab,
+		Target: tr.BrushTarget,
+		Radius: tr.BrushRadius,
+		Amount: -tr.BrushDensity, // <=0 signals erase for this Design
 		Design: tr.client.MusicalDesign(tr.DressDesign),
 		Commit: true,
 	})
@@ -624,10 +668,14 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		return nil
 	}
 	// A dressing stroke carries the category in Slider and the scattered
-	// mesh in Design; it scatters instances rather than touching the
-	// heightmap or texture layers.
+	// mesh in Design; positive Amount adds instances, <=0 erases any
+	// matching instances whose centers fall inside the disc.
 	if brush.Slider != "" && brush.Design != (musical.Design{}) {
-		vr.scatterGrass(brush)
+		if brush.Amount <= 0 {
+			vr.eraseGrass(brush)
+		} else {
+			vr.scatterGrass(brush)
+		}
 		return nil
 	}
 	if brush.Author == vr.client.id {
@@ -1274,6 +1322,13 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && tile.client.Editing == Editing.Terrain {
 		if event.ButtonIndex() == Input.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
+				// A left press that actually hit terrain geometry is the
+				// only thing allowed to start a real paint/dress/height
+				// stroke. This is what prevents clicks inside the 2D
+				// design explorer from leaking into the world.
+				if tile.editor.PaintActive || tile.editor.DressActive {
+					tile.editor.brushStrokeActive = true
+				}
 				select {
 				case tile.brushEvents <- terrainBrushEvent{
 					BrushTarget: pos,
@@ -1281,6 +1336,11 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				}:
 				default:
 				}
+			} else {
+				// Release clears any active stroke, even if the pointer
+				// is currently over UI (the global release will also be
+				// observed in client.Process as a belt-and-suspenders).
+				tile.editor.brushStrokeActive = false
 			}
 		}
 		if event.ButtonIndex() == Input.MouseButtonRight {
@@ -1294,7 +1354,7 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				}
 			}
 		}
-	} else if !Input.IsKeyPressed(Input.KeyShift) {
+	} else if !Input.IsKeyPressed(Input.KeyShift) || Input.IsKeyPressed(Input.KeyCtrl) {
 		// Holding Shift freezes the brush: skip mouse-motion tracking so
 		// the brush target (and its highlight) stays put instead of
 		// following the cursor, letting the user keep sculpting a fixed
