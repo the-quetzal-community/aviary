@@ -125,12 +125,14 @@ func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 		Float.X(coord.Z*terrainDefaultSize),
 	))
 	// Remove arrows on existing neighbours that pointed at us.
+	// Also drop any now-internal side wall on the neighbour.
 	for _, dir := range cardinalDirs {
 		neighbour, ok := tr.tiles[tileCoord{coord.X + dir.X, coord.Z + dir.Z}]
 		if !ok || neighbour == tile {
 			continue
 		}
 		neighbour.removeArrow(tileCoord{-dir.X, -dir.Z})
+		neighbour.reloadSides()
 	}
 	// Spawn arrows for our own open sides.
 	tile.spawnArrows()
@@ -227,6 +229,11 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 			"terrain/manmade",
 			"terrain/organic",
 			"terrain/volcano",
+		}
+	case ModeDressing:
+		return []string{
+			"grasses",
+			"pebbles",
 		}
 	default:
 		return nil
@@ -532,8 +539,9 @@ type TerrainTile struct {
 	textures []float32
 	weights  []float32
 
-	// cached geometry — side walls (4 cardinal sides × size segments
-	// × 6 verts per quad).
+	// cached geometry — side walls (only exposed cardinal sides × size
+	// segments × 6 verts per quad). Internal sides (where a neighbour
+	// tile exists) are omitted.
 	verticesSide []Vector3.XYZ
 	normalsSide  []Vector3.XYZ
 	uvsSide      []Vector2.XY
@@ -768,11 +776,53 @@ func (tile *TerrainTile) Reload() {
 	}))
 }
 
+// hasNeighbour reports whether another TerrainTile exists at the
+// adjacent grid coord in the given direction. Used by reloadSides
+// to decide which vertical walls to emit (only the outer-most sides,
+// i.e. those with no neighbour).
+func (tile *TerrainTile) hasNeighbour(dir tileCoord) bool {
+	if tile.editor == nil {
+		return false
+	}
+	_, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]
+	return ok
+}
+
 // reloadSides updates the side meshes to match the current terrain heights.
+// Only the outer-most (exposed) sides are emitted; sides that have a
+// neighbour tile are omitted so that internal walls are never drawn.
 func (tile *TerrainTile) reloadSides() {
 	tile_size := float32(1.0) // Adjust for texture tiling scale
 	n := tile.size
 	hm := n + 1
+
+	// Remove any previous side surface(s) (index 1+) so we can append
+	// a fresh one (or none at all). This makes reloadSides safe to call
+	// at any time, including when a neighbour is added later.
+	mesh := tile.Mesh.Mesh()
+	am := ArrayMesh.Nil
+	if mesh != Mesh.Nil {
+		am = Object.To[ArrayMesh.Instance](mesh)
+		for mesh.GetSurfaceCount() > 1 {
+			am.SurfaceRemove(mesh.GetSurfaceCount() - 1)
+		}
+		// Force the MeshInstance3D to observe the removal so its
+		// internal surface_override_materials array shrinks to match.
+		// Without this, later SetSurfaceOverrideMaterial can fail.
+		mi := tile.Mesh
+		m := mi.Mesh()
+		mi.SetMesh(Mesh.Nil)
+		mi.SetMesh(m)
+	}
+
+	// Map the four sideParam entries (in the order defined below) to the
+	// cardinal direction of the neighbour that would sit on that side.
+	sideNeighbourDirs := [4]tileCoord{
+		{0, -1}, // South (Z fixed at 0)
+		{0, 1},  // North (Z fixed at n)
+		{-1, 0}, // West  (X fixed at 0)
+		{1, 0},  // East  (X fixed at n)
+	}
 
 	// Sides mesh data
 	index_base := 0
@@ -790,7 +840,22 @@ func (tile *TerrainTile) reloadSides() {
 		{false, 0, 0, false},         // West
 		{false, float32(n), n, true}, // East
 	}
-	sideVertCount := 4 * n * 6
+
+	type sideEntry struct {
+		sp sideParam
+	}
+	var active []sideEntry
+	for i, sp := range sides {
+		if !tile.hasNeighbour(sideNeighbourDirs[i]) {
+			active = append(active, sideEntry{sp})
+		}
+	}
+
+	sideVertCount := len(active) * n * 6
+	if sideVertCount == 0 {
+		// Completely surrounded tile: nothing to do (no side surface).
+		return
+	}
 	if cap(tile.verticesSide) < sideVertCount {
 		tile.verticesSide = make([]Vector3.XYZ, sideVertCount)
 		tile.normalsSide = make([]Vector3.XYZ, sideVertCount)
@@ -803,7 +868,8 @@ func (tile *TerrainTile) reloadSides() {
 	vertices_side := tile.verticesSide
 	normals_side := tile.normalsSide
 	uvs_side := tile.uvsSide
-	for _, sp := range sides {
+	for _, entry := range active {
+		sp := entry.sp
 		for i := 0; i < n; i++ {
 			coord := i
 			var h_near, h_far float32
@@ -886,10 +952,26 @@ func (tile *TerrainTile) reloadSides() {
 		Mesh.ArrayNormal: normals_side,
 		Mesh.ArrayTexUv:  uvs_side,
 	}
-	Object.To[ArrayMesh.Instance](tile.Mesh.Mesh()).MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
+	am.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
 		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv,
 	)
-	tile.Mesh.SetSurfaceOverrideMaterial(1, tile.side_shader.AsMaterial())
+
+	// Force the MeshInstance3D to rebind the mesh so its
+	// surface_override_materials array grows to match the new
+	// surface count on the resource (we just added surface 1).
+	// Without this, SetSurfaceOverrideMaterial can fail with
+	// "index out of bounds".
+	mi := tile.Mesh
+	m := mi.Mesh()
+	mi.SetMesh(Mesh.Nil)
+	mi.SetMesh(m)
+
+	if mi.GetSurfaceOverrideMaterialCount() > 0 {
+		mi.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
+	}
+	if mi.GetSurfaceOverrideMaterialCount() > 1 {
+		mi.SetSurfaceOverrideMaterial(1, tile.side_shader.AsMaterial())
+	}
 }
 
 // HeightAt returns the height of the terrain mesh at the given position, taking into account the mesh.
