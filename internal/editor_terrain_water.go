@@ -387,30 +387,7 @@ func (tile *TerrainTile) reloadWater() {
 	// wall spans from y=level (top, tl/tr) down to y=-2.0 (bottom, bl/br); no
 	// +2.2 offset (the water side shader does not apply the buried offset).
 	tile_size := float32(1.0)
-	sideNeighbourDirs := [4]tileCoord{
-		{0, -1}, // South (Z fixed at 0)
-		{0, 1},  // North (Z fixed at n)
-		{-1, 0}, // West  (X fixed at 0)
-		{1, 0},  // East  (X fixed at n)
-	}
-	type sideParam struct {
-		isZFixed       bool
-		fixed          float32
-		fixedIndex     int
-		flippedWinding bool
-	}
-	sides := [4]sideParam{
-		{true, 0, 0, true},           // South
-		{true, float32(n), n, false}, // North
-		{false, 0, 0, false},         // West
-		{false, float32(n), n, true}, // East
-	}
-	var active []sideParam
-	for i, sp := range sides {
-		if !tile.hasNeighbour(sideNeighbourDirs[i]) {
-			active = append(active, sp)
-		}
-	}
+	active := tile.exposedSides()
 	sideVertCount := len(active) * n * 6
 	if sideVertCount > 0 {
 		if cap(tile.vertices_water_side) < sideVertCount {

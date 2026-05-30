@@ -1398,6 +1398,44 @@ func (tile *TerrainTile) applyRevealState() {
 	}
 }
 
+// sideParam describes one of a tile's four cardinal edges for side-wall
+// generation: whether Z is the fixed axis, the fixed coordinate value and its
+// grid index, and the triangle winding. Shared by the terrain skirt
+// (reloadSides) and the water-body walls (reloadWater) so the two stay aligned.
+type sideParam struct {
+	isZFixed       bool
+	fixed          float32
+	fixedIndex     int
+	flippedWinding bool
+}
+
+// exposedSides returns the cardinal edges with no revealed neighbour, in a
+// fixed order (South, North, West, East). Both the terrain skirt and the water
+// body emit walls only on these edges, so the seam between two revealed tiles
+// is never walled.
+func (tile *TerrainTile) exposedSides() []sideParam {
+	n := tile.size
+	neighbourDirs := [4]tileCoord{
+		{0, -1}, // South (Z fixed at 0)
+		{0, 1},  // North (Z fixed at n)
+		{-1, 0}, // West  (X fixed at 0)
+		{1, 0},  // East  (X fixed at n)
+	}
+	sides := [4]sideParam{
+		{true, 0, 0, true},           // South
+		{true, float32(n), n, false}, // North
+		{false, 0, 0, false},         // West
+		{false, float32(n), n, true}, // East
+	}
+	var active []sideParam
+	for i, sp := range sides {
+		if !tile.hasNeighbour(neighbourDirs[i]) {
+			active = append(active, sp)
+		}
+	}
+	return active
+}
+
 // reloadSides updates the side meshes to match the current terrain heights.
 // Only the outer-most (exposed) sides are emitted; sides that have a
 // neighbour tile are omitted so that internal walls are never drawn.
@@ -1425,41 +1463,10 @@ func (tile *TerrainTile) reloadSides() {
 		mi.SetMesh(m)
 	}
 
-	// Map the four sideParam entries (in the order defined below) to the
-	// cardinal direction of the neighbour that would sit on that side.
-	sideNeighbourDirs := [4]tileCoord{
-		{0, -1}, // South (Z fixed at 0)
-		{0, 1},  // North (Z fixed at n)
-		{-1, 0}, // West  (X fixed at 0)
-		{1, 0},  // East  (X fixed at n)
-	}
-
 	// Sides mesh data
 	index_base := 0
 
-	type sideParam struct {
-		isZFixed       bool
-		fixed          float32
-		fixedIndex     int
-		flippedWinding bool
-	}
-
-	sides := [4]sideParam{
-		{true, 0, 0, true},           // South
-		{true, float32(n), n, false}, // North
-		{false, 0, 0, false},         // West
-		{false, float32(n), n, true}, // East
-	}
-
-	type sideEntry struct {
-		sp sideParam
-	}
-	var active []sideEntry
-	for i, sp := range sides {
-		if !tile.hasNeighbour(sideNeighbourDirs[i]) {
-			active = append(active, sideEntry{sp})
-		}
-	}
+	active := tile.exposedSides()
 
 	sideVertCount := len(active) * n * 6
 	if sideVertCount == 0 {
@@ -1478,8 +1485,7 @@ func (tile *TerrainTile) reloadSides() {
 	vertices_side := tile.verticesSide
 	normals_side := tile.normalsSide
 	uvs_side := tile.uvsSide
-	for _, entry := range active {
-		sp := entry.sp
+	for _, sp := range active {
 		for i := 0; i < n; i++ {
 			coord := i
 			var h_near, h_far float32
