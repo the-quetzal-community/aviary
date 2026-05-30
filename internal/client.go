@@ -539,6 +539,16 @@ func (world *Client) Process(dt Float.X) {
 		}
 	}
 
+	// Dressing strokes commit on the same throttle as painting (paint and
+	// dressing are mutually exclusive — different editor modes — so they
+	// can share last_PaintAt). PaintDressing self-gates on brush movement.
+	if world.TerrainEditor.DressActive && Input.GetMouseButtonMask()&Input.MouseButtonMaskLeft != 0 {
+		if time.Since(world.last_PaintAt) > time.Second/5 {
+			world.TerrainEditor.PaintDressing()
+			world.last_PaintAt = time.Now()
+		}
+	}
+
 	Object.Use(world)
 	select {
 	case msg := <-world.println:

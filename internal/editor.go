@@ -99,8 +99,11 @@ func (world *Client) StartEditing(subject Subject) {
 	world.ui.Editor.Refresh(subject, "", world.ui.mode)
 	if world.ui.CloudControl != nil {
 		// The terrain brush-size slider lives in the gizmo toolbar and is
-		// only relevant while sculpting/painting terrain.
+		// only relevant while sculpting/painting/dressing terrain. The
+		// density slider is shown only while dressing.
 		world.ui.CloudControl.setSizeSliderVisible(subject == Editing.Terrain)
+		world.TerrainEditor.SetWaterVisible(subject == Editing.Terrain || subject == Editing.Scenery)
+		world.ui.CloudControl.setDensitySliderVisible(subject == Editing.Terrain && world.ui.mode == ModeDressing)
 	}
 	UserState.Editor = subject
 	world.saveUserState()

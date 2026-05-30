@@ -3,6 +3,7 @@ package internal
 import (
 	"path"
 	"strings"
+	"time"
 
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/BoxShape3D"
@@ -73,6 +74,25 @@ type TerrainEditor struct {
 	shader        ShaderMaterial.Instance
 	shader_buried ShaderMaterial.Instance
 
+	// Water material shared by every tile. The same wave shader drives BOTH
+	// water surfaces (plane + side walls) so the sides stay in sync with the
+	// plane; the per-vertex terrain floor (CUSTOM0.r) clamps the water above
+	// the terrain.
+	water_shader ShaderMaterial.Instance
+
+	// WaterLevel is the world-space Y of the water surface. The default of
+	// -2 matches the bottom of the terrain skirt, so by default the water
+	// sits hidden under flat terrain (i.e. there is no visible water until
+	// the level is raised).
+	WaterLevel Float.X
+
+	// waterVisible toggles the per-tile water meshes; water is only shown
+	// in the terrain and scenery editors.
+	waterVisible bool
+
+	// lastWaterSync throttles outgoing water-level slider mutations.
+	lastWaterSync time.Time
+
 	texture chan Path.ToResource
 
 	//
@@ -88,6 +108,34 @@ type TerrainEditor struct {
 	brushEvents chan terrainBrushEvent
 
 	PaintActive bool
+
+	//
+	// Dressing brush parameters. ModeDressing scatters instanced meshes
+	// (grasses, pebbles) across the terrain surface. A stroke is recorded
+	// as one musical.Sculpt (Editor "terrain", Slider = the dressing tab,
+	// Amount = density, Design = the scattered mesh) so the placement is
+	// observable by, and deterministically reproducible on, every client —
+	// the scatter is seeded purely from the sculpt's Author/Target/Radius.
+	//
+	DressActive  bool   // a dressing design is selected and the brush is armed
+	DressDesign  string // selected mesh resource (res://...glb), local only
+	DressTab     string // dressing category ("grasses"/"pebbles")
+	BrushDensity Float.X
+
+	// dressLast/dressLastSet space out dressing strokes during a drag so a
+	// stationary hold doesn't keep re-committing the same patch: a new
+	// stroke is only emitted once the brush has moved ~half a radius.
+	dressLast    Vector3.XYZ
+	dressLastSet bool
+
+	// grassPatches holds the rendered scatter for every committed dressing
+	// sculpt, so height sculpts can re-project the instances back onto the
+	// surface (see reprojectGrass). grassMeshes caches the Mesh pulled from
+	// each dressing Design's .glb. pendingGrass holds sculpts whose mesh
+	// hadn't finished importing when they arrived; Process retries them.
+	grassPatches []*grassPatch
+	grassMeshes  map[musical.Design]grassAsset
+	pendingGrass []musical.Sculpt
 
 	client *Client
 }
@@ -115,6 +163,7 @@ func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 	tile.editor = tr
 	tile.shader = tr.shader
 	tile.side_shader = tr.shader_buried
+	tile.water_shader = tr.water_shader
 	tile.brushEvents = tr.brushEvents
 	tile.arrows = make(map[tileCoord]*TerrainTileArrow)
 	tr.tiles[coord] = tile
@@ -136,6 +185,11 @@ func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 	}
 	// Spawn arrows for our own open sides.
 	tile.spawnArrows()
+	// New tiles created while the water layer is showing must match its
+	// visibility (mirrors how arrows track arrowsVisible).
+	if tile.Water != (MeshInstance3D.Instance{}) {
+		tile.Water.AsNode3D().SetVisible(tr.waterVisible)
+	}
 	return tile
 }
 
@@ -195,6 +249,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 		SetShaderParameter("brush_active", false)
 	fe.BrushActive = false
 	fe.PaintActive = false
+	fe.DressActive = false
 	fe.setArrowsVisible(false)
 }
 
@@ -215,10 +270,10 @@ func (*TerrainEditor) SwitchToView(view string) {}
 func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
-		// The brush-size ("radius") slider used to be rendered here as an
-		// "editing/radius" tab in the design explorer; it now lives in the
-		// gizmo toolbar (CloudControl.sizeSlider) instead.
-		return nil
+		// The brush-size ("radius") slider moved to the gizmo toolbar
+		// (CloudControl.sizeSlider); geometry mode now exposes the
+		// water-level slider in the design explorer instead.
+		return []string{"editing/water_level"}
 	case ModeMaterial:
 		return []string{
 			"terrain/aquatic",
@@ -241,6 +296,21 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 }
 
 func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
+	if mode == ModeDressing {
+		// Arm the dressing brush: the selected mesh scatters across the
+		// surface on the next stroke. The tab (parent dir, e.g.
+		// "grasses") is carried into the sculpt's Slider so the category
+		// round-trips and remote clients route it the same way.
+		fe.CancelPaint()
+		fe.DressActive = true
+		fe.DressDesign = design
+		fe.DressTab = path.Base(path.Dir(design))
+		fe.BrushDesign = design
+		fe.dressLastSet = false
+		fe.EnableEditor()
+		return
+	}
+	fe.DressActive = false
 	select {
 	case fe.texture <- Path.ToResource(String.New(design)):
 		fe.EnableEditor()
@@ -250,13 +320,43 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
 	switch editing {
 	case "editing/radius":
+		// Brush radius is a local-only highlight control; not synced.
 		fe.BrushRadius = Float.X(value)
 		fe.shader.SetShaderParameter("radius", fe.BrushRadius)
+	case "dressing/density":
+		fe.BrushDensity = Float.X(value)
+	case "editing/water_level":
+		// The water level is a shared mutation: route it through the space
+		// so every client observes the same level. Without a space (e.g.
+		// before joining) apply it locally instead.
+		if fe.client == nil {
+			fe.applyWaterLevel(Float.X(value))
+			return
+		}
+		if !commit && time.Since(fe.lastWaterSync) < time.Second/10 {
+			return
+		}
+		fe.lastWaterSync = time.Now()
+		fe.client.space.Sculpt(musical.Sculpt{
+			Author: fe.client.id,
+			Editor: "terrain",
+			Slider: "editing/water_level",
+			Amount: Float.X(value),
+			Commit: commit,
+		})
 	}
 }
 
 func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
-	return float64(fe.BrushRadius), 0, 10, 0.01
+	switch editing {
+	case "dressing/density":
+		return float64(fe.BrushDensity), 0, 1, 0.01
+	case "editing/water_level":
+		// value, min, max, step
+		return float64(fe.WaterLevel), -2, 10, 0.1
+	default:
+		return float64(fe.BrushRadius), 0, 10, 0.01
+	}
 }
 
 // brushRadiusScrollStep is how much one mouse-wheel notch changes the
@@ -303,8 +403,27 @@ func (tr *TerrainEditor) Ready() {
 		SetShaderParameter("radius", 2.0).
 		SetShaderParameter("height", 0.0)
 
-	tr.BrushRadius = 2.0
+	// Water surface material plus its scrolling normal maps, UV distortion
+	// map and foam texture. The PNGs are raw (no .import files). The same wave
+	// shader drives both water surfaces (plane + side walls); the side walls
+	// share the plane edge's world XZ so they get the identical Gerstner
+	// displacement and stay connected to the plane.
+	water := LoadSync[Shader.Instance]("res://shader/water.gdshader")
+	tr.water_shader = ShaderMaterial.New().
+		SetShader(water).
+		SetShaderParameter("normalmap_a_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_N_A.png")).
+		SetShaderParameter("normalmap_b_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_N_B.png")).
+		SetShaderParameter("uv_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_UV.png")).
+		SetShaderParameter("foam_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Foam.png"))
 
+	// Default level -2 == skirt bottom == hidden under flat terrain.
+	tr.WaterLevel = -2
+	tr.water_shader.SetShaderParameter("water_level", float64(tr.WaterLevel))
+
+	tr.BrushRadius = 2.0
+	tr.BrushDensity = 0.5
+
+	tr.grassMeshes = make(map[musical.Design]grassAsset)
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
 	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
@@ -366,17 +485,56 @@ func (tr *TerrainEditor) Paint() {
 	})
 }
 
-// CancelPaint clears the active paint state — used by callers
+// CancelPaint clears the active paint/dressing state — used by callers
 // outside the editor (e.g. right-click in the world view) so they
 // don't have to know to flip both the shader uniform and the
-// PaintActive flag.
+// PaintActive/DressActive flags. Returns true if anything was cleared.
 func (tr *TerrainEditor) CancelPaint() bool {
-	if !tr.PaintActive {
-		return false
+	active := false
+	if tr.PaintActive {
+		tr.shader.SetShaderParameter("paint_active", false)
+		tr.PaintActive = false
+		active = true
 	}
-	tr.shader.SetShaderParameter("paint_active", false)
-	tr.PaintActive = false
-	return true
+	if tr.DressActive {
+		tr.DressActive = false
+		active = true
+	}
+	return active
+}
+
+// PaintDressing commits the current dressing brush as one scatter
+// stroke, recorded as a musical.Sculpt so every client reproduces the
+// same instances deterministically. Called (throttled) from the client
+// process loop while the left mouse is held in ModeDressing — mirroring
+// how Paint() drives texture painting.
+func (tr *TerrainEditor) PaintDressing() {
+	if !tr.DressActive || tr.DressDesign == "" {
+		return
+	}
+	// Skip re-committing while the brush is essentially stationary — the
+	// scatter is deterministic per (Target, Radius), so a repeat at the
+	// same spot would only duplicate identical grass and bloat the log.
+	if tr.dressLastSet {
+		dx := tr.BrushTarget.X - tr.dressLast.X
+		dz := tr.BrushTarget.Z - tr.dressLast.Z
+		spacing := tr.BrushRadius * 0.5
+		if dx*dx+dz*dz < spacing*spacing {
+			return
+		}
+	}
+	tr.dressLast = tr.BrushTarget
+	tr.dressLastSet = true
+	tr.client.space.Sculpt(musical.Sculpt{
+		Author: tr.client.id,
+		Editor: "terrain",
+		Slider: tr.DressTab,
+		Target: tr.BrushTarget,
+		Radius: tr.BrushRadius,
+		Amount: tr.BrushDensity,
+		Design: tr.client.MusicalDesign(tr.DressDesign),
+		Commit: true,
+	})
 }
 
 // HeightAt looks up the terrain height at the given world position
@@ -420,6 +578,12 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			}
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
+			} else if vr.client.ui.mode == ModeDressing {
+				// Dressing only needs the brush ring to track the cursor;
+				// strokes are committed by the client's throttle loop
+				// (PaintDressing). Never arm the height brush here.
+				vr.BrushTarget = event.BrushTarget
+				vr.BrushDeltaV = 0
 			} else if !vr.PaintActive && vr.client.ui.mode != ModeMaterial {
 				vr.BrushTarget = event.BrushTarget
 				vr.BrushDeltaV = event.BrushDeltaV
@@ -443,10 +607,27 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		vr.shader.SetShaderParameter("height", vr.BrushAmount)
 		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
 	}
+	vr.retryPendingGrass()
 }
 
 func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
-	if brush.Editor != "" {
+	// Water-level slider sculpts are routed through the terrain editor but
+	// are not height/paint/dressing edits, so handle them up front.
+	if brush.Slider == "editing/water_level" {
+		vr.applyWaterLevel(Float.X(brush.Amount))
+		return nil
+	}
+	// Terrain processes its own height/paint sculpts (legacy Editor "")
+	// and the dressing sculpts it authors (Editor "terrain"). Anything
+	// else was routed here only as the client's fallback and isn't ours.
+	if brush.Editor != "" && brush.Editor != "terrain" {
+		return nil
+	}
+	// A dressing stroke carries the category in Slider and the scattered
+	// mesh in Design; it scatters instances rather than touching the
+	// heightmap or texture layers.
+	if brush.Slider != "" && brush.Design != (musical.Design{}) {
+		vr.scatterGrass(brush)
 		return nil
 	}
 	if brush.Author == vr.client.id {
@@ -455,6 +636,16 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	}
 	for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
 		tile.Sculpt(brush)
+	}
+	// A height sculpt (no Design) reshapes the ground, so any grass already
+	// scattered over the affected area must be re-planted on the new
+	// surface. Defer it so the tiles' deferred Reload has refreshed their
+	// heights before we re-sample HeightAt/NormalAt.
+	if brush.Design == (musical.Design{}) && brush.Amount != 0 && len(vr.grassPatches) > 0 {
+		target, radius := brush.Target, brush.Radius
+		Callable.Defer(Callable.New(func() {
+			vr.reprojectGrass(target, radius)
+		}))
 	}
 	return nil
 }
@@ -503,9 +694,18 @@ type TerrainTile struct {
 
 	brushEvents chan<- terrainBrushEvent
 
-	Mesh        MeshInstance3D.Instance
+	Mesh MeshInstance3D.Instance
+	// Water carries the water plane (surface 0) and the water-body
+	// cross-section sides (surface 1); kept separate from Mesh so the
+	// water and terrain geometry are never confused.
+	Water       MeshInstance3D.Instance
 	shader      ShaderMaterial.Instance
 	side_shader ShaderMaterial.Instance
+
+	// The same wave shader (water_shader) drives BOTH water surfaces (plane +
+	// side walls) so the sides stay in sync with the plane; the per-vertex
+	// terrain floor (CUSTOM0.r) clamps the water above the terrain.
+	water_shader ShaderMaterial.Instance
 
 	client    *Client
 	editor    *TerrainEditor // back-pointer for shared mapper/albedos
@@ -545,6 +745,15 @@ type TerrainTile struct {
 	verticesSide []Vector3.XYZ
 	normalsSide  []Vector3.XYZ
 	uvsSide      []Vector2.XY
+
+	// cached water geometry (plane + sides)
+	vertices_water []Vector3.XYZ
+	normals_water  []Vector3.XYZ
+	uvs_water      []Vector2.XY
+
+	vertices_water_side []Vector3.XYZ
+	normals_water_side  []Vector3.XYZ
+	uvs_water_side      []Vector2.XY
 }
 
 func (tile *TerrainTile) Ready() {
@@ -643,8 +852,18 @@ func (tile *TerrainTile) generateBase() {
 	collision_shape.SetShape(shape.AsShape3D())
 	tile.collision = collision_shape
 	tile.heightmapShape = shape
+	// Dedicated water MeshInstance child, positioned identically to Mesh so
+	// its mesh-local coordinates line up exactly with the terrain geometry.
+	if tile.Water == (MeshInstance3D.Instance{}) {
+		tile.Water = MeshInstance3D.New()
+		tile.Water.AsNode().SetName("Water")
+		tile.AsNode().AddChild(tile.Water.AsNode())
+	}
+	tile.Water.AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
+	tile.Water.AsNode3D().SetVisible(tile.editor != nil && tile.editor.waterVisible)
 	// Texture arrays are owned by the editor (shared across tiles).
 	tile.reloadSides()
+	tile.reloadWater()
 }
 
 // Reload applies any pending sculpt operations to the terrain tile.
@@ -772,6 +991,9 @@ func (tile *TerrainTile) Reload() {
 			}
 		}
 		tile.reloadSides()
+		// Rebuild the water layer so it tracks terrain edits (the side walls
+		// follow newly exposed/covered neighbour edges).
+		tile.reloadWater()
 		tile.sculpts = tile.sculpts[:0]
 	}))
 }
@@ -1201,4 +1423,289 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 		X: a.tile.coord.X + a.direction.X,
 		Z: a.tile.coord.Z + a.direction.Z,
 	})
+}
+
+// applyWaterLevel sets the shared water surface level, pushes it to the water
+// materials and rebuilds every tile's water plane + side walls so they sit at
+// the new Y. Driven both locally (no space) and by incoming water-level sculpts.
+func (vr *TerrainEditor) applyWaterLevel(level Float.X) {
+	vr.WaterLevel = level
+	// Push the base level to the single water shader (used by both the plane
+	// and the side walls) so the in-shader clamp uses the new surface Y.
+	if vr.water_shader != (ShaderMaterial.Instance{}) {
+		vr.water_shader.SetShaderParameter("water_level", float64(level))
+	}
+	for _, tile := range vr.tiles {
+		tile.reloadWater()
+	}
+}
+
+// SetWaterVisible toggles the per-tile water meshes and remembers the state so
+// tiles spawned later get the matching default (mirrors setArrowsVisible).
+func (tr *TerrainEditor) SetWaterVisible(v bool) {
+	tr.waterVisible = v
+	for _, tile := range tr.tiles {
+		if tile.Water != (MeshInstance3D.Instance{}) {
+			tile.Water.AsNode3D().SetVisible(v)
+		}
+	}
+}
+
+// reloadWater rebuilds the tile's water MeshInstance with two surfaces:
+//   - surface 0: a flat n*n subdivided plane at y = editor.WaterLevel,
+//   - surface 1: vertical cross-section walls on the exposed cardinal sides,
+//     spanning from y = WaterLevel down to y = -2.0.
+//
+// The plane mirrors the terrain top's 6-verts-per-cell layout; the sides mirror
+// reloadSides()'s exposed-side selection + winding exactly so the water body
+// lines up with the terrain skirt. World-Y values are used directly (the water
+// shader does not apply the buried.gdshader -2.2 offset).
+//
+// BOTH surfaces use the same wave shader (water.gdshader) so the side walls
+// stay in sync with the plane, and BOTH carry a CUSTOM0 (RGBA-float) attribute
+// whose .r channel is the world-space terrain floor at each vertex's XZ. The
+// shader clamps the (waved) water Y to [terrain_floor, water_level], which
+// makes the shoreline meet the terrain cleanly and turns the sides into a real
+// water column that collapses to nothing where terrain rises above the water.
+func (tile *TerrainTile) reloadWater() {
+	if tile.Water == (MeshInstance3D.Instance{}) {
+		return
+	}
+	n := tile.size
+	if n == 0 {
+		n = terrainDefaultSize
+	}
+	level := Float.X(0)
+	if tile.editor != nil {
+		level = tile.editor.WaterLevel
+	}
+
+	// hm is the heightmap stride: heights live on an (n+1)x(n+1) grid and the
+	// floor at grid (gx,gz) is tile.heights[gx + gz*hm].
+	hm := n + 1
+	hasHeights := len(tile.heights) >= hm*hm
+
+	// --- surface 0: the flat water plane -------------------------------------
+	tile.vertices_water = make([]Vector3.XYZ, n*n*6)
+	tile.normals_water = make([]Vector3.XYZ, n*n*6)
+	tile.uvs_water = make([]Vector2.XY, n*n*6)
+	// floors_water carries CUSTOM0 (RGBA-float, 4 per vertex); only .r is used,
+	// holding the world-space terrain floor at this vertex's grid point. The
+	// wave shader clamps the water above this value so the shoreline meets the
+	// terrain cleanly. BOTH water surfaces must supply CUSTOM0 since the shader
+	// reads it for every vertex — a missing attribute would read 0 and wrongly
+	// clamp the water down to y=0.
+	floors_water := make([]float32, n*n*6*4)
+	inv := Float.X(1) / Float.X(n)
+	addw := func(index int, x, y int) {
+		// Node is at local y=0, so mesh-local y == world WaterLevel. The
+		// waves/normal maps key off world position, so a simple UV is fine.
+		tile.vertices_water[index] = Vector3.XYZ{Float.X(x), level, Float.X(y)}
+		tile.normals_water[index] = Vector3.XYZ{0, 1, 0}
+		tile.uvs_water[index] = Vector2.XY{Float.X(x) * inv, Float.X(y) * inv}
+		var floor float32 = -2.0
+		if hasHeights {
+			floor = tile.heights[x+y*hm]
+		}
+		floors_water[index*4+0] = floor // .r = terrain floor; .gba unused (0).
+	}
+	for x := 0; x < n; x++ {
+		for y := 0; y < n; y++ {
+			addw(6*(x+n*y)+0, x, y)     // top left
+			addw(6*(x+n*y)+1, x+1, y)   // top right
+			addw(6*(x+n*y)+2, x, y+1)   // bottom left
+			addw(6*(x+n*y)+3, x+1, y)   // top right
+			addw(6*(x+n*y)+4, x+1, y+1) // bottom right
+			addw(6*(x+n*y)+5, x, y+1)   // bottom left
+		}
+	}
+	mesh := ArrayMesh.New()
+	plane := [Mesh.ArrayMax]any{
+		Mesh.ArrayVertex:  tile.vertices_water,
+		Mesh.ArrayTexUv:   tile.uvs_water,
+		Mesh.ArrayNormal:  tile.normals_water,
+		Mesh.ArrayCustom0: floors_water,
+	}
+	// CUSTOM0 is RGBA-float; declare that in the surface format exactly as
+	// generateBase does for the terrain splat channels.
+	mesh.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, plane[:], nil, nil,
+		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv|
+			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift,
+	)
+
+	// --- surface 1: the water-body cross-section sides -----------------------
+	// Mirror reloadSides()'s exposed-side selection + winding exactly, but the
+	// wall spans from y=level (top, tl/tr) down to y=-2.0 (bottom, bl/br); no
+	// +2.2 offset (the water side shader does not apply the buried offset).
+	tile_size := float32(1.0)
+	sideNeighbourDirs := [4]tileCoord{
+		{0, -1}, // South (Z fixed at 0)
+		{0, 1},  // North (Z fixed at n)
+		{-1, 0}, // West  (X fixed at 0)
+		{1, 0},  // East  (X fixed at n)
+	}
+	type sideParam struct {
+		isZFixed       bool
+		fixed          float32
+		fixedIndex     int
+		flippedWinding bool
+	}
+	sides := [4]sideParam{
+		{true, 0, 0, true},           // South
+		{true, float32(n), n, false}, // North
+		{false, 0, 0, false},         // West
+		{false, float32(n), n, true}, // East
+	}
+	var active []sideParam
+	for i, sp := range sides {
+		if !tile.hasNeighbour(sideNeighbourDirs[i]) {
+			active = append(active, sp)
+		}
+	}
+	sideVertCount := len(active) * n * 6
+	if sideVertCount > 0 {
+		if cap(tile.vertices_water_side) < sideVertCount {
+			tile.vertices_water_side = make([]Vector3.XYZ, sideVertCount)
+			tile.normals_water_side = make([]Vector3.XYZ, sideVertCount)
+			tile.uvs_water_side = make([]Vector2.XY, sideVertCount)
+		} else {
+			tile.vertices_water_side = tile.vertices_water_side[:sideVertCount]
+			tile.normals_water_side = tile.normals_water_side[:sideVertCount]
+			tile.uvs_water_side = tile.uvs_water_side[:sideVertCount]
+		}
+		vertices_side := tile.vertices_water_side
+		normals_side := tile.normals_water_side
+		uvs_side := tile.uvs_water_side
+		// floors_side carries CUSTOM0 (RGBA-float, 4 per vertex); .r = the
+		// terrain floor at that wall vertex's edge grid point. The top edge
+		// shares the plane edge's world XZ + floor, so the shader clamps both
+		// identically and the wall stays connected to the plane; the wall
+		// collapses where the terrain rises above the water.
+		floors_side := make([]float32, sideVertCount*4)
+		index_base := 0
+		top := float32(level) // world-Y of the surface
+		bottom := float32(-2.0)
+		for _, sp := range active {
+			for i := 0; i < n; i++ {
+				pos_near := float32(i)
+				pos_far := float32(i + 1)
+				// Terrain floor at the two edge grid points (near = i, far =
+				// i+1). Read exactly like reloadSides()'s h_near/h_far but
+				// WITHOUT the +2.2 buried offset (water uses raw world heights).
+				var floorNear, floorFar float32 = -2.0, -2.0
+				if hasHeights {
+					if sp.isZFixed {
+						floorNear = tile.heights[i+sp.fixedIndex*hm]
+						floorFar = tile.heights[i+1+sp.fixedIndex*hm]
+					} else {
+						floorNear = tile.heights[sp.fixedIndex+i*hm]
+						floorFar = tile.heights[sp.fixedIndex+(i+1)*hm]
+					}
+				}
+				var tl, tr, bl, br Vector3.XYZ
+				if sp.isZFixed {
+					tl = Vector3.XYZ{pos_near, top, sp.fixed}
+					tr = Vector3.XYZ{pos_far, top, sp.fixed}
+					bl = Vector3.XYZ{pos_near, bottom, sp.fixed}
+					br = Vector3.XYZ{pos_far, bottom, sp.fixed}
+				} else {
+					tl = Vector3.XYZ{sp.fixed, top, pos_near}
+					tr = Vector3.XYZ{sp.fixed, top, pos_far}
+					bl = Vector3.XYZ{sp.fixed, bottom, pos_near}
+					br = Vector3.XYZ{sp.fixed, bottom, pos_far}
+				}
+				var v1, v2 Vector3.XYZ
+				if sp.flippedWinding {
+					v1 = Vector3.Sub(tr, bl)
+					v2 = Vector3.Sub(tl, bl)
+				} else {
+					v1 = Vector3.Sub(tl, bl)
+					v2 = Vector3.Sub(tr, bl)
+				}
+				nrm := Vector3.Normalized(Vector3.Cross(v1, v2))
+				// Triangle 1
+				vertices_side[index_base+0] = bl
+				normals_side[index_base+0] = nrm
+				uvs_side[index_base+0] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
+				if sp.flippedWinding {
+					vertices_side[index_base+1] = tr
+					normals_side[index_base+1] = nrm
+					uvs_side[index_base+1] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+					vertices_side[index_base+2] = tl
+					normals_side[index_base+2] = nrm
+					uvs_side[index_base+2] = Vector2.XY{float32(i) / tile_size, top / tile_size}
+				} else {
+					vertices_side[index_base+1] = tl
+					normals_side[index_base+1] = nrm
+					uvs_side[index_base+1] = Vector2.XY{float32(i) / tile_size, top / tile_size}
+					vertices_side[index_base+2] = tr
+					normals_side[index_base+2] = nrm
+					uvs_side[index_base+2] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+				}
+				// Triangle 2
+				vertices_side[index_base+3] = bl
+				normals_side[index_base+3] = nrm
+				uvs_side[index_base+3] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
+				if sp.flippedWinding {
+					vertices_side[index_base+4] = br
+					normals_side[index_base+4] = nrm
+					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
+					vertices_side[index_base+5] = tr
+					normals_side[index_base+5] = nrm
+					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+				} else {
+					vertices_side[index_base+4] = tr
+					normals_side[index_base+4] = nrm
+					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+					vertices_side[index_base+5] = br
+					normals_side[index_base+5] = nrm
+					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
+				}
+				// CUSTOM0.r per emitted vertex, matching the vertex order
+				// above. bl is always slot 0/3 (near). The winding swaps which
+				// of tl(near)/tr(far)/br(far) fill slots 1,2,4,5.
+				if sp.flippedWinding {
+					// [bl, tr, tl, bl, br, tr]
+					floors_side[(index_base+0)*4] = floorNear // bl
+					floors_side[(index_base+1)*4] = floorFar  // tr
+					floors_side[(index_base+2)*4] = floorNear // tl
+					floors_side[(index_base+3)*4] = floorNear // bl
+					floors_side[(index_base+4)*4] = floorFar  // br
+					floors_side[(index_base+5)*4] = floorFar  // tr
+				} else {
+					// [bl, tl, tr, bl, tr, br]
+					floors_side[(index_base+0)*4] = floorNear // bl
+					floors_side[(index_base+1)*4] = floorNear // tl
+					floors_side[(index_base+2)*4] = floorFar  // tr
+					floors_side[(index_base+3)*4] = floorNear // bl
+					floors_side[(index_base+4)*4] = floorFar  // tr
+					floors_side[(index_base+5)*4] = floorFar  // br
+				}
+				index_base += 6
+			}
+		}
+		water_sides := [Mesh.ArrayMax]any{
+			Mesh.ArrayVertex:  vertices_side,
+			Mesh.ArrayNormal:  normals_side,
+			Mesh.ArrayTexUv:   uvs_side,
+			Mesh.ArrayCustom0: floors_side,
+		}
+		// Same RGBA-float CUSTOM0 declaration as the plane surface so the
+		// shader reads the terrain floor for the wall vertices too.
+		mesh.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, water_sides[:], nil, nil,
+			Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv|
+				Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift,
+		)
+	}
+
+	tile.Water.SetMesh(mesh.AsMesh())
+	if tile.water_shader != (ShaderMaterial.Instance{}) {
+		// Both surfaces share the wave shader so the side walls stay in sync
+		// with the plane. Push the current base level for the in-shader clamp.
+		tile.water_shader.SetShaderParameter("water_level", float64(level))
+		tile.Water.SetSurfaceOverrideMaterial(0, tile.water_shader.AsMaterial())
+		if tile.Water.GetSurfaceOverrideMaterialCount() > 1 {
+			tile.Water.SetSurfaceOverrideMaterial(1, tile.water_shader.AsMaterial())
+		}
+	}
 }

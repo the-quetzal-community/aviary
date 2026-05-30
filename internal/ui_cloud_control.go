@@ -106,6 +106,12 @@ type CloudControl struct {
 	// and is pinned next to the Shift gizmo button each frame.
 	sizeSlider      HSlider.Instance
 	sizeSliderReady bool
+
+	// densitySlider is the terrain dressing-density slider, shown only
+	// while the terrain editor is in ModeDressing. It's pinned just below
+	// the size slider and feeds the "dressing/density" slider channel.
+	densitySlider      HSlider.Instance
+	densitySliderReady bool
 }
 
 type Gizmo int
@@ -215,6 +221,7 @@ func (ui *CloudControl) Ready() {
 	})
 
 	ui.buildSizeSlider()
+	ui.buildDensitySlider()
 }
 
 func (ui *CloudControl) set_update_available(restart func(), available bool) {
@@ -257,6 +264,7 @@ func (ui *CloudControl) set_join_code(code networking.Code) {
 
 func (ui *CloudControl) Process(dt Float.X) {
 	ui.positionSizeSlider()
+	ui.positionDensitySlider()
 	for {
 		select {
 		case fn := <-ui.on_process:
@@ -269,18 +277,16 @@ func (ui *CloudControl) Process(dt Float.X) {
 	}
 }
 
-// buildSizeSlider creates the terrain brush-size slider shown in the
-// gizmo toolbar beside the Shift button. It's created hidden; the editor
-// switch (setSizeSliderVisible) reveals it only while the terrain editor
-// is active, and positionSizeSlider keeps it pinned next to Shift. The
-// value is forwarded to the terrain editor through the same
-// SliderHandle/SliderConfig contract the design explorer used.
-func (ui *CloudControl) buildSizeSlider() {
+// newToolbarSlider builds a hidden horizontal slider styled to match the
+// gizmo toolbar (tall hit rect that stops mouse fall-through, downscaled
+// themed grabber) and wires its value_changed to onChanged. Shared by the
+// brush-size and dressing-density sliders.
+func (ui *CloudControl) newToolbarSlider(min, max, step, init float64, onChanged func(value Float.X)) HSlider.Instance {
 	slider := HSlider.Advanced(HSlider.New())
-	slider.AsRange().SetMin(0)
-	slider.AsRange().SetMax(10)
-	slider.AsRange().SetStep(0.01)
-	slider.AsRange().SetValue(2)
+	slider.AsRange().SetMin(min)
+	slider.AsRange().SetMax(max)
+	slider.AsRange().SetStep(step)
+	slider.AsRange().SetValue(init)
 	// Make the hit rect as tall as the grabber (64) — not the slim 24 the
 	// track needs — so pressing anywhere on the visible handle lands on the
 	// control. With MouseFilterStop, Godot then consumes the whole drag and
@@ -301,15 +307,38 @@ func (ui *CloudControl) buildSizeSlider() {
 			}
 		}
 	}
-	Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
+	Range.Instance(slider.AsRange()).OnValueChanged(onChanged)
+	ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
+	return HSlider.Instance(slider)
+}
+
+// buildSizeSlider creates the terrain brush-size slider shown in the
+// gizmo toolbar beside the Shift button. It's created hidden; the editor
+// switch (setSizeSliderVisible) reveals it only while the terrain editor
+// is active, and positionSizeSlider keeps it pinned next to Shift. The
+// value is forwarded to the terrain editor through the same
+// SliderHandle/SliderConfig contract the design explorer used.
+func (ui *CloudControl) buildSizeSlider() {
+	ui.sizeSlider = ui.newToolbarSlider(0, 10, 0.01, 2, func(value Float.X) {
 		if ui.client == nil {
 			return
 		}
 		ui.client.TerrainEditor.SliderHandle(ModeGeometry, "editing/radius", float64(value), false)
 	})
-	ui.AsNode().AddChild(Node.Instance(slider.AsNode()))
-	ui.sizeSlider = HSlider.Instance(slider)
 	ui.sizeSliderReady = true
+}
+
+// buildDensitySlider creates the terrain dressing-density slider. Like the
+// size slider it's created hidden and pinned in the toolbar; it's only
+// revealed while the terrain editor is in ModeDressing.
+func (ui *CloudControl) buildDensitySlider() {
+	ui.densitySlider = ui.newToolbarSlider(0, 1, 0.01, 0.5, func(value Float.X) {
+		if ui.client == nil {
+			return
+		}
+		ui.client.TerrainEditor.SliderHandle(ModeDressing, "dressing/density", float64(value), false)
+	})
+	ui.densitySliderReady = true
 }
 
 // setSizeSliderVisible reveals or hides the terrain brush-size slider.
@@ -340,6 +369,23 @@ func (ui *CloudControl) setSizeSliderValue(v float64) {
 	ui.sizeSlider.AsRange().SetValueNoSignal(Float.X(v))
 }
 
+// setDensitySliderVisible reveals or hides the dressing-density slider,
+// syncing its range and value from the terrain editor when revealing.
+func (ui *CloudControl) setDensitySliderVisible(v bool) {
+	if !ui.densitySliderReady {
+		return
+	}
+	if v && ui.client != nil {
+		init, min, max, step := ui.client.TerrainEditor.SliderConfig(ModeDressing, "dressing/density")
+		r := Range.Advanced(ui.densitySlider.AsRange())
+		r.SetMin(min)
+		r.SetMax(max)
+		r.SetStep(step)
+		ui.densitySlider.AsRange().SetValueNoSignal(Float.X(init))
+	}
+	ui.densitySlider.AsCanvasItem().SetVisible(v)
+}
+
 // positionSizeSlider pins the size slider just to the right of the Shift
 // gizmo button each frame while it's visible, mirroring the maths
 // set_gizmo uses to place the gizmo indicator so the slider tracks the
@@ -364,4 +410,29 @@ func (ui *CloudControl) positionSizeSlider() {
 	const gap = 12
 	size := ui.sizeSlider.AsControl().Size()
 	ui.sizeSlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
+}
+
+// positionDensitySlider pins the dressing-density slider just below the
+// brush-size slider's slot (both sit to the right of the Shift button), so
+// the two stack vertically in the toolbar.
+func (ui *CloudControl) positionDensitySlider() {
+	if !ui.densitySliderReady || !ui.densitySlider.AsCanvasItem().Visible() {
+		return
+	}
+	shift := Object.To[Control.Instance](ui.GizmoTypes.AsNode().GetChild(int(GizmoShift)))
+	if shift == Control.Nil {
+		return
+	}
+	types := ui.GizmoTypes.AsControl()
+	edge := Vector2.Add(
+		types.Position(),
+		Vector2.Mul(
+			Vector2.Add(shift.Position(), Vector2.New(shift.Size().X, shift.Size().Y*0.5)),
+			types.Scale(),
+		),
+	)
+	const gap = 12
+	const stack = 56 // vertical offset below the size slider's centre line
+	size := ui.densitySlider.AsControl().Size()
+	ui.densitySlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5+stack))
 }
