@@ -107,6 +107,12 @@ type TerrainEditor struct {
 	BrushDeltaV Float.X
 	brushEvents chan terrainBrushEvent
 
+	// TerrainBrush is the currently selected terrain sculpt tool when in
+	// ModeGeometry. It is set by picking a builtin from the "terrain" tab
+	// and cleared when the brush is cancelled (right-click, leaving the
+	// editor, etc.). Values are the procedural:// sentinel strings or "".
+	TerrainBrush string
+
 	PaintActive bool
 
 	//
@@ -258,6 +264,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.BrushActive = false
 	fe.PaintActive = false
 	fe.DressActive = false
+	fe.TerrainBrush = ""
 	fe.brushStrokeActive = false
 	fe.setArrowsVisible(false)
 }
@@ -279,10 +286,10 @@ func (*TerrainEditor) SwitchToView(view string) {}
 func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
-		// The brush-size ("radius") slider moved to the gizmo toolbar
-		// (CloudControl.sizeSlider); geometry mode now exposes the
-		// water-level slider in the design explorer instead.
-		return []string{"editing/water_level"}
+		// The "terrain" tab provides the raise/lower height brushes as
+		// builtin items. The brush-size slider lives in the gizmo
+		// toolbar; water-level is still available as an editing slider.
+		return []string{"terrain", "editing/water_level"}
 	case ModeMaterial:
 		return []string{
 			"terrain/aquatic",
@@ -304,6 +311,28 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	}
 }
 
+// BuiltinDesigns provides the raise/lower terrain brushes as builtin
+// items in the "terrain" tab when in ModeGeometry. These appear as
+// the primary content of the tab (no library preview directory is
+// required for the tab to be shown).
+func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
+	if mode != ModeGeometry || tab != "terrain" {
+		return nil
+	}
+	return []BuiltinDesign{
+		{
+			Resource: BuiltinTerrainRaise,
+			Icon:     "res://ui/terrain.svg",
+			Label:    "Raise terrain",
+		},
+		{
+			Resource: BuiltinTerrainLower,
+			Icon:     "res://ui/editing.svg",
+			Label:    "Lower terrain",
+		},
+	}
+}
+
 func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	if mode == ModeDressing {
 		// Arm the dressing brush: the selected mesh scatters across the
@@ -321,7 +350,27 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 		fe.EnableEditor()
 		return
 	}
+	// Terrain brush builtins (raise/lower) in ModeGeometry: arm the
+	// explicit height sculpt brush. This replaces the previous implicit
+	// "any click in geometry mode sculpts height" behaviour.
+	if mode == ModeGeometry && (design == BuiltinTerrainRaise || design == BuiltinTerrainLower) {
+		fe.CancelPaint()
+		fe.TerrainBrush = design
+		fe.DressActive = false
+		// Enable the editor (ensures brush ring highlight is visible).
+		fe.EnableEditor()
+		// Do not set BrushActive yet; the first press on terrain will
+		// drive the initial delta and arm the transient stroke state.
+		return
+	}
 	fe.DressActive = false
+	// Only clear a terrain brush selection when the user picks something
+	// else while in geometry mode (e.g. they had a raise/lower tool picked
+	// and then picked a different geometry action, if any). Picking a
+	// texture in ModeMaterial should not disarm the geometry brush tool.
+	if mode == ModeGeometry {
+		fe.TerrainBrush = ""
+	}
 	select {
 	case fe.texture <- Path.ToResource(String.New(design)):
 		fe.EnableEditor()
@@ -499,7 +548,8 @@ func (tr *TerrainEditor) Paint() {
 // CancelPaint clears the active paint/dressing state — used by callers
 // outside the editor (e.g. right-click in the world view) so they
 // don't have to know to flip both the shader uniform and the
-// PaintActive/DressActive flags. Returns true if anything was cleared.
+// PaintActive/DressActive flags. It also disarms any selected terrain
+// height brush. Returns true if anything was cleared.
 func (tr *TerrainEditor) CancelPaint() bool {
 	active := false
 	if tr.PaintActive {
@@ -511,6 +561,18 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		tr.DressActive = false
 		tr.brushStrokeActive = false
 		active = true
+	}
+	if tr.TerrainBrush != "" {
+		tr.TerrainBrush = ""
+		tr.BrushActive = false
+		tr.BrushAmount = 0
+		tr.BrushDeltaV = 0
+		active = true
+	}
+	if active {
+		// No paint, dress or height brush armed: hide the ring highlight.
+		tr.shader.SetShaderParameter("brush_active", false)
+		tr.shader_buried.SetShaderParameter("brush_active", false)
 	}
 	return active
 }
@@ -629,10 +691,18 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 				vr.BrushTarget = event.BrushTarget
 				vr.BrushDeltaV = 0
 			} else if !vr.PaintActive && vr.client.ui.mode != ModeMaterial {
-				vr.BrushTarget = event.BrushTarget
-				vr.BrushDeltaV = event.BrushDeltaV
-				if event.BrushDeltaV != 0 {
-					vr.BrushActive = true
+				// Height sculpt input is only accepted when a terrain brush
+				// tool has been explicitly selected in ModeGeometry, or we
+				// are already mid-stroke (BrushActive). This replaces the
+				// previous "any click in geometry arm the brush" behaviour.
+				if vr.TerrainBrush != "" || vr.BrushActive {
+					vr.BrushTarget = event.BrushTarget
+					vr.BrushDeltaV = event.BrushDeltaV
+					if event.BrushDeltaV != 0 {
+						vr.BrushActive = true
+					}
+				} else {
+					vr.BrushDeltaV = 0
 				}
 			} else {
 				vr.BrushDeltaV = 0
@@ -642,7 +712,7 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		}
 		break
 	}
-	if vr.BrushActive && !vr.PaintActive && vr.client.ui.mode == ModeGeometry {
+	if vr.BrushActive && !vr.PaintActive && vr.client.ui.mode == ModeGeometry && vr.TerrainBrush != "" {
 		vr.BrushAmount += dt * vr.BrushDeltaV
 		vr.shader.SetShaderParameter("height", vr.BrushAmount)
 		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
@@ -736,6 +806,36 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 // terrain chunk. Chunks tile the world on a (size × size) grid and
 // are spawned lazily as sculpts land in them.
 const terrainDefaultSize = 16
+
+// Builtin terrain brush sentinels for the procedural:// convention used
+// by BuiltinDesignProvider. These are the "builtin-aviary" items that
+// appear in the "terrain" tab under ModeGeometry for the TerrainEditor.
+const (
+	BuiltinTerrainRaise = "procedural://terrain/raise"
+	BuiltinTerrainLower = "procedural://terrain/lower"
+)
+
+// terrainBrushDelta returns the signed delta to feed into the height brush
+// for the given mouse button, according to the currently selected terrain
+// brush tool. The "raise" tool makes the primary button (LMB) raise terrain;
+// the "lower" tool makes the primary button lower terrain. The secondary
+// button (RMB) always inverts the tool's direction.
+func (tr *TerrainEditor) terrainBrushDelta(leftButton bool) Float.X {
+	switch tr.TerrainBrush {
+	case BuiltinTerrainRaise:
+		if leftButton {
+			return 2
+		}
+		return -2
+	case BuiltinTerrainLower:
+		if leftButton {
+			return -2
+		}
+		return 2
+	default:
+		return 0
+	}
+}
 
 type TerrainTile struct {
 	StaticBody3D.Extension[TerrainTile] `gd:"AviaryTerrainTile"`
@@ -1329,10 +1429,19 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				if tile.editor.PaintActive || tile.editor.DressActive {
 					tile.editor.brushStrokeActive = true
 				}
+				deltaV := Float.X(0)
+				if tile.editor.PaintActive || tile.editor.DressActive {
+					deltaV = 2
+				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" {
+					// Explicit terrain brush tool selected: the sign depends on
+					// which brush ("raise" vs "lower") the user picked in the
+					// terrain tab. LMB applies the tool's primary direction.
+					deltaV = tile.editor.terrainBrushDelta(true)
+				}
 				select {
 				case tile.brushEvents <- terrainBrushEvent{
 					BrushTarget: pos,
-					BrushDeltaV: 2,
+					BrushDeltaV: deltaV,
 				}:
 				default:
 				}
@@ -1345,10 +1454,23 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 		}
 		if event.ButtonIndex() == Input.MouseButtonRight {
 			if event.AsInputEvent().IsPressed() {
+				deltaV := Float.X(0)
+				if tile.editor.PaintActive {
+					// RMB during paint is handled as cancel in UnhandledInput.
+					// We still send a position update (deltaV 0) so the
+					// brush target tracks if needed.
+				} else if tile.editor.DressActive {
+					// RMB during dressing is erase (negative density).
+					deltaV = -2
+				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" {
+					// RMB with an explicit terrain brush applies the inverse of
+					// the selected tool's primary direction.
+					deltaV = tile.editor.terrainBrushDelta(false)
+				}
 				select {
 				case tile.brushEvents <- terrainBrushEvent{
 					BrushTarget: pos,
-					BrushDeltaV: -2,
+					BrushDeltaV: deltaV,
 				}:
 				default:
 				}

@@ -120,7 +120,15 @@ const (
 	GizmoPoint Gizmo = iota
 	GizmoShift
 	GizmoTwist
+	GizmoFloat
+
+	GizmoClone
+	GizmoTrash
+
+	GizmoBrush
+	GizmoPower
 	GizmoScale
+	GizmoErase
 )
 
 var setting_up atomic.Bool
