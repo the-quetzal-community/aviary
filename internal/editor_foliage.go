@@ -16,6 +16,8 @@ import (
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/Shader"
+	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
@@ -31,7 +33,7 @@ type FoliageEditor struct {
 	Mesh MeshInstance3D.Instance
 	tree *Tree
 
-	leafletMaterial BaseMaterial3D.Instance
+	leafletMaterial ShaderMaterial.Instance
 	timbersMaterial BaseMaterial3D.Instance
 
 	client *Client
@@ -53,6 +55,11 @@ func (fe *FoliageEditor) Name() string { return "foliage" }
 // path is unreliable for procedural ArrayMeshes whose surfaces are
 // rebuilt at runtime — the materials end up missing from the .glb.
 // Hoisting them to the instance makes them durably exported.
+//
+// The live leaflet material is a ShaderMaterial (foliage_wind.gdshader)
+// for editor preview animation. For export we substitute a plain
+// StandardMaterial3D carrying the current leaf texture so that glTF
+// exporters embed the albedo (and alpha scissor) reliably for the leaves.
 func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
 	root := Node3D.New()
 	root.AsNode().SetName("foliage")
@@ -66,8 +73,24 @@ func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
 	mesh := dup.Mesh()
 	if mesh != Mesh.Nil {
 		for i := range mesh.GetSurfaceCount() {
-			if mat := mesh.SurfaceGetMaterial(i); mat != Material.Nil {
-				dup.SetSurfaceOverrideMaterial(i, mat)
+			var matToUse Material.Instance
+			if i == 1 {
+				// Bake a normal material for the leaves so the texture
+				// is properly exported (the wind shader is preview-only).
+				if texAny := fe.leafletMaterial.GetShaderParameter("albedo_texture"); texAny != nil {
+					if tex, ok := texAny.(Texture2D.Instance); ok && tex != Texture2D.Nil {
+						matToUse = StandardMaterial3D.New().
+							AsBaseMaterial3D().SetAlbedoTexture(tex).
+							AsBaseMaterial3D().SetTransparency(BaseMaterial3D.TransparencyAlphaScissor).
+							AsMaterial()
+					}
+				}
+			}
+			if matToUse == Material.Nil {
+				matToUse = mesh.SurfaceGetMaterial(i)
+			}
+			if matToUse != Material.Nil {
+				dup.SetSurfaceOverrideMaterial(i, matToUse)
 			}
 		}
 	}
@@ -81,41 +104,82 @@ func (fe *FoliageEditor) Ready() {
 	fe.tree = Object.Leak(NewTree())
 	fe.Mesh.SetMesh(fe.tree.AsMesh())
 
-	fe.leafletMaterial = StandardMaterial3D.New().
-		AsBaseMaterial3D().SetAlbedoTexture(LoadSync[Texture2D.Instance]("res://default/leaflet.png")).
-		AsBaseMaterial3D().SetTransparency(BaseMaterial3D.TransparencyAlphaScissor)
-	fe.Mesh.Mesh().SurfaceSetMaterial(1, fe.leafletMaterial.AsMaterial())
+	leafletShader := LoadSync[Shader.Instance]("res://shader/foliage_wind.gdshader")
+	fe.leafletMaterial = ShaderMaterial.New().
+		SetShader(leafletShader).
+		SetShaderParameter("albedo_texture", LoadSync[Texture2D.Instance]("res://default/leaflet.png"))
 
 	fe.timbersMaterial = StandardMaterial3D.New().
 		AsBaseMaterial3D().SetAlbedoTexture(LoadSync[Texture2D.Instance]("res://default/timbers.png"))
-	fe.Mesh.Mesh().SurfaceSetMaterial(0, fe.timbersMaterial.AsMaterial())
+
+	fe.applyMaterials()
 }
 
 func (fe *FoliageEditor) ExitTree() {
 	Object.Free(fe.tree)
 }
 
+// applyMaterials pushes the current materials both onto the ArrayMesh
+// resource (for the Tree's save/restore logic across recalculate and for
+// ExportSubtree) and as surface overrides on the MeshInstance3D.
+//
+// Procedural ArrayMeshes that repeatedly do ClearSurfaces + AddSurfaceFromArrays
+// lose reliable material binding unless you also set overrides on the
+// MeshInstance3D (and use the SetMesh(nil)/SetMesh dance to resize the
+// override array). Without this the leaves often fall back to Godot's
+// default grey material → flat grey squares with no texture or wind.
+func (fe *FoliageEditor) applyMaterials() {
+	if fe.Mesh == MeshInstance3D.Nil {
+		return
+	}
+
+	// 1. Keep the materials on the ArrayMesh resource itself.
+	m := fe.Mesh.Mesh()
+	if m != Mesh.Nil {
+		if fe.timbersMaterial != (BaseMaterial3D.Instance{}) {
+			m.SurfaceSetMaterial(0, fe.timbersMaterial.AsMaterial())
+		}
+		if fe.leafletMaterial != (ShaderMaterial.Instance{}) {
+			m.SurfaceSetMaterial(1, fe.leafletMaterial.AsMaterial())
+		}
+	}
+
+	// 2. Force the MeshInstance3D to resize its surface_override_materials
+	//    array to match the current surface count, then install the overrides.
+	//    This is the key step that makes the materials actually render.
+	mi := fe.Mesh
+	mm := mi.Mesh()
+	mi.SetMesh(Mesh.Nil)
+	mi.SetMesh(mm)
+
+	if mi.GetSurfaceOverrideMaterialCount() > 0 {
+		mi.SetSurfaceOverrideMaterial(0, fe.timbersMaterial.AsMaterial())
+	}
+	if mi.GetSurfaceOverrideMaterialCount() > 1 {
+		mi.SetSurfaceOverrideMaterial(1, fe.leafletMaterial.AsMaterial())
+	}
+}
+
 func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
 	switch brush.Slider {
 	case "leaflet", "timbers":
-		var target BaseMaterial3D.Instance
-		switch brush.Slider {
-		case "leaflet":
-			target = fe.leafletMaterial
-		case "timbers":
-			target = fe.timbersMaterial
-		}
 		texture := fe.client.resolveMaterialTexture(brush.Design)
 		if texture == Texture2D.Nil {
 			return nil
 		}
-		target.SetAlbedoTexture(texture)
+		switch brush.Slider {
+		case "leaflet":
+			fe.leafletMaterial.SetShaderParameter("albedo_texture", texture)
+		case "timbers":
+			fe.timbersMaterial.SetAlbedoTexture(texture)
+		}
 		return nil
 	}
 	_, prop, _ := strings.Cut(brush.Slider, "/")
 	applyReflectSlider(fe.tree, reflect.TypeFor[Tree](), prop, float64(brush.Amount), func() {
 		fe.tree.recalculating = true
 		fe.tree.recalculate()
+		fe.applyMaterials() // re-apply overrides after the ArrayMesh surfaces were rebuilt
 	})
 	return nil
 }
