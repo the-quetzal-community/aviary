@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"graphics.gd/classdb/BaseButton"
+	"graphics.gd/classdb/CanvasItem"
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GradientTexture2D"
@@ -93,8 +94,12 @@ type CloudControl struct {
 
 	UpdateProgress ProgressBar.Instance
 
-	Gizmo       Gizmo
-	gizmoBackup Gizmo
+	Gizmo Gizmo
+
+	// allowedGizmos is the set of gizmos the active editor has declared
+	// visible via SetGizmos. Nil means "all gizmos allowed" (the default
+	// before any editor restricts the toolbar).
+	allowedGizmos map[Gizmo]bool
 
 	sharing    bool
 	client     *Client
@@ -122,6 +127,8 @@ const (
 	GizmoTwist
 	GizmoFloat
 
+	GizmoSpace // Horizontal Rule
+
 	GizmoClone
 	GizmoTrash
 
@@ -148,26 +155,34 @@ func (ui *CloudControl) Input(event InputEvent.Instance) {
 			switch event.Keycode() {
 			case Input.KeyShift:
 				if Input.IsKeyPressed(Input.KeyCtrl) {
-					ui.set_gizmo(GizmoScale)
+					ui.set_gizmo(GizmoFloat)
 				} else {
-					ui.gizmoBackup = ui.Gizmo
 					ui.set_gizmo(GizmoShift)
 				}
 			case Input.KeyCtrl:
 				if Input.IsKeyPressed(Input.KeyShift) {
-					ui.set_gizmo(GizmoScale)
+					ui.set_gizmo(GizmoFloat)
 				} else {
-					ui.gizmoBackup = ui.Gizmo
 					ui.set_gizmo(GizmoTwist)
 				}
 			}
 		} else {
 			switch event.Keycode() {
 			case Input.KeyShift, Input.KeyCtrl:
-				if Input.IsKeyPressed(Input.KeyShift) && Input.IsKeyPressed(Input.KeyCtrl) {
-					return
+				// Re-evaluate the current temporary gizmo based on the
+				// active modifier keys. Releasing the last of Shift/Ctrl
+				// (including the Ctrl+Shift combo) always returns to the
+				// neutral Point tool.
+				switch {
+				case Input.IsKeyPressed(Input.KeyShift) && Input.IsKeyPressed(Input.KeyCtrl):
+					ui.set_gizmo(GizmoFloat)
+				case Input.IsKeyPressed(Input.KeyShift):
+					ui.set_gizmo(GizmoShift)
+				case Input.IsKeyPressed(Input.KeyCtrl):
+					ui.set_gizmo(GizmoTwist)
+				default:
+					ui.set_gizmo(GizmoPoint)
 				}
-				ui.set_gizmo(ui.gizmoBackup)
 			}
 		}
 	}
@@ -443,4 +458,60 @@ func (ui *CloudControl) positionDensitySlider() {
 	const stack = 56 // vertical offset below the size slider's centre line
 	size := ui.densitySlider.AsControl().Size()
 	ui.densitySlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5+stack))
+}
+
+// isGizmoAllowed reports whether the given gizmo is currently permitted
+// by the active editor's SetGizmos declaration. When no editor has
+// restricted the set, everything is allowed.
+func (ui *CloudControl) isGizmoAllowed(g Gizmo) bool {
+	if ui.allowedGizmos == nil {
+		return true
+	}
+	return ui.allowedGizmos[g]
+}
+
+// SetGizmos restricts the visible gizmo tools in the toolbar to exactly
+// the supplied list. Editors should call this (via client.SetGizmos)
+// from their EnableEditor so that only the tools relevant to that editor
+// are offered.
+//
+// The primary transform gizmos (Point..Float) map to the first four
+// buttons. GizmoSpace controls the separator. GizmoClone and GizmoTrash
+// control Duplicate and Delete respectively. Unknown or future gizmo
+// values (Brush, Power, etc.) are ignored until corresponding buttons
+// exist.
+func (ui *CloudControl) SetGizmos(gizmos []Gizmo) {
+	allowed := make(map[Gizmo]bool, len(gizmos))
+	for _, g := range gizmos {
+		allowed[g] = true
+	}
+	ui.allowedGizmos = allowed
+
+	// Primary transform buttons are children 0-3 (indices match Gizmo iota).
+	for i := 0; i < 4; i++ {
+		g := Gizmo(i)
+		child := ui.GizmoTypes.AsNode().GetChild(i)
+		Object.To[CanvasItem.Instance](child).SetVisible(allowed[g])
+	}
+
+	// Separator (index 4)
+	sep := ui.GizmoTypes.AsNode().GetChild(4)
+	showSep := allowed[GizmoSpace] || allowed[GizmoClone] || allowed[GizmoTrash]
+	Object.To[CanvasItem.Instance](sep).SetVisible(showSep)
+
+	// Action buttons (Duplicate ~ Clone, Delete ~ Trash)
+	ui.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(allowed[GizmoClone])
+	ui.GizmoTypes.Delete.AsCanvasItem().SetVisible(allowed[GizmoTrash])
+
+	// If the currently active gizmo is no longer allowed, pick the first
+	// visible primary one so the indicator doesn't point at a hidden button.
+	if !ui.isGizmoAllowed(ui.Gizmo) {
+		for i := 0; i < 4; i++ {
+			g := Gizmo(i)
+			if ui.isGizmoAllowed(g) {
+				ui.set_gizmo(g)
+				break
+			}
+		}
+	}
 }

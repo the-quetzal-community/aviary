@@ -258,13 +258,16 @@ func (ui *UI) Process(_ Float.X) {
 	// Duplicate and Delete sit at the bottom of the gizmo column and
 	// only make sense when something is selectable. Hide them so the
 	// column doesn't show greyed-out tiles for ineligible editors.
-	want := ui.client.CanDeleteSelection()
+	// Their visibility is further gated by the active editor's
+	// SetGizmos declaration (GizmoTrash / GizmoClone).
 	if ui.CloudControl != nil {
-		if ui.CloudControl.GizmoTypes.Delete.AsCanvasItem().Visible() != want {
-			ui.CloudControl.GizmoTypes.Delete.AsCanvasItem().SetVisible(want)
+		wantDelete := ui.client.CanDeleteSelection() && ui.CloudControl.isGizmoAllowed(GizmoTrash)
+		wantDup := ui.client.CanDeleteSelection() && ui.CloudControl.isGizmoAllowed(GizmoClone)
+		if ui.CloudControl.GizmoTypes.Delete.AsCanvasItem().Visible() != wantDelete {
+			ui.CloudControl.GizmoTypes.Delete.AsCanvasItem().SetVisible(wantDelete)
 		}
-		if ui.CloudControl.GizmoTypes.Duplicate.AsCanvasItem().Visible() != want {
-			ui.CloudControl.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(want)
+		if ui.CloudControl.GizmoTypes.Duplicate.AsCanvasItem().Visible() != wantDup {
+			ui.CloudControl.GizmoTypes.Duplicate.AsCanvasItem().SetVisible(wantDup)
 		}
 	}
 }

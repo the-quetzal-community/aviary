@@ -37,15 +37,15 @@ func (world *Client) stampRouting(ch *musical.Change) {
 
 // canUseGizmoManipulation reports whether the current global gizmo mode
 // (toolbar or hotkey) plus the active editor context allows gizmo-based
-// manipulation (translate via GizmoShift or twist/rotate-Y via GizmoTwist)
-// of the current selection. Restricted to the three "static placed design"
-// editors for now.
+// manipulation (translate via GizmoShift, lift via GizmoFloat, or
+// twist/rotate-Y via GizmoTwist) of the current selection. Scale is
+// additionally supported for critter parts.
 func (world *Client) canUseGizmoManipulation() bool {
 	if world.ui == nil || world.ui.CloudControl == nil {
 		return false
 	}
 	g := world.ui.CloudControl.Gizmo
-	if g != GizmoShift && g != GizmoTwist && g != GizmoScale {
+	if g != GizmoShift && g != GizmoTwist && g != GizmoFloat && g != GizmoScale {
 		return false
 	}
 	// Scenery uses the global entity map and isn't a ClickableEditor, but
@@ -183,6 +183,27 @@ func (world *Client) armGizmoDrag() {
 			}
 		}
 	}
+
+	if world.gizmoDrag.activeGizmo == GizmoFloat {
+		world.gizmoDrag.floatInitialY = pos.Y
+		o, d := world.inputRay()
+		// Vertical drag plane through the object. Its normal is the
+		// horizontal component of the initial input ray so that
+		// "pulling up" on the mouse (or controller) produces a clean
+		// world-Y lift regardless of camera azimuth.
+		horiz := Vector3.New(d.X, 0, d.Z)
+		if l := Vector3.Length(horiz); l > 1e-4 {
+			world.gizmoDrag.floatPlaneNormal = Vector3.DivX(horiz, l)
+		} else {
+			world.gizmoDrag.floatPlaneNormal = Vector3.New(1, 0, 0)
+		}
+		world.gizmoDrag.floatPlanePoint = pos
+		if hit, ok := IntersectRayPlane(o, d, pos, world.gizmoDrag.floatPlaneNormal); ok {
+			world.gizmoDrag.floatStartGrabY = hit.Y
+		} else {
+			world.gizmoDrag.floatStartGrabY = pos.Y
+		}
+	}
 }
 
 // inputRay is the current "primary" input ray in world space:
@@ -238,10 +259,10 @@ func (world *Client) selectedEntityForGizmo() (musical.Entity, Node3D.Instance, 
 }
 
 // updateGizmoDrag is called on mouse motion (or could be polled) while a
-// GizmoShift drag is active. It intersects the current mouse ray against
-// the horizontal drag plane captured at drag start and emits a preview
-// (Commit:false) musical Change so both the local node and any peers
-// immediately see the object move.
+// GizmoShift / GizmoFloat / GizmoTwist / GizmoScale drag is active. It
+// computes the appropriate delta (horizontal translate, vertical lift,
+// rotation, or uniform scale) and emits a preview (Commit:false) musical
+// Change.
 //
 // For Vehicle and Shelter we set the Editor field so the Change routes to
 // their specialized handlers (which do mirroring, floor grouping, etc.).
@@ -292,6 +313,63 @@ func (world *Client) updateGizmoDrag() {
 		}
 		return // scale handled, skip translate/twist
 	}
+
+	// --- Float (vertical lift) handling ---
+	if world.gizmoDrag.activeGizmo == GizmoFloat {
+		o, d := world.inputRay()
+		n := world.gizmoDrag.floatPlaneNormal
+		p := world.gizmoDrag.floatPlanePoint
+		if Vector3.Length(n) < 1e-4 {
+			n = Vector3.New(1, 0, 0)
+		}
+		if hit, ok := IntersectRayPlane(o, d, p, n); ok {
+			deltaY := hit.Y - world.gizmoDrag.floatStartGrabY
+			newY := world.gizmoDrag.floatInitialY + deltaY
+
+			newPos := world.gizmoDrag.startPos
+			if world.Editing == Editing.Scenery {
+				xz := Vector3.New(newPos.X, 0, newPos.Z)
+				terrainY := world.TerrainEditor.HeightAt(xz)
+				delta := newY - terrainY
+				newPos.Y = delta
+			} else {
+				newPos.Y = newY
+			}
+
+			// Preserve whatever rotation the object currently has.
+			rot := node.AsNode3D().Rotation()
+
+			floatCh := musical.Change{
+				Author: world.id,
+				Entity: ent,
+				Offset: newPos,
+				Angles: rot,
+				Commit: false,
+			}
+			if world.Editing == Editing.Scenery {
+				floatCh.Editor = "float" // marker: Offset.Y is lift delta relative to terrain
+			}
+			world.stampRouting(&floatCh)
+
+			// Vehicle mirror: keep any existing mirror offset so the
+			// twin moves in lockstep on the Y axis too.
+			if world.Editing == Editing.Vehicle {
+				if mirrorRaw, has := world.VehicleEditor.entity_to_mirror[ent].Instance(); has {
+					if mirrorNode, ok := Object.As[Node3D.Instance](mirrorRaw); ok {
+						mirrorPos := mirrorNode.AsNode3D().Position()
+						mainPos := node.AsNode3D().Position()
+						floatCh.Mirror = Vector3.Sub(mirrorPos, mainPos)
+					}
+				}
+			}
+
+			if err := world.space.Change(floatCh); err != nil {
+				_ = err
+			}
+		}
+		return // float handled
+	}
+
 	o, d := world.inputRay()
 	planePoint := Vector3.New(world.gizmoDrag.startPos.X, world.gizmoDrag.dragPlaneY, world.gizmoDrag.startPos.Z)
 	hit, ok := IntersectRayPlane(o, d, planePoint, Vector3.New(0, 1, 0))
@@ -306,6 +384,15 @@ func (world *Client) updateGizmoDrag() {
 		// (most objects snap to integer grid on X/Z).
 		newPos.X = Float.Round(newPos.X)
 		newPos.Z = Float.Round(newPos.Z)
+	}
+
+	// For scenery objects, gizmoShift moves should follow the terrain surface:
+	// the horizontal (X/Z) translation is computed on the original drag plane
+	// (for consistent mouse feel), then Y is sampled from the terrain height
+	// map at the resulting (X, Z). This makes objects slide up and down hills
+	// instead of staying at a constant world Y.
+	if world.Editing == Editing.Scenery {
+		newPos.Y = world.TerrainEditor.HeightAt(newPos)
 	}
 
 	// Preserve whatever rotation the object currently has.
@@ -526,6 +613,26 @@ func (world *Client) commitGizmoDrag() {
 		return
 	}
 
+	// For a pure float (vertical) drag we just need to make sure the
+	// final lifted Y is stored in the (already stamped + mirrored) musical
+	// Change and let the common send + undo recording path handle it.
+	if world.gizmoDrag.activeGizmo == GizmoFloat {
+		// For scenery, store the lift as a *delta* relative to current
+		// terrain HeightAt so it rides terrain edits. Use Editor="float"
+		// as marker (scenery apply path will interpret Offset.Y as delta).
+		current := node.AsNode3D().Position()
+		if world.Editing == Editing.Scenery {
+			xz := Vector3.New(current.X, 0, current.Z)
+			terrainY := world.TerrainEditor.HeightAt(xz)
+			delta := current.Y - terrainY
+			ch.Offset.Y = delta
+			ch.Editor = "float"
+		} else {
+			ch.Offset.Y = current.Y
+		}
+		// Fall through for common send + Record.
+	}
+
 	if err := world.space.Change(ch); err != nil {
 		Engine.Raise(err)
 	}
@@ -534,7 +641,15 @@ func (world *Client) commitGizmoDrag() {
 	// committed) IS the pre-shift rot. Mirror field flows through
 	// as captured.
 	undo := ch
-	undo.Offset = world.gizmoDrag.startPos
+	if ch.Editor == "float" {
+		// Restore previous delta (0 if it was grounded before the float).
+		preXZ := Vector3.New(world.gizmoDrag.startPos.X, 0, world.gizmoDrag.startPos.Z)
+		preT := world.TerrainEditor.HeightAt(preXZ)
+		preD := world.gizmoDrag.startPos.Y - preT
+		undo.Offset = Vector3.New(world.gizmoDrag.startPos.X, preD, world.gizmoDrag.startPos.Z)
+	} else {
+		undo.Offset = world.gizmoDrag.startPos
+	}
 	world.RecordChange(ch, undo)
 }
 

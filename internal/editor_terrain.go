@@ -128,6 +128,12 @@ type TerrainEditor struct {
 	DressTab     string // dressing category ("grasses"/"pebbles")
 	BrushDensity Float.X
 
+	// BrushRiverDepth is how far below the original ground the river brush
+	// carves its channel (the water then fills back to the original ground).
+	// Set via the river-depth slider; local-only (the depth rides in each
+	// river Sculpt's Amount, so remote clients carve the same channel).
+	BrushRiverDepth Float.X
+
 	// dressLast/dressLastSet space out dressing strokes during a drag so a
 	// stationary hold doesn't keep re-committing the same patch: a new
 	// stroke is only emitted once the brush has moved ~half a radius.
@@ -248,6 +254,7 @@ func (tr *TerrainEditor) tileForWorld(pos Vector3.XYZ) *TerrainTile {
 func (fe *TerrainEditor) Name() string { return "terrain" }
 
 func (fe *TerrainEditor) EnableEditor() {
+	fe.client.SetGizmos(nil)
 	fe.shader.SetShaderParameter("brush_active", true)
 	fe.shader_buried.SetShaderParameter("brush_active", true)
 	fe.setArrowsVisible(true)
@@ -286,10 +293,10 @@ func (*TerrainEditor) SwitchToView(view string) {}
 func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
-		// The "terrain" tab provides the raise/lower height brushes as
-		// builtin items. The brush-size slider lives in the gizmo
-		// toolbar; water-level is still available as an editing slider.
-		return []string{"terrain", "editing/water_level"}
+		// The "terrain" tab provides the raise/lower/river height brushes as
+		// builtin items. The brush-size slider lives in the gizmo toolbar;
+		// water-level and river-depth are available as editing sliders.
+		return []string{"terrain", "editing/water_level", "editing/river_depth"}
 	case ModeMaterial:
 		return []string{
 			"terrain/aquatic",
@@ -330,6 +337,16 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 			Icon:     "res://ui/editing.svg",
 			Label:    "Lower terrain",
 		},
+		{
+			Resource: BuiltinTerrainRiver,
+			Icon:     "res://ui/editing.svg",
+			Label:    "River",
+		},
+		{
+			Resource: BuiltinTerrainRiverErase,
+			Icon:     "res://ui/editing.svg",
+			Label:    "River eraser",
+		},
 	}
 }
 
@@ -353,10 +370,14 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	// Terrain brush builtins (raise/lower) in ModeGeometry: arm the
 	// explicit height sculpt brush. This replaces the previous implicit
 	// "any click in geometry mode sculpts height" behaviour.
-	if mode == ModeGeometry && (design == BuiltinTerrainRaise || design == BuiltinTerrainLower) {
+	if mode == ModeGeometry && (design == BuiltinTerrainRaise || design == BuiltinTerrainLower || design == BuiltinTerrainRiver || design == BuiltinTerrainRiverErase) {
 		fe.CancelPaint()
 		fe.TerrainBrush = design
 		fe.DressActive = false
+		// The river brush is a drag-paint tool (like dressing): clear the
+		// stroke-spacing guard so the first stroke after selecting it fires,
+		// and seeds a flow direction from the very next movement.
+		fe.dressLastSet = false
 		// Enable the editor (ensures brush ring highlight is visible).
 		fe.EnableEditor()
 		// Do not set BrushActive yet; the first press on terrain will
@@ -385,6 +406,11 @@ func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, 
 		fe.shader.SetShaderParameter("radius", fe.BrushRadius)
 	case "dressing/density":
 		fe.BrushDensity = Float.X(value)
+	case "editing/river_depth":
+		// River channel depth is a local-only brush control (the depth is
+		// carried per-stroke in the Sculpt's Amount, so it still reproduces
+		// on every client). Not itself synced.
+		fe.BrushRiverDepth = Float.X(value)
 	case "editing/water_level":
 		// The water level is a shared mutation: route it through the space
 		// so every client observes the same level. Without a space (e.g.
@@ -411,6 +437,9 @@ func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max
 	switch editing {
 	case "dressing/density":
 		return float64(fe.BrushDensity), 0, 1, 0.01
+	case "editing/river_depth":
+		// value, min, max, step (world units of channel depth)
+		return float64(fe.BrushRiverDepth), 0.5, 10, 0.1
 	case "editing/water_level":
 		// value, min, max, step
 		return float64(fe.WaterLevel), -2, 10, 0.1
@@ -482,6 +511,7 @@ func (tr *TerrainEditor) Ready() {
 
 	tr.BrushRadius = 2.0
 	tr.BrushDensity = 0.5
+	tr.BrushRiverDepth = riverDefaultDepth
 
 	tr.grassMeshes = make(map[musical.Design]grassAsset)
 	tr.tiles = make(map[tileCoord]*TerrainTile)
@@ -641,6 +671,63 @@ func (tr *TerrainEditor) EraseDressing() {
 		Design: tr.client.MusicalDesign(tr.DressDesign),
 		Commit: true,
 	})
+}
+
+// PaintRiver commits one segment of a river stroke as a SINGLE musical.Sculpt
+// while the river brush is dragged. The stroke carves a channel (negative
+// Amount, applied through the shared height summation) and, because it carries
+// the riverSlider tag, Reload additionally records the local water surface
+// ("the height where the terrain used to be") and the flow direction. Orient
+// is the painted heading, so the water flows downstream. One sculpt per
+// segment — there is deliberately no separate carve/water entry.
+func (tr *TerrainEditor) PaintRiver() {
+	if !tr.riverBrushActive() {
+		return
+	}
+	erase := tr.TerrainBrush == BuiltinTerrainRiverErase
+	// Movement-spacing throttle (shared with dressing): only emit once the
+	// brush has moved ~half a radius, and use that travel as the flow heading.
+	// The first segment of a drag has no previous point, so it seeds dressLast
+	// and waits for the next move to establish a direction.
+	if !tr.dressLastSet {
+		tr.dressLast = tr.BrushTarget
+		tr.dressLastSet = true
+		return
+	}
+	dx := tr.BrushTarget.X - tr.dressLast.X
+	dz := tr.BrushTarget.Z - tr.dressLast.Z
+	spacing := tr.BrushRadius * 0.5
+	if dx*dx+dz*dz < spacing*spacing {
+		return
+	}
+	orient := Angle.Atan2(dz, dx) // painted heading => downstream flow
+	tr.dressLast = tr.BrushTarget
+	brush := musical.Sculpt{
+		Author: tr.client.id,
+		Editor: "terrain",
+		Slider: riverSlider,
+		Target: tr.BrushTarget,
+		Radius: tr.BrushRadius,
+		Orient: orient,
+		Commit: true,
+	}
+	if erase {
+		// The eraser fills the channel back in (target depth 0); Amount/Orient
+		// are unused on the receiving side for an erase stroke.
+		brush.Slider = riverEraseSlider
+	} else {
+		depth := tr.BrushRiverDepth
+		if depth <= 0 {
+			depth = riverDefaultDepth
+		}
+		brush.Amount = -depth // negative carve depth; overwrites on repaint
+	}
+	tr.client.space.Sculpt(brush)
+}
+
+// riverBrushActive reports whether a river paint or erase tool is selected.
+func (tr *TerrainEditor) riverBrushActive() bool {
+	return tr.TerrainBrush == BuiltinTerrainRiver || tr.TerrainBrush == BuiltinTerrainRiverErase
 }
 
 // HeightAt looks up the terrain height at the given world position
@@ -811,9 +898,44 @@ const terrainDefaultSize = 16
 // by BuiltinDesignProvider. These are the "builtin-aviary" items that
 // appear in the "terrain" tab under ModeGeometry for the TerrainEditor.
 const (
-	BuiltinTerrainRaise = "procedural://terrain/raise"
-	BuiltinTerrainLower = "procedural://terrain/lower"
+	BuiltinTerrainRaise      = "procedural://terrain/raise"
+	BuiltinTerrainLower      = "procedural://terrain/lower"
+	BuiltinTerrainRiver      = "procedural://terrain/river"
+	BuiltinTerrainRiverErase = "procedural://terrain/river_erase"
 )
+
+// riverSlider / riverEraseSlider tag a Sculpt as a river paint or erase stroke.
+// Both carry an empty Design and are handled by Reload's river layer (riverDepth
+// + flow); the Slider also keeps them out of the dressing/water-level branches
+// in TerrainEditor.Sculpt and out of the non-river ground accumulation.
+const (
+	riverSlider      = "river"
+	riverEraseSlider = "river/erase"
+)
+
+func isRiverSlider(s string) bool { return s == riverSlider || s == riverEraseSlider }
+
+// waterFloorEps is the minimum carve depth (groundHeights-heights) below which
+// a grid point is considered dry. Guards against float noise spawning slivers
+// of water where no river was actually painted.
+const waterFloorEps float32 = 0.02
+
+// riverBankCollar is how many grid cells beyond the carved channel the water
+// plane is extended onto the (un-dug) bank. The collar sits at the original
+// ground height so the river laps flush onto its banks and connects to the
+// neighbouring terrain down a slope, instead of ending in a clamped vertical
+// edge (the "floating slab" look).
+const riverBankCollar = 1
+
+// waterSurfaceDrop sits the river surface slightly below the original ground
+// so a small lip of bank shows above the waterline (rather than the water
+// being exactly flush with where the terrain used to be).
+const waterSurfaceDrop Float.X = 0.2
+
+// riverDefaultDepth is the initial channel depth carved by the river brush,
+// in world units below the original ground. Adjustable via the river-depth
+// slider.
+const riverDefaultDepth Float.X = 3.0
 
 // terrainBrushDelta returns the signed delta to feed into the height brush
 // for the given mouse button, according to the currently selected terrain
@@ -902,6 +1024,25 @@ type TerrainTile struct {
 	vertices_water_side []Vector3.XYZ
 	normals_water_side  []Vector3.XYZ
 	uvs_water_side      []Vector2.XY
+
+	// River state, indexed identically to heights on the (size+1)² grid
+	// (idx = gx + gz*hm). These are persisted accumulators (like heights),
+	// updated as river sculpts arrive and read by reloadWater:
+	//   - groundHeights: the terrain height EXCLUDING river carves, i.e. the
+	//     ground as it was before any river dug into it. The river's water
+	//     surface sits here ("water level where the terrain used to be").
+	//   - waterFlowX/Z: accumulated (unnormalised) flow direction in world XZ
+	//     from each river stroke's Orient, weighted by the brush falloff;
+	//     normalised at read time to drive the water shader's flow.
+	// A grid point has river water where riverDepth > waterFloorEps (the channel
+	// was dug below the original ground). riverDepth (>=0) is maintained with
+	// paint-over/erase semantics (NOT accumulated) so repainting at a different
+	// depth overwrites and the eraser digs it back out; the visible/collision
+	// terrain is heights = groundHeights - riverDepth.
+	groundHeights []float32
+	riverDepth    []float32
+	waterFlowX    []float32
+	waterFlowZ    []float32
 }
 
 func (tile *TerrainTile) Ready() {
@@ -935,6 +1076,17 @@ func (tile *TerrainTile) generateBase() {
 	// resampled heights buffer).
 	if tile.heights == nil || len(tile.heights) != hm*hm {
 		tile.heights = make([]float32, hm*hm)
+	}
+	// River accumulators parallel the heights grid. groundHeights starts as a
+	// copy of heights so that, before any river is painted, the water surface
+	// reference equals the terrain (no spurious river anywhere). Resize hands
+	// us a resampled heights buffer; mirror it here.
+	if len(tile.groundHeights) != hm*hm {
+		tile.groundHeights = make([]float32, hm*hm)
+		copy(tile.groundHeights, tile.heights)
+		tile.riverDepth = make([]float32, hm*hm)
+		tile.waterFlowX = make([]float32, hm*hm)
+		tile.waterFlowZ = make([]float32, hm*hm)
 	}
 	var mesh = ArrayMesh.New()
 	tile.vertices = make([]Vector3.XYZ, n*n*6)
@@ -1062,12 +1214,17 @@ func (tile *TerrainTile) Reload() {
 			}
 			return 0
 		}
-		var sample_height = func(x, y int) Float.X {
+		// sample_height_ground sums the pending NON-river height sculpts at a
+		// grid point (raise/lower). Accumulated into groundHeights, it is the
+		// terrain as if no river had ever been dug — the river's water-surface
+		// reference ("where the terrain used to be"). River strokes are applied
+		// separately to riverDepth below so they overwrite/erase rather than add.
+		var sample_height_ground = func(x, y int) Float.X {
 			pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
 			height := Float.X(0)
 			for i := range tile.sculpts {
 				sculpt := tile.sculpts[i]
-				if sculpt.Design != (musical.Design{}) {
+				if sculpt.Design != (musical.Design{}) || isRiverSlider(sculpt.Slider) {
 					continue
 				}
 				dx := pos.X - sculpt.Target.X
@@ -1078,9 +1235,61 @@ func (tile *TerrainTile) Reload() {
 			}
 			return max(-2, height)
 		}
+		// Accumulate this batch's raise/lower into the original-ground field.
+		for i := 0; i < hm*hm; i++ {
+			tile.groundHeights[i] += float32(sample_height_ground(i%hm, i/hm))
+		}
+		// Apply this batch's river / river-erase strokes to the persisted river
+		// depth + flow with PAINT-OVER semantics: within a stroke's disc each
+		// value is lerped toward the stroke's target using the brush falloff as
+		// the blend weight (1 at the centre, 0 at the rim). So repainting at a
+		// different depth overwrites, and an erase stroke (target depth 0) digs
+		// the channel back out. Applied in log order, so every client agrees.
+		for si := range tile.sculpts {
+			sculpt := tile.sculpts[si]
+			if sculpt.Design != (musical.Design{}) || !isRiverSlider(sculpt.Slider) {
+				continue
+			}
+			erase := sculpt.Slider == riverEraseSlider
+			target := float32(0) // erase digs back toward zero depth
+			if !erase {
+				if d := float32(-sculpt.Amount); d > 0 {
+					target = d // Amount is the negative carve depth
+				}
+			}
+			fx := float32(Angle.Cos(sculpt.Orient))
+			fz := float32(Angle.Sin(sculpt.Orient))
+			r2 := sculpt.Radius * sculpt.Radius
+			if r2 <= 0 {
+				continue
+			}
+			for i := 0; i < hm*hm; i++ {
+				pos := Vector3.Add(Vector3.XYZ{Float.X(i % hm), 0, Float.X(i / hm)}, offset)
+				dx := pos.X - sculpt.Target.X
+				dy := pos.Z - sculpt.Target.Z
+				d2 := dx*dx + dy*dy
+				if d2 > r2 {
+					continue
+				}
+				w := float32(1 - d2/r2) // falloff / paint-over blend weight
+				tile.riverDepth[i] += (target - tile.riverDepth[i]) * w
+				if erase {
+					tile.waterFlowX[i] -= tile.waterFlowX[i] * w
+					tile.waterFlowZ[i] -= tile.waterFlowZ[i] * w
+				} else {
+					tile.waterFlowX[i] += (fx - tile.waterFlowX[i]) * w
+					tile.waterFlowZ[i] += (fz - tile.waterFlowZ[i]) * w
+				}
+			}
+		}
+		// Visible/collision terrain is the original ground minus the river
+		// channel; recomputed (not accumulated) so depth changes + erases apply.
+		for i := 0; i < hm*hm; i++ {
+			tile.heights[i] = tile.groundHeights[i] - tile.riverDepth[i]
+		}
 		inv := Float.X(1) / Float.X(n)
 		update := func(index int, cell_x, cell_y int, x, y int) {
-			tile.vertices[index].Y += sample_height(x, y)
+			tile.vertices[index].Y = tile.heights[x+y*hm]
 			tile.uvs[index] = Vector2.XY{Float.X(x) * inv, Float.X(y) * inv}
 			if sample := sample_texture(cell_x, cell_y); sample != 0 {
 				tile.textures[index*4+0] = float32(sample) // top left
@@ -1105,9 +1314,6 @@ func (tile *TerrainTile) Reload() {
 				update(6*(x+n*y)+5, x, y, x, y+1)   // bottom left
 			}
 		}
-		for i := 0; i < hm*hm; i++ {
-			tile.heights[i] += float32(sample_height(i%hm, i/hm))
-		}
 		tile.heightmapShape.SetMapData(tile.heights)
 		attributes := [Mesh.ArrayMax]any{
 			Mesh.ArrayVertex:  tile.vertices,
@@ -1124,16 +1330,40 @@ func (tile *TerrainTile) Reload() {
 				Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
 		)
 		mesh.RegenNormalMaps()
+		// If this batch changed terrain height (any empty-Design sculpt: raise,
+		// lower, river or river-erase), keep placed items that are resting on
+		// the ground sitting on the (new) ground. Floated objects (GizmoFloat)
+		// keep their absolute Y. Use the editor-level HeightAt, which routes
+		// each object to the tile it actually stands on via tileForWorld —
+		// tile.HeightAt would clamp every object to THIS tile's local bounds
+		// and snap items elsewhere to its edge height (≈0 on flat terrain),
+		// which is the reset-to-0 bug.
+		heightEdited := false
 		for _, brush := range tile.sculpts {
 			if brush.Design == (musical.Design{}) {
-				// raise any existing assets affected by the sculpt
-				for id := range tile.client.object_to_entity {
-					object, ok := id.Instance()
-					if !ok {
-						continue
-					}
-					pos := object.AsNode3D().GlobalPosition()
-					pos.Y = tile.HeightAt(pos)
+				heightEdited = true
+				break
+			}
+		}
+		if heightEdited {
+			for id := range tile.client.object_to_entity {
+				object, ok := id.Instance()
+				if !ok {
+					continue
+				}
+				pos := object.AsNode3D().GlobalPosition()
+				terrainY := Float.X(0)
+				if tile.editor != nil {
+					terrainY = tile.editor.HeightAt(pos)
+				} else {
+					terrainY = tile.HeightAt(pos)
+				}
+				// Only auto-snap objects that are currently resting on (or very
+				// near) the terrain. Intentionally floated objects (via
+				// GizmoFloat) keep their absolute world Y offset on top of any
+				// terrain changes.
+				if Float.Abs(pos.Y-terrainY) < 0.25 {
+					pos.Y = terrainY
 					object.AsNode3D().SetGlobalPosition(pos)
 				}
 			}
@@ -1423,10 +1653,10 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 		if event.ButtonIndex() == Input.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				// A left press that actually hit terrain geometry is the
-				// only thing allowed to start a real paint/dress/height
+				// only thing allowed to start a real paint/dress/height/river
 				// stroke. This is what prevents clicks inside the 2D
 				// design explorer from leaking into the world.
-				if tile.editor.PaintActive || tile.editor.DressActive {
+				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.riverBrushActive() {
 					tile.editor.brushStrokeActive = true
 				}
 				deltaV := Float.X(0)
@@ -1679,17 +1909,69 @@ func (tile *TerrainTile) reloadWater() {
 	// clamp the water down to y=0.
 	floors_water := make([]float32, n*n*6*4)
 	inv := Float.X(1) / Float.X(n)
+	hasRiver := hasHeights && len(tile.groundHeights) >= hm*hm && len(tile.riverDepth) >= hm*hm
+	// waterAt returns the per-vertex water-surface Y and the normalised world
+	// XZ flow direction at grid point (x,y). Where a river has carved below the
+	// original ground (groundHeights-heights > eps) the surface sits at the
+	// original ground ("where the terrain used to be") and flows; everywhere
+	// else it falls back to the global lake level with no flow — so a project
+	// with no rivers renders exactly as before.
+	waterAt := func(x, y int) (surface Float.X, fx, fz float32) {
+		surface = level
+		if !hasRiver {
+			return surface, 0, 0
+		}
+		idx := x + y*hm
+		ground := tile.groundHeights[idx]
+		// A point carries river water if it — or, so the water laps onto the
+		// bank rather than ending in a clamped wall, any neighbour within
+		// riverBankCollar cells — was carved below the original ground.
+		present := tile.riverDepth[idx] > waterFloorEps
+		for dz := -riverBankCollar; dz <= riverBankCollar && !present; dz++ {
+			for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
+				gx, gz := x+dx, y+dz
+				if gx < 0 || gz < 0 || gx >= hm || gz >= hm {
+					continue
+				}
+				if tile.riverDepth[gx+gz*hm] > waterFloorEps {
+					present = true
+					break
+				}
+			}
+		}
+		if !present {
+			return surface, 0, 0
+		}
+		// Sit the surface at the ORIGINAL ground ("as if the terrain were still
+		// there") so the river follows the slope and connects to its banks; the
+		// shader clamps it to the carved floor, so the collar lies flush on the
+		// dry bank while the channel itself fills with visible water.
+		if float32(level) > ground {
+			surface = level // global lake is higher than this bed; keep the lake
+		} else {
+			// Sit slightly below the original ground for a small bank lip.
+			surface = Float.X(ground) - waterSurfaceDrop
+		}
+		nx, nz := tile.waterFlowX[idx], tile.waterFlowZ[idx]
+		if mag := Float.Sqrt(Float.X(nx*nx + nz*nz)); mag > 1e-6 {
+			fx, fz = nx/float32(mag), nz/float32(mag)
+		}
+		return surface, fx, fz
+	}
 	addw := func(index int, x, y int) {
-		// Node is at local y=0, so mesh-local y == world WaterLevel. The
-		// waves/normal maps key off world position, so a simple UV is fine.
-		tile.vertices_water[index] = Vector3.XYZ{Float.X(x), level, Float.X(y)}
+		// Node is at local y=0, so mesh-local y == world Y. The waves/normal
+		// maps key off world position, so a simple UV is fine.
+		surface, fx, fz := waterAt(x, y)
+		tile.vertices_water[index] = Vector3.XYZ{Float.X(x), surface, Float.X(y)}
 		tile.normals_water[index] = Vector3.XYZ{0, 1, 0}
 		tile.uvs_water[index] = Vector2.XY{Float.X(x) * inv, Float.X(y) * inv}
 		var floor float32 = -2.0
 		if hasHeights {
 			floor = tile.heights[x+y*hm]
 		}
-		floors_water[index*4+0] = floor // .r = terrain floor; .gba unused (0).
+		floors_water[index*4+0] = floor // .r = terrain floor (channel bottom)
+		floors_water[index*4+1] = fx    // .g = flow X (world, normalised)
+		floors_water[index*4+2] = fz    // .b = flow Z (world, normalised)
 	}
 	for x := 0; x < n; x++ {
 		for y := 0; y < n; y++ {
@@ -1765,34 +2047,46 @@ func (tile *TerrainTile) reloadWater() {
 		// collapses where the terrain rises above the water.
 		floors_side := make([]float32, sideVertCount*4)
 		index_base := 0
-		top := float32(level) // world-Y of the surface
-		bottom := float32(-2.0)
 		for _, sp := range active {
 			for i := 0; i < n; i++ {
 				pos_near := float32(i)
 				pos_far := float32(i + 1)
-				// Terrain floor at the two edge grid points (near = i, far =
-				// i+1). Read exactly like reloadSides()'s h_near/h_far but
-				// WITHOUT the +2.2 buried offset (water uses raw world heights).
+				// Edge grid points (near = i, far = i+1) for this side.
+				var gnx, gnz, gfx, gfz int
+				if sp.isZFixed {
+					gnx, gnz = i, sp.fixedIndex
+					gfx, gfz = i+1, sp.fixedIndex
+				} else {
+					gnx, gnz = sp.fixedIndex, i
+					gfx, gfz = sp.fixedIndex, i+1
+				}
+				// Terrain floor at the two edge grid points. Read exactly like
+				// reloadSides()'s h_near/h_far but WITHOUT the +2.2 buried offset
+				// (water uses raw world heights).
 				var floorNear, floorFar float32 = -2.0, -2.0
 				if hasHeights {
-					if sp.isZFixed {
-						floorNear = tile.heights[i+sp.fixedIndex*hm]
-						floorFar = tile.heights[i+1+sp.fixedIndex*hm]
-					} else {
-						floorNear = tile.heights[sp.fixedIndex+i*hm]
-						floorFar = tile.heights[sp.fixedIndex+(i+1)*hm]
-					}
+					floorNear = tile.heights[gnx+gnz*hm]
+					floorFar = tile.heights[gfx+gfz*hm]
 				}
+				// Per-edge water surface (matches the plane edge so the wall
+				// stays connected) and flow, so a river that reaches the tile
+				// boundary raises the wall to its surface and flows along it.
+				topNearS, fnx, fnz := waterAt(gnx, gnz)
+				topFarS, ffx, ffz := waterAt(gfx, gfz)
+				topNear := float32(topNearS)
+				topFar := float32(topFarS)
+				// Drop the wall bottom to the channel floor when it is dug below
+				// the skirt bottom so the column always reaches the bed.
+				bottom := min(float32(-2.0), min(floorNear, floorFar))
 				var tl, tr, bl, br Vector3.XYZ
 				if sp.isZFixed {
-					tl = Vector3.XYZ{pos_near, top, sp.fixed}
-					tr = Vector3.XYZ{pos_far, top, sp.fixed}
+					tl = Vector3.XYZ{pos_near, topNear, sp.fixed}
+					tr = Vector3.XYZ{pos_far, topFar, sp.fixed}
 					bl = Vector3.XYZ{pos_near, bottom, sp.fixed}
 					br = Vector3.XYZ{pos_far, bottom, sp.fixed}
 				} else {
-					tl = Vector3.XYZ{sp.fixed, top, pos_near}
-					tr = Vector3.XYZ{sp.fixed, top, pos_far}
+					tl = Vector3.XYZ{sp.fixed, topNear, pos_near}
+					tr = Vector3.XYZ{sp.fixed, topFar, pos_far}
 					bl = Vector3.XYZ{sp.fixed, bottom, pos_near}
 					br = Vector3.XYZ{sp.fixed, bottom, pos_far}
 				}
@@ -1812,17 +2106,17 @@ func (tile *TerrainTile) reloadWater() {
 				if sp.flippedWinding {
 					vertices_side[index_base+1] = tr
 					normals_side[index_base+1] = nrm
-					uvs_side[index_base+1] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+					uvs_side[index_base+1] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 					vertices_side[index_base+2] = tl
 					normals_side[index_base+2] = nrm
-					uvs_side[index_base+2] = Vector2.XY{float32(i) / tile_size, top / tile_size}
+					uvs_side[index_base+2] = Vector2.XY{float32(i) / tile_size, topNear / tile_size}
 				} else {
 					vertices_side[index_base+1] = tl
 					normals_side[index_base+1] = nrm
-					uvs_side[index_base+1] = Vector2.XY{float32(i) / tile_size, top / tile_size}
+					uvs_side[index_base+1] = Vector2.XY{float32(i) / tile_size, topNear / tile_size}
 					vertices_side[index_base+2] = tr
 					normals_side[index_base+2] = nrm
-					uvs_side[index_base+2] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+					uvs_side[index_base+2] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 				}
 				// Triangle 2
 				vertices_side[index_base+3] = bl
@@ -1834,34 +2128,40 @@ func (tile *TerrainTile) reloadWater() {
 					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
 					vertices_side[index_base+5] = tr
 					normals_side[index_base+5] = nrm
-					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 				} else {
 					vertices_side[index_base+4] = tr
 					normals_side[index_base+4] = nrm
-					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, top / tile_size}
+					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 					vertices_side[index_base+5] = br
 					normals_side[index_base+5] = nrm
 					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
 				}
-				// CUSTOM0.r per emitted vertex, matching the vertex order
-				// above. bl is always slot 0/3 (near). The winding swaps which
-				// of tl(near)/tr(far)/br(far) fill slots 1,2,4,5.
+				// CUSTOM0 per emitted vertex, matching the vertex order above.
+				// .r = terrain floor; .g/.b = flow X/Z. bl is always slot 0/3
+				// (near). The winding swaps which of tl(near)/tr(far)/br(far)
+				// fill slots 1,2,4,5.
+				setSideCustom := func(slot int, floor, fx, fz float32) {
+					floors_side[slot*4+0] = floor
+					floors_side[slot*4+1] = fx
+					floors_side[slot*4+2] = fz
+				}
 				if sp.flippedWinding {
 					// [bl, tr, tl, bl, br, tr]
-					floors_side[(index_base+0)*4] = floorNear // bl
-					floors_side[(index_base+1)*4] = floorFar  // tr
-					floors_side[(index_base+2)*4] = floorNear // tl
-					floors_side[(index_base+3)*4] = floorNear // bl
-					floors_side[(index_base+4)*4] = floorFar  // br
-					floors_side[(index_base+5)*4] = floorFar  // tr
+					setSideCustom(index_base+0, floorNear, fnx, fnz) // bl
+					setSideCustom(index_base+1, floorFar, ffx, ffz)  // tr
+					setSideCustom(index_base+2, floorNear, fnx, fnz) // tl
+					setSideCustom(index_base+3, floorNear, fnx, fnz) // bl
+					setSideCustom(index_base+4, floorFar, ffx, ffz)  // br
+					setSideCustom(index_base+5, floorFar, ffx, ffz)  // tr
 				} else {
 					// [bl, tl, tr, bl, tr, br]
-					floors_side[(index_base+0)*4] = floorNear // bl
-					floors_side[(index_base+1)*4] = floorNear // tl
-					floors_side[(index_base+2)*4] = floorFar  // tr
-					floors_side[(index_base+3)*4] = floorNear // bl
-					floors_side[(index_base+4)*4] = floorFar  // tr
-					floors_side[(index_base+5)*4] = floorFar  // br
+					setSideCustom(index_base+0, floorNear, fnx, fnz) // bl
+					setSideCustom(index_base+1, floorNear, fnx, fnz) // tl
+					setSideCustom(index_base+2, floorFar, ffx, ffz)  // tr
+					setSideCustom(index_base+3, floorNear, fnx, fnz) // bl
+					setSideCustom(index_base+4, floorFar, ffx, ffz)  // tr
+					setSideCustom(index_base+5, floorFar, ffx, ffz)  // br
 				}
 				index_base += 6
 			}

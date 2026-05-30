@@ -99,11 +99,16 @@ func (world *Client) DeleteSelection() bool {
 	}
 	world.selection = 0
 	world.gizmoDrag.active = false
+	world.gizmoDrag.activeGizmo = 0
 	world.gizmoDrag.hasMirrorPlane = false
 	world.gizmoDrag.design = musical.Design{}
 	world.gizmoDrag.twistInitialY = 0
 	world.gizmoDrag.twistInitialAngle = 0
 	world.gizmoDrag.twistPlaneY = 0
+	world.gizmoDrag.floatInitialY = 0
+	world.gizmoDrag.floatPlanePoint = Vector3.Zero
+	world.gizmoDrag.floatPlaneNormal = Vector3.Zero
+	world.gizmoDrag.floatStartGrabY = 0
 	return true
 }
 

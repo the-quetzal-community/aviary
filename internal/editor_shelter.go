@@ -186,6 +186,10 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *ShelterEditor) EnableEditor() {
+	editor.client.SetGizmos([]Gizmo{
+		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
+		GizmoSpace, GizmoClone, GizmoTrash,
+	})
 	shader := ShaderMaterial.New()
 	shader.SetShader(LoadSync[Shader.Instance]("res://shader/grid.gdshader"))
 	editor.grid_shader = shader.ID()

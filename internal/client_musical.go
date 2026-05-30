@@ -166,8 +166,16 @@ func (world musicalImpl) Change(con musical.Change) error {
 				return
 			}
 
+			pos := con.Offset
+			if con.Editor == "float" {
+				// Offset.Y is a lift delta relative to terrain HeightAt(XZ).
+				// Apply it on top so floats ride terrain changes and survive reload.
+				xz := Vector3.New(pos.X, 0, pos.Z)
+				terrainY := world.TerrainEditor.HeightAt(xz)
+				pos.Y = terrainY + pos.Y
+			}
 			exists.
-				SetPosition(con.Offset).
+				SetPosition(pos).
 				SetRotation(con.Angles)
 			// If the Change carries an explicit Bounds (set by the
 			// scale gizmo or restored from the musical log), use it
@@ -194,8 +202,16 @@ func (world musicalImpl) Change(con musical.Change) error {
 				anim.PlayNamed("Idle")
 			}
 		}
+		pos := con.Offset
+		if con.Editor == "float" {
+			// Offset.Y is a lift delta relative to terrain HeightAt(XZ).
+			// Apply it on top so floats ride terrain changes and survive reload.
+			xz := Vector3.New(pos.X, 0, pos.Z)
+			terrainY := world.TerrainEditor.HeightAt(xz)
+			pos.Y = terrainY + pos.Y
+		}
 		node.
-			SetPosition(con.Offset).
+			SetPosition(pos).
 			SetRotation(con.Angles)
 		if con.Bounds != Vector3.Zero {
 			node.SetScale(con.Bounds)

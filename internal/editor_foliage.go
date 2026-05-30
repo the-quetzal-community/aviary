@@ -97,7 +97,9 @@ func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
 	root.AsNode().AddChild(dup.AsNode())
 	return root
 }
-func (fe *FoliageEditor) EnableEditor() {}
+func (fe *FoliageEditor) EnableEditor() {
+	fe.client.SetGizmos(nil)
+}
 func (fe *FoliageEditor) ChangeEditor() {}
 
 func (fe *FoliageEditor) Ready() {

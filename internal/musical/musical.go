@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"time"
 
+	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
@@ -152,6 +153,8 @@ type Sculpt struct {
 	Editor string // editor that is being used.
 	Slider string // slider that is being adjusted.
 	Timing Timing // timing of the sculpt.
+
+	Orient Angle.Radians
 
 	Commit bool // if false, then this is a preview.
 }

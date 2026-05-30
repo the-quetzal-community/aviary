@@ -44,6 +44,7 @@ func (*CitizenEditor) Views() []string { return nil }
 // so a session that never opens the citizen editor never builds
 // the citizen body at all.
 func (ce *CitizenEditor) EnableEditor() {
+	ce.client.SetGizmos(nil)
 	ce.ensureLoaded()
 	if len(ce.pendingSculpts) == 0 {
 		return

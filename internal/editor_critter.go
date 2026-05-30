@@ -444,6 +444,10 @@ func (*CritterEditor) Tabs(mode Mode) []string {
 }
 
 func (ce *CritterEditor) EnableEditor() {
+	ce.client.SetGizmos([]Gizmo{
+		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
+		GizmoSpace, GizmoClone, GizmoTrash,
+	})
 	ce.ensureLoaded()
 }
 

@@ -174,6 +174,12 @@ type Client struct {
 		scaleInitial         Vector3.XYZ
 		scaleInitialDistance Float.X
 		scalePlaneY          Float.X
+
+		// --- Float (vertical lift) state (for GizmoFloat) ---
+		floatInitialY    Float.X     // original world Y when drag started
+		floatPlanePoint  Vector3.XYZ // a point on the vertical drag plane
+		floatPlaneNormal Vector3.XYZ // horizontal normal (Y=0) of the vertical plane used for lift
+		floatStartGrabY  Float.X     // Y of the initial ray intersection on that plane
 	}
 
 	time TimingCoordinator
@@ -763,11 +769,16 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					} else {
 						world.selection = 0
 						world.gizmoDrag.active = false
+						world.gizmoDrag.activeGizmo = 0
 						world.gizmoDrag.hasMirrorPlane = false
 						world.gizmoDrag.design = musical.Design{}
 						world.gizmoDrag.twistInitialY = 0
 						world.gizmoDrag.twistInitialAngle = 0
 						world.gizmoDrag.twistPlaneY = 0
+						world.gizmoDrag.floatInitialY = 0
+						world.gizmoDrag.floatPlanePoint = Vector3.Zero
+						world.gizmoDrag.floatPlaneNormal = Vector3.Zero
+						world.gizmoDrag.floatStartGrabY = 0
 					}
 				}
 
@@ -807,17 +818,29 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 
 			// Left button released: finalize any in-progress gizmo drag with a
 			// committed musical Change so the edit is recorded in the .mus3 log.
+			// Commit using the gizmo captured at drag start (activeGizmo), not
+			// the current live toolbar state. This ensures Ctrl+Shift (Float)
+			// and plain Shift/Ctrl drags still produce a Commit:true Change
+			// even if the user released the modifiers before the mouse button.
 			if mouse.ButtonIndex() == Input.MouseButtonLeft && !mouse.AsInputEvent().IsPressed() {
 				if world.gizmoDrag.active {
-					if world.canUseGizmoManipulation() {
+					if world.gizmoDrag.activeGizmo == GizmoShift ||
+						world.gizmoDrag.activeGizmo == GizmoTwist ||
+						world.gizmoDrag.activeGizmo == GizmoFloat ||
+						world.gizmoDrag.activeGizmo == GizmoScale {
 						world.commitGizmoDrag()
 					}
 					world.gizmoDrag.active = false
+					world.gizmoDrag.activeGizmo = 0
 					world.gizmoDrag.hasMirrorPlane = false
 					world.gizmoDrag.design = musical.Design{}
 					world.gizmoDrag.twistInitialY = 0
 					world.gizmoDrag.twistInitialAngle = 0
 					world.gizmoDrag.twistPlaneY = 0
+					world.gizmoDrag.floatInitialY = 0
+					world.gizmoDrag.floatPlanePoint = Vector3.Zero
+					world.gizmoDrag.floatPlaneNormal = Vector3.Zero
+					world.gizmoDrag.floatStartGrabY = 0
 				}
 			}
 		}

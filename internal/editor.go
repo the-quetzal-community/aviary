@@ -94,6 +94,17 @@ func (world *Client) StartEditing(subject Subject) {
 		AsNode().SetProcessMode(Node.ProcessModeInherit)
 	world.Editing = subject
 	world.ui.Editor.editor = editor
+
+	// Give the incoming editor a clean default gizmo toolbar; the editor's
+	// EnableEditor (which runs immediately below) may call SetGizmos to
+	// restrict it to only the tools it supports.
+	if world.ui.CloudControl != nil {
+		world.SetGizmos([]Gizmo{
+			GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
+			GizmoSpace, GizmoClone, GizmoTrash,
+		})
+	}
+
 	editor.EnableEditor()
 	world.ui.ViewSelector.Refresh(0, editor.Views())
 	world.ui.Editor.Refresh(subject, "", world.ui.mode)
@@ -107,6 +118,27 @@ func (world *Client) StartEditing(subject Subject) {
 	}
 	UserState.Editor = subject
 	world.saveUserState()
+}
+
+// SetGizmos configures which gizmo tools are visible in the toolbar while
+// the caller is the active editor. Editors should invoke this (typically
+// once, from their EnableEditor method) with the subset of [Gizmo] values
+// they want to offer.
+//
+// Example usage inside an editor:
+//
+//	func (e *MyEditor) EnableEditor() {
+//	    e.client.SetGizmos([]Gizmo{GizmoShift, GizmoTwist})
+//	}
+//
+// Passing an empty slice hides the primary transform gizmos (and actions
+// if GizmoClone/GizmoTrash are omitted). If SetGizmos is never called,
+// all gizmos remain visible (the historical default).
+func (world *Client) SetGizmos(gizmos []Gizmo) {
+	if world.ui == nil || world.ui.CloudControl == nil {
+		return
+	}
+	world.ui.CloudControl.SetGizmos(gizmos)
 }
 
 type Editor interface {

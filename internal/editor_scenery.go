@@ -137,6 +137,10 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 func (fe *SceneryEditor) Name() string { return "scenery" }
 
 func (fe *SceneryEditor) EnableEditor() {
+	fe.client.SetGizmos([]Gizmo{
+		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
+		GizmoSpace, GizmoClone, GizmoTrash,
+	})
 	fe.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (fe *SceneryEditor) ChangeEditor() {

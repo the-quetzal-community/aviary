@@ -32,7 +32,7 @@ type BoulderEditor struct {
 
 func (fe *BoulderEditor) Name() string { return "boulder" }
 func (fe *BoulderEditor) EnableEditor() {
-
+	fe.client.SetGizmos(nil)
 }
 func (fe *BoulderEditor) ChangeEditor() {
 
