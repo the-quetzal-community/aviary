@@ -113,19 +113,26 @@ void vertex() {
 
 	// The water body's vertical cross-section walls carry a horizontal mesh
 	// normal; the flat surface carries an up normal. Flag the walls so they
-	// render as a clean "cut through" slice (no foam, no ripple, no swell)
-	// rather than running the churning surface treatment up a vertical face.
+	// render as a clean "cut through" slice (no foam, no ripple) rather than
+	// running the churning surface treatment up a vertical face. Their TOP edge
+	// still heaves with the swell (below) so they stay welded to the ocean.
 	vec3 mesh_normal = NORMAL;
 	float side = (abs(mesh_normal.y) < 0.5) ? 1.0 : 0.0;
 	v_side = side;
 
 	// Swell only on open, still, deep water: off on rivers (flow), faded out in
-	// shallow water near the shore so crests never rise through the terrain, and
-	// off entirely on the cut-through walls (a vertical slab shouldn't heave).
+	// shallow water near the shore so crests never rise through the terrain.
 	float fl = length(v_flow);
 	float column = max(v_surface - v_floor, 0.0);
 	float shallow = (shallow_calm > 0.0001) ? clamp(column / shallow_calm, 0.0, 1.0) : 1.0;
-	float swell = wave_height * (1.0 - clamp(fl * 2.0, 0.0, 1.0)) * shallow * (1.0 - side);
+	// Heave weight: the flat plane heaves fully; on a cut-through wall only the
+	// TOP edge follows the swell while the bottom stays pinned to the bed, so the
+	// wall welds to the heaving ocean surface above AND the terrain below.
+	// (Disabling swell on walls entirely left them static, disconnecting them
+	// from the moving ocean.) A wall's top verts sit at the surface (column well
+	// above 0); its bottom verts sit on the bed (column ~= 0).
+	float heave = (side > 0.5) ? clamp(column * 4.0, 0.0, 1.0) : 1.0;
+	float swell = wave_height * (1.0 - clamp(fl * 2.0, 0.0, 1.0)) * shallow * heave;
 
 	vec3 tangent = vec3(1.0, 0.0, 0.0);
 	vec3 binormal = vec3(0.0, 0.0, 1.0);
