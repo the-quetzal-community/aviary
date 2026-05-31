@@ -1557,6 +1557,12 @@ func ensureGrassWindGlobals() {
 		RenderingServer.GlobalShaderParameterAdd("grass_wind_speed", RenderingServer.GlobalVarTypeFloat, float64(1.1))
 		RenderingServer.GlobalShaderParameterAdd("grass_wind_dir", RenderingServer.GlobalVarTypeVec2, Vector2.New(0.85, 0.35))
 		RenderingServer.GlobalShaderParameterAdd("grass_wind_bias", RenderingServer.GlobalVarTypeFloat, float64(0.0))
+		// Height-brush hover preview (see grass_wind.gdshader). Off by default;
+		// TerrainEditor.Process pushes the live brush centre/strength/radius while a
+		// height brush is hovering and resets height to 0 otherwise.
+		RenderingServer.GlobalShaderParameterAdd("grass_brush_uplift", RenderingServer.GlobalVarTypeVec2, Vector2.Zero)
+		RenderingServer.GlobalShaderParameterAdd("grass_brush_height", RenderingServer.GlobalVarTypeFloat, float64(0.0))
+		RenderingServer.GlobalShaderParameterAdd("grass_brush_radius", RenderingServer.GlobalVarTypeFloat, float64(0.0))
 	})
 }
 

@@ -41,6 +41,17 @@ global uniform vec2  grass_wind_dir;
 // the hurricane look. Driven up with the slider (see updateWeatherIntensity).
 global uniform float grass_wind_bias;
 
+// Height-brush hover preview. While a raise/lower (or river) terrain brush is
+// armed and hovering, terrain.gdshader lifts its surface by
+// grass_brush_height * (1 − d²/r²) inside the brush disc and floors it at −2
+// (see its vertex()). These globals let each grass blade ride that same preview
+// shift before the stroke commits; reprojectGrass re-plants on the real surface
+// on commit and the editor resets grass_brush_height to 0 when not previewing.
+// Only the brush centre's XZ is needed — the lift is a pure vertical offset.
+global uniform vec2  grass_brush_uplift;
+global uniform float grass_brush_height;
+global uniform float grass_brush_radius;
+
 void vertex() {
 	// The instance's plant point in world space. Every vertex of one blade
 	// shares it, so the blade hinges as a unit; using it (rather than each
@@ -86,6 +97,20 @@ void vertex() {
 	// left untouched so base geometry isn't disturbed.
 	float dropped = sqrt(max(height * height - dot(disp, disp), 0.0));
 	VERTEX.y += dropped - height;
+
+	// Height-brush preview lift (see the grass_brush_* uniforms). A pure vertical
+	// offset on the whole blade, evaluated at its root so the blade rides the
+	// previewed terrain coherently. Mirrors terrain.gdshader's disc falloff and
+	// −2 floor so grass tracks the surface the user is about to commit.
+	float br2 = grass_brush_radius * grass_brush_radius;
+	if (grass_brush_height != 0.0 && br2 > 0.0) {
+		vec2 bd = root.xz - grass_brush_uplift;
+		float bd2 = dot(bd, bd);
+		if (bd2 < br2) {
+			float lift = grass_brush_height * (1.0 - bd2 / br2);
+			VERTEX.y += max(root.y + lift, -2.0) - root.y;
+		}
+	}
 }
 
 void fragment() {

@@ -177,6 +177,15 @@ func (world musicalImpl) Change(con musical.Change) error {
 			exists.
 				SetPosition(pos).
 				SetRotation(con.Angles)
+			// This just set the object's committed Y directly. If a terrain
+			// height-brush hover preview had nudged it (objectPreviewOffsets), that
+			// transient offset is now stale — drop it so the preview's
+			// node.Y == committedY + offset invariant resets and Process re-derives
+			// a fresh offset next frame (avoids a desync when a peer moves an object
+			// while we hover a height brush over it).
+			if world.TerrainEditor != nil {
+				delete(world.TerrainEditor.objectPreviewOffsets, world.entity_to_object[con.Entity])
+			}
 			// If the Change carries an explicit Bounds (set by the
 			// scale gizmo or restored from the musical log), use it
 			// as the absolute scale. Otherwise leave whatever

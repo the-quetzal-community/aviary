@@ -21,6 +21,7 @@ import (
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/StandardMaterial3D"
@@ -179,6 +180,16 @@ type TerrainEditor struct {
 	grassHistory  []editStroke
 	waterHistory  []editStroke
 	revealHistory []editStroke
+
+	// objectPreviewOffsets holds the transient Y displacement currently applied to
+	// each placed scenery object by the live height-brush hover preview (the CPU
+	// analogue of the grass shader's grass_brush_* preview — placed objects are
+	// arbitrary meshes we don't own a shader for, so we nudge their node Y). The
+	// invariant is node.Y == committedY + offset, so the committed base is always
+	// node.Y − offset: captureObjectHeights subtracts it to measure against the
+	// real surface and reprojectObjects re-adds it, keeping the model correct
+	// across a commit. Empty when nothing is being previewed.
+	objectPreviewOffsets map[Node3D.ID]Float.X
 
 	client *Client
 
@@ -419,6 +430,9 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.TerrainBrush = ""
 	fe.brushStrokeActive = false
 	fe.setArrowsVisible(false)
+	// Settle any objects/grass left displaced by a hover preview — Process (which
+	// otherwise resets the preview each frame) won't run for this editor anymore.
+	fe.clearObjectPreview()
 
 	// Make sure the toolbar gizmos + sliders reflect the cleared brush state.
 	// (CancelPaint has explicit teardown; ChangeEditor must also keep the UI
@@ -786,6 +800,7 @@ func (tr *TerrainEditor) Ready() {
 	// their live values from the environment Wind slider.
 	ensureGrassWindGlobals()
 	tr.grassMeshes = make(map[musical.Design]grassAsset)
+	tr.objectPreviewOffsets = make(map[Node3D.ID]Float.X)
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
 	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
@@ -1134,6 +1149,12 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		vr.shader_buried.SetShaderParameter("height", preview)
 		vr.water_shader.SetShaderParameter("height", preview)
 		vr.water_shader.SetShaderParameter("river_preview", riverPreview)
+		// Carry the exact same disc-falloff preview onto the things sitting on the
+		// terrain: grass rides it in its own shader (GPU), placed objects we don't
+		// own a shader for are nudged on the CPU. Both reset to neutral on commit
+		// (reprojectGrass / reprojectObjects re-seat on the real surface).
+		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, preview)
+		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, preview)
 	} else {
 		vr.BrushAmount = 0.0
 		vr.shader.SetShaderParameter("height", 0.0)
@@ -1141,6 +1162,8 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("river_preview", 0.0)
+		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, 0)
+		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, 0)
 	}
 	vr.retryPendingGrass()
 }
@@ -1289,7 +1312,12 @@ func (vr *TerrainEditor) captureObjectHeights(target Vector3.XYZ, radius Float.X
 		if dx*dx+dz*dz > r2 {
 			continue
 		}
-		caps = append(caps, objectHeightCapture{id: id, delta: pos.Y - vr.HeightAt(pos)})
+		// Measure against the committed base, not the live position: a hover
+		// preview may have nudged node.Y by objectPreviewOffsets[id] (see
+		// updateObjectPreview). Subtract it so the captured delta is the object's
+		// true height above the real surface.
+		base := pos.Y - vr.objectPreviewOffsets[id]
+		caps = append(caps, objectHeightCapture{id: id, delta: base - vr.HeightAt(pos)})
 	}
 	return caps
 }
@@ -1297,6 +1325,8 @@ func (vr *TerrainEditor) captureObjectHeights(target Vector3.XYZ, radius Float.X
 // reprojectObjects re-seats each captured object on the freshly reshaped terrain,
 // preserving the height-above-terrain recorded by captureObjectHeights. Only the
 // Y is touched, so an object's X/Z (and any deliberate user lift) are kept exactly.
+// Any live hover-preview offset is re-added so the node.Y == committedY + offset
+// invariant survives the commit (the next Process frame then settles the preview).
 func (vr *TerrainEditor) reprojectObjects(caps []objectHeightCapture) {
 	for _, c := range caps {
 		node, ok := c.id.Instance()
@@ -1304,9 +1334,98 @@ func (vr *TerrainEditor) reprojectObjects(caps []objectHeightCapture) {
 			continue
 		}
 		pos := node.Position()
-		pos.Y = vr.HeightAt(pos) + c.delta
+		pos.Y = vr.HeightAt(pos) + c.delta + vr.objectPreviewOffsets[c.id]
 		node.SetPosition(pos)
 	}
+}
+
+// setGrassBrushPreview pushes the live height-brush hover preview (centre XZ,
+// strength, radius) to the grass shader's global uniforms so every grass blade
+// rides the previewed surface on the GPU. height 0 (passed when no height brush
+// is hovering) makes the shader's lift inert. See grass_wind.gdshader.
+func (vr *TerrainEditor) setGrassBrushPreview(target Vector3.XYZ, radius, height Float.X) {
+	RenderingServer.GlobalShaderParameterSet("grass_brush_uplift", Vector2.New(target.X, target.Z))
+	RenderingServer.GlobalShaderParameterSet("grass_brush_height", float64(height))
+	RenderingServer.GlobalShaderParameterSet("grass_brush_radius", float64(radius))
+}
+
+// updateObjectPreview is the CPU counterpart of setGrassBrushPreview for placed
+// scenery objects (arbitrary meshes we don't own a shader for): each frame it
+// nudges their node Y so they ride the live height-brush preview, matching
+// terrain.gdshader's disc falloff (amount * (1 − d²/r²), surface floored at
+// worldFloorY). It maintains the node.Y == committedY + offset invariant via
+// objectPreviewOffsets, adjusting only by the change in offset so repeated frames
+// (and an overlapping commit's reprojectObjects) never accumulate or drift.
+// Pass amount 0 to settle every object back to its committed position.
+func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount Float.X) {
+	if vr.client == nil {
+		return
+	}
+	r2 := float64(radius) * float64(radius)
+	if amount == 0 || r2 <= 0 {
+		// Not previewing: only the already-displaced objects need settling, so
+		// walk the (usually empty) offsets map rather than every placed object —
+		// this path also runs every frame while OTHER editors are active.
+		vr.restoreObjectPreview()
+		return
+	}
+	floor := Float.X(worldFloorY)
+	for _, id := range vr.client.entity_to_object {
+		node, ok := id.Instance()
+		if !ok {
+			// Node gone (e.g. deleted while previewing); drop its stale offset.
+			delete(vr.objectPreviewOffsets, id)
+			continue
+		}
+		old := vr.objectPreviewOffsets[id]
+		var want Float.X
+		pos := node.Position()
+		dx := float64(pos.X - target.X)
+		dz := float64(pos.Z - target.Z)
+		d2 := dx*dx + dz*dz
+		if d2 <= r2 {
+			// HeightAt ignores Y, so the committed terrain height under the object
+			// is correct even though node.Y carries the old offset.
+			oldH := vr.HeightAt(pos)
+			newH := oldH + amount*Float.X(1-d2/r2)
+			if newH < floor {
+				newH = floor
+			}
+			want = newH - oldH
+		}
+		if want == old {
+			continue
+		}
+		pos.Y += want - old
+		node.SetPosition(pos)
+		if want == 0 {
+			delete(vr.objectPreviewOffsets, id)
+		} else {
+			vr.objectPreviewOffsets[id] = want
+		}
+	}
+}
+
+// restoreObjectPreview settles every currently-displaced object back to its
+// committed position (node.Y − offset) and empties the offsets map.
+func (vr *TerrainEditor) restoreObjectPreview() {
+	for id, off := range vr.objectPreviewOffsets {
+		if node, ok := id.Instance(); ok && off != 0 {
+			pos := node.Position()
+			pos.Y -= off
+			node.SetPosition(pos)
+		}
+		delete(vr.objectPreviewOffsets, id)
+	}
+}
+
+// clearObjectPreview settles objects back to committed AND resets the grass
+// shader preview. Called when leaving the terrain editor, where Process (which
+// otherwise resets the preview each frame) stops running and would leave objects
+// stranded at their previewed height.
+func (vr *TerrainEditor) clearObjectPreview() {
+	vr.restoreObjectPreview()
+	vr.setGrassBrushPreview(Vector3.Zero, 0, 0)
 }
 
 // editStroke is one committed editor-level mutation (dressing / water level /

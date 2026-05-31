@@ -63,10 +63,10 @@ void vertex() {
     weights = CUSTOM1;
 }
 
-bool in_brush(vec2 uv) {
-    float dx = (world.x - uplift.x);
-    float dy = (world.z - uplift.z);
-    return dx*dx+dy*dy < radius*radius;
+bool corner_in_brush(float cx, float cz) {
+    float dx = cx - uplift.x;
+    float dz = cz - uplift.z;
+    return dx*dx + dz*dz <= radius*radius;
 }
 
 void fragment() {
@@ -127,12 +127,34 @@ void fragment() {
 
     vec3 albedo_final = albedo_tex.rgb * highlight;
 
-    if (paint_active && in_brush(base_uv)) {
-        albedo_final = texture(paint_texture, base_uv).rgb * highlight;
-        NORMAL_MAP = vec3(0.0, 0.0, 1.0);
-        ROUGHNESS = 1.0;
-        METALLIC = 0.0;
-        AO = 1.0;
+    if (paint_active) {
+        float fx = floor(world.x);
+        float fz = floor(world.z);
+        bool h00 = corner_in_brush(fx, fz);
+        bool h10 = corner_in_brush(fx + 1.0, fz);
+        bool h01 = corner_in_brush(fx, fz + 1.0);
+        bool h11 = corner_in_brush(fx + 1.0, fz + 1.0);
+
+        // Compute how much of this fragment would be contributed by newly-painted
+        // corners after a real commit (using the exact same weights + blend_sharpness
+        // the real path uses when it overwrites only the hit corners in CUSTOM0).
+        vec4 hits = vec4(h00 ? 1.0 : 0.0, h10 ? 1.0 : 0.0,
+                         h01 ? 1.0 : 0.0, h11 ? 1.0 : 0.0);
+        float paint_influence = dot(blended, hits);
+
+        if (paint_influence > 0.0) {
+            vec3 paint_color = texture(paint_texture, base_uv).rgb;
+            albedo_final = mix(albedo_tex.rgb, paint_color, paint_influence) * highlight;
+
+            // Only switch to the flat painted material properties once the new
+            // texture would dominate (keeps correct normals/ORM on the fade edges).
+            if (paint_influence > 0.5) {
+                NORMAL_MAP = vec3(0.0, 0.0, 1.0);
+                ROUGHNESS = 1.0;
+                METALLIC = 0.0;
+                AO = 1.0;
+            }
+        }
     }
 
     ALBEDO = albedo_final;
