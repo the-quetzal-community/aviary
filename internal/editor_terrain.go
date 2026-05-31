@@ -197,6 +197,7 @@ func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 	tile.water_shader = tr.water_shader
 	tile.brushEvents = tr.brushEvents
 	tile.arrows = make(map[tileCoord]*TerrainTileArrow)
+	tile.hideArrows = make(map[tileCoord]*TerrainTileArrow)
 	tr.tiles[coord] = tile
 	tr.AsNode().AddChild(tile.AsNode())
 	tile.AsNode3D().SetPosition(Vector3.New(
@@ -220,6 +221,22 @@ func (tr *TerrainEditor) revealTile(coord tileCoord) *TerrainTile {
 	tile := tr.tileAt(coord)
 	tile.reveal()
 	return tile
+}
+
+// hideTile hides the revealed tile at coord — the inverse of revealTile, the
+// explicit "retract the world" step. The tile's data + edits are preserved (it
+// just stops rendering + becomes un-pickable, exactly like a never-revealed
+// tile); a later extend restores it. Idempotent, and refuses to hide the last
+// revealed tile so the world never becomes empty + unclickable.
+func (tr *TerrainEditor) hideTile(coord tileCoord) {
+	tile, ok := tr.tiles[coord]
+	if !ok || !tile.revealed {
+		return
+	}
+	if tr.revealedCount() <= 1 {
+		return
+	}
+	tile.hide()
 }
 
 // tilesIntersecting returns every tile whose AABB intersects the given
@@ -268,6 +285,15 @@ func (tr *TerrainEditor) tileForWorld(pos Vector3.XYZ) *TerrainTile {
 	return tr.tiles[tr.coordForWorld(pos)]
 }
 
+// tileRevealedAt reports whether the TerrainTile under the given world
+// position has been explicitly revealed (and is therefore rendering).
+// Used by grass instancing to omit individual instances that land on
+// currently-hidden tiles.
+func (tr *TerrainEditor) tileRevealedAt(pos Vector3.XYZ) bool {
+	tile := tr.tileForWorld(pos)
+	return tile != nil && tile.revealed
+}
+
 func (fe *TerrainEditor) Name() string { return "terrain" }
 
 func (fe *TerrainEditor) EnableEditor() {
@@ -303,7 +329,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.setArrowsVisible(false)
 }
 
-// setArrowsVisible toggles every existing chunk's extend arrows and
+// setArrowsVisible toggles every existing chunk's extend + hide arrows and
 // remembers the state so tiles spawned later get the matching default.
 func (tr *TerrainEditor) setArrowsVisible(v bool) {
 	tr.arrowsVisible = v
@@ -311,7 +337,23 @@ func (tr *TerrainEditor) setArrowsVisible(v bool) {
 		for _, arrow := range tile.arrows {
 			arrow.AsNode3D().SetVisible(v)
 		}
+		for _, arrow := range tile.hideArrows {
+			arrow.AsNode3D().SetVisible(v)
+		}
 	}
+}
+
+// revealedCount reports how many tiles are currently part of the visible
+// world. Used to refuse hiding the last revealed tile (which would leave the
+// world empty + unclickable).
+func (tr *TerrainEditor) revealedCount() int {
+	n := 0
+	for _, tile := range tr.tiles {
+		if tile.revealed {
+			n++
+		}
+	}
+	return n
 }
 
 func (*TerrainEditor) Views() []string          { return nil }
@@ -321,9 +363,12 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		// The "terrain" tab provides the raise/lower/river height brushes as
-		// builtin items. The brush-size slider lives in the gizmo toolbar;
-		// water-level and river-depth are available as editing sliders.
-		return []string{"terrain", "editing/water_level", "editing/river_depth"}
+		// builtin items. The per-brush sliders live on the gizmo toolbar: brush
+		// size on GizmoBrush, and the active brush's strength on GizmoPower
+		// (sculpt power for raise/lower, channel depth for the river tools).
+		// water-level stays a tab — it is a property of the whole terrain, not
+		// the active brush.
+		return []string{"terrain", "editing/water_level"}
 	case ModeMaterial:
 		return []string{
 			"terrain/aquatic",
@@ -407,6 +452,9 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 		fe.dressLastSet = false
 		// Enable the editor (ensures brush ring highlight is visible).
 		fe.EnableEditor()
+		// The GizmoPower slider follows the active brush, so re-sync it to the
+		// parameter this tool exposes (sculpt power vs river-channel depth).
+		fe.refreshGizmoPowerSlider()
 		// Do not set BrushActive yet; the first press on terrain will
 		// drive the initial delta and arm the transient stroke state.
 		return
@@ -511,23 +559,53 @@ func (fe *TerrainEditor) NudgeBrushRadius(delta Float.X) Float.X {
 }
 
 // brushPowerScrollStep is how much one mouse-wheel notch changes the terrain
-// height-sculpt power when Ctrl is held (see Client.handleScroll).
+// GizmoPower parameter when Ctrl is held (see Client.handleScroll).
 const brushPowerScrollStep Float.X = 0.5
 
-// NudgeBrushPower changes the height-sculpt power by delta, clamped to the
-// slider's configured range. It returns the new power so callers can sync the
-// gizmo-toolbar power slider. Used by the Ctrl+wheel shortcut.
-func (fe *TerrainEditor) NudgeBrushPower(delta Float.X) Float.X {
-	_, min, max, _ := fe.SliderConfig(ModeGeometry, "editing/power")
-	p := fe.BrushPower + delta
-	if p < Float.X(min) {
-		p = Float.X(min)
+// GizmoPowerEditing returns the editing/* slider key the GizmoPower toolbar
+// slider drives for the currently selected terrain brush: the channel depth
+// for the river tools, otherwise the height-sculpt power (raise/lower, and the
+// neutral default). Water level is deliberately NOT here — it is a terrain-wide
+// property exposed as its own tab, not a per-brush parameter.
+func (fe *TerrainEditor) GizmoPowerEditing() string {
+	switch fe.TerrainBrush {
+	case BuiltinTerrainRiver, BuiltinTerrainRiverErase:
+		return "editing/river_depth"
+	default:
+		return "editing/power"
 	}
-	if p > Float.X(max) {
-		p = Float.X(max)
+}
+
+// refreshGizmoPowerSlider re-syncs the GizmoPower toolbar slider to the
+// parameter the active brush exposes (its range + current value), so switching
+// terrain tools updates it. No-op unless the terrain editor is active in
+// ModeGeometry (where the slider is shown).
+func (fe *TerrainEditor) refreshGizmoPowerSlider() {
+	if fe.client == nil || fe.client.ui == nil || fe.client.ui.CloudControl == nil {
+		return
 	}
-	fe.SliderHandle(ModeGeometry, "editing/power", float64(p), false)
-	return fe.BrushPower
+	if fe.client.Editing != Editing.Terrain || fe.client.ui.mode != ModeGeometry {
+		return
+	}
+	fe.client.ui.CloudControl.setPowerSliderVisible(true)
+}
+
+// NudgeGizmoPower changes the active brush's GizmoPower parameter (sculpt power
+// or river-channel depth, per GizmoPowerEditing) by delta, clamped to that
+// slider's configured range. It returns the new value so callers can sync the
+// gizmo-toolbar slider. Used by the Ctrl+wheel shortcut.
+func (fe *TerrainEditor) NudgeGizmoPower(delta Float.X) Float.X {
+	editing := fe.GizmoPowerEditing()
+	cur, min, max, _ := fe.SliderConfig(ModeGeometry, editing)
+	v := Float.X(cur) + delta
+	if v < Float.X(min) {
+		v = Float.X(min)
+	}
+	if v > Float.X(max) {
+		v = Float.X(max)
+	}
+	fe.SliderHandle(ModeGeometry, editing, float64(v), false)
+	return v
 }
 
 func (tr *TerrainEditor) Ready() {
@@ -659,16 +737,23 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		tr.brushStrokeActive = false
 		active = true
 	}
+	clearedBrush := false
 	if tr.TerrainBrush != "" {
 		tr.TerrainBrush = ""
 		tr.BrushActive = false
 		tr.BrushAmount = 0
 		active = true
+		clearedBrush = true
 	}
 	if active {
 		// No paint, dress or height brush armed: hide the ring highlight.
 		tr.shader.SetShaderParameter("brush_active", false)
 		tr.shader_buried.SetShaderParameter("brush_active", false)
+	}
+	if clearedBrush {
+		// The active brush drove the GizmoPower slider; with none selected it
+		// falls back to the sculpt-power parameter.
+		tr.refreshGizmoPowerSlider()
 	}
 	return active
 }
@@ -862,6 +947,14 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		vr.revealTile(vr.coordForWorld(brush.Target))
 		return nil
 	}
+	// "Retract the world" hides a tile — the inverse of extend, and likewise
+	// the ONLY way the visible grid shrinks. Routed through the log for the
+	// same reason: every client + replay hides the same chunk. The tile's data
+	// survives (it just stops rendering), so a later extend restores it.
+	if brush.Editor == "terrain" && brush.Slider == hideSlider {
+		vr.hideTile(vr.coordForWorld(brush.Target))
+		return nil
+	}
 	// Environment sliders for the shared world look (terrain + scenery).
 	if strings.HasPrefix(brush.Slider, "environment/") {
 		if vr.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
@@ -969,6 +1062,14 @@ const (
 // spilling over an edge).
 const extendSlider = "extend"
 
+// hideSlider tags the explicit "retract the world" mutation a red hide-arrow
+// click emits — the inverse of extendSlider. Target carries the world-space
+// center of the chunk to hide; TerrainEditor.Sculpt hides exactly that tile on
+// every client, so the visible world shrinks only through an observable,
+// reproducible step (the tile's data + edits are preserved, so a later extend
+// restores it seamlessly).
+const hideSlider = "hide"
+
 // terrainBrushDelta returns the signed height amount one click applies for
 // the given mouse button, according to the currently selected terrain brush
 // tool and the GizmoPower slider. The "raise" tool makes the primary button
@@ -1028,6 +1129,12 @@ type TerrainTile struct {
 	// cardinal sides that don't yet have a neighbour. Keyed by the
 	// unit direction (e.g. (1,0) for the +X side).
 	arrows map[tileCoord]*TerrainTileArrow
+
+	// hideArrows tracks the smaller red "retract the world" markers that
+	// sit beside each extend arrow but point the opposite way (inward).
+	// Clicking one hides this tile. Keyed identically to arrows so the two
+	// are spawned + removed together.
+	hideArrows map[tileCoord]*TerrainTileArrow
 
 	// size is the cell count along each side. The tile is size×size
 	// cells, with heights stored on a (size+1)×(size+1) grid.
@@ -1469,6 +1576,50 @@ func (tile *TerrainTile) reveal() {
 	tile.reloadSides()
 	tile.reloadWater()
 	tile.spawnArrows()
+
+	// Refresh grass instancing so that individual MultiMesh instances
+	// whose terrain tile is now revealed become visible (and vice-versa
+	// for hides on other tiles).
+	if tile.editor != nil {
+		tile.editor.refreshGrassVisibility()
+	}
+}
+
+// hide retracts a revealed tile back out of the world — the inverse of reveal.
+// It becomes invisible + un-pickable (its data survives, exactly like a
+// never-revealed tile), drops all of its own extend + hide arrows, and re-walls
+// + re-arrows each revealed neighbour so the edge it used to seal is exposed
+// again. Idempotent.
+func (tile *TerrainTile) hide() {
+	if !tile.revealed {
+		return
+	}
+	tile.revealed = false
+	tile.applyRevealState()
+	// A hidden tile shows no markers: drop our own extend + hide arrows (each
+	// removeArrow clears both for that side).
+	for dir := range tile.arrows {
+		tile.removeArrow(dir)
+	}
+	// Each revealed neighbour now faces an absent tile again: rebuild its
+	// terrain skirt + water walls on the newly-exposed edge and re-plant the
+	// extend (+ hide) arrow there.
+	for _, dir := range cardinalDirs {
+		neighbour, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]
+		if !ok || neighbour == tile || !neighbour.revealed {
+			continue
+		}
+		neighbour.reloadSides()
+		neighbour.reloadWater()
+		neighbour.spawnArrows()
+	}
+
+	// Refresh grass instancing so that individual MultiMesh instances
+	// on this tile are removed from the instancing (and instances on
+	// newly-revealed neighbours are added).
+	if tile.editor != nil {
+		tile.editor.refreshGrassVisibility()
+	}
 }
 
 // applyRevealState syncs the tile's render + pick + water state to whether it
@@ -1841,18 +1992,35 @@ func (tile *TerrainTile) spawnArrows() {
 	}
 }
 
+// addArrow plants the pair of markers on `dir`: the white "extend the world"
+// arrow pointing outward, and beside it the smaller red "retract the world"
+// arrow pointing back inward (clicking it hides this tile).
 func (tile *TerrainTile) addArrow(dir tileCoord) {
+	tile.spawnArrow(dir, false)
+	tile.spawnArrow(dir, true)
+}
+
+// spawnArrow builds one marker on `dir`. When hide is false it is the white
+// extend arrow centred on the open edge; when true it is the smaller red hide
+// arrow, offset to one side along the edge and yawed 180° so it points inward.
+func (tile *TerrainTile) spawnArrow(dir tileCoord, hide bool) {
 	arrow := new(TerrainTileArrow)
 	arrow.tile = tile
 	arrow.direction = dir
+	arrow.hide = hide
 	half := Float.X(terrainDefaultSize) / 2
-	// Position the arrow just past the open edge, sunk below ground
-	// level so it reads as a "grow here" marker tucked under the rim
-	// rather than floating up high.
+	// Both markers sit just past the open edge, sunk below ground level so they
+	// read as rim markers tucked under the edge rather than floating up high.
+	// The hide arrow is shifted sideways (perpendicular to dir) so it sits
+	// beside the extend arrow instead of overlapping it.
+	var perp Float.X
+	if hide {
+		perp = 2
+	}
 	arrow_pos := Vector3.New(
-		Float.X(dir.X)*(half+1),
+		Float.X(dir.X)*(half+1)+Float.X(dir.Z)*perp,
 		-1.5,
-		Float.X(dir.Z)*(half+1),
+		Float.X(dir.Z)*(half+1)+Float.X(dir.X)*perp,
 	)
 	tile.AsNode().AddChild(arrow.AsNode())
 	arrow.AsNode3D().SetPosition(arrow_pos)
@@ -1870,34 +2038,56 @@ func (tile *TerrainTile) addArrow(dir tileCoord) {
 	case tileCoord{0, -1}:
 		yaw = 0
 	}
-	arrow.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, yaw)
-	arrow.AsNode3D().SetVisible(tile.editor.arrowsVisible)
-	tile.arrows[dir] = arrow
-}
-
-func (tile *TerrainTile) removeArrow(dir tileCoord) {
-	arrow, ok := tile.arrows[dir]
-	if !ok {
-		return
+	if hide {
+		yaw += Angle.Pi // point back inward, opposite the extend arrow
 	}
-	arrow.AsNode().QueueFree()
-	delete(tile.arrows, dir)
+	arrow.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, yaw)
+	if hide {
+		arrow.AsNode3D().SetScale(Vector3.New(0.6, 0.6, 0.6))
+	}
+	arrow.AsNode3D().SetVisible(tile.editor.arrowsVisible)
+	if hide {
+		tile.hideArrows[dir] = arrow
+	} else {
+		tile.arrows[dir] = arrow
+	}
 }
 
-// TerrainTileArrow is a click-to-extend marker spawned by a tile on
-// each cardinal side that doesn't yet have a neighbour. Clicking the
-// arrow asks the editor to instantiate the adjacent chunk and the
-// arrow self-destructs.
+// removeArrow frees both markers on `dir` (the extend arrow and its paired hide
+// arrow) and forgets them. Safe to call for a side that has neither.
+func (tile *TerrainTile) removeArrow(dir tileCoord) {
+	if arrow, ok := tile.arrows[dir]; ok {
+		arrow.AsNode().QueueFree()
+		delete(tile.arrows, dir)
+	}
+	if arrow, ok := tile.hideArrows[dir]; ok {
+		arrow.AsNode().QueueFree()
+		delete(tile.hideArrows, dir)
+	}
+}
+
+// TerrainTileArrow is a click marker spawned by a tile on each cardinal side
+// that doesn't yet have a neighbour. It comes in two flavours (see hide): the
+// white outward arrow extends the world (reveals the adjacent chunk), and the
+// smaller red inward arrow beside it retracts the world (hides this tile).
 type TerrainTileArrow struct {
 	StaticBody3D.Extension[TerrainTileArrow] `gd:"AviaryTerrainTileArrow"`
 
 	tile      *TerrainTile
 	direction tileCoord
+	// hide flips this marker from a white outward "extend" arrow into a red
+	// inward "retract" arrow: clicking it hides tile rather than revealing the
+	// neighbour in direction.
+	hide bool
 }
 
 func (a *TerrainTileArrow) Ready() {
+	colour := Color.RGBA{R: 1, G: 1, B: 1, A: 1}
+	if a.hide {
+		colour = Color.RGBA{R: 0.9, G: 0.1, B: 0.1, A: 1}
+	}
 	material := StandardMaterial3D.New().AsBaseMaterial3D().
-		SetAlbedoColor(Color.RGBA{R: 1, G: 1, B: 1, A: 1})
+		SetAlbedoColor(colour)
 
 	// Arrowhead cone at the far end, half the old size. Its apex points
 	// +Y by default; rotate so it points along the tile's local -Z,
@@ -1940,24 +2130,37 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 	if a.tile == nil || a.tile.editor == nil {
 		return
 	}
-	coord := tileCoord{
+	ed := a.tile.editor
+	// The red hide arrow retracts the tile it sits on; the white extend arrow
+	// reveals the neighbour in `direction`. Both are shared mutations, so route
+	// them through the space rather than acting locally — that is what makes the
+	// change observable by every client and reproducible on replay (the local
+	// client applies it when the mutation loops back through Sculpt). Before a
+	// space exists (e.g. not yet joined) fall back to a direct local apply.
+	slider, coord := extendSlider, tileCoord{
 		X: a.tile.coord.X + a.direction.X,
 		Z: a.tile.coord.Z + a.direction.Z,
 	}
-	// Extending the world is a shared mutation, so route it through the space
-	// rather than revealing the tile locally — that is what makes the new chunk
-	// observable by every client and reproducible on replay (the local client
-	// reveals it when the mutation loops back through Sculpt). Before a space
-	// exists (e.g. not yet joined) fall back to a direct local reveal.
-	ed := a.tile.editor
+	if a.hide {
+		// Don't bother emitting a hide that would empty the world; hideTile
+		// would refuse it anyway.
+		if ed.revealedCount() <= 1 {
+			return
+		}
+		slider, coord = hideSlider, a.tile.coord
+	}
 	if ed.client == nil || ed.client.space == nil {
-		ed.revealTile(coord)
+		if a.hide {
+			ed.hideTile(coord)
+		} else {
+			ed.revealTile(coord)
+		}
 		return
 	}
 	ed.client.space.Sculpt(musical.Sculpt{
 		Author: ed.client.id,
 		Editor: "terrain",
-		Slider: extendSlider,
+		Slider: slider,
 		Target: Vector3.New(
 			Float.X(coord.X*terrainDefaultSize),
 			0,

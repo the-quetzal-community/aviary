@@ -62,6 +62,43 @@ const (
 	grassMaxInstances         = 3000 // safety cap per stroke
 )
 
+// populateGrassMM rebuilds the MultiMesh for a grassPatch so that it only
+// contains the instances whose terrain tile is currently revealed. The
+// patch keeps its full bases/yaws/scales (the complete sculpt data) so that
+// later reveals can add the omitted instances without re-sampling RNG.
+// Called from build/erase/reproject and when tiles change revealed state.
+func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
+	if patch.mm == MultiMesh.Nil {
+		return
+	}
+	asset, ok := vr.grassMeshes[patch.design]
+	if !ok || asset.mesh == Mesh.Nil {
+		patch.mm.SetInstanceCount(0)
+		return
+	}
+	var visible []int
+	for i := range patch.bases {
+		if vr.tileRevealedAt(patch.bases[i]) {
+			visible = append(visible, i)
+		}
+	}
+	n := len(visible)
+	patch.mm.SetInstanceCount(n)
+	for k, i := range visible {
+		patch.mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], asset.xform))
+	}
+}
+
+// refreshGrassVisibility repopulates every active grass patch's MultiMesh
+// from its full data, filtering to only the instances on revealed tiles.
+// Used after any tile reveal/hide so grasses appear/disappear with their
+// terrain chunk.
+func (vr *TerrainEditor) refreshGrassVisibility() {
+	for _, p := range vr.grassPatches {
+		vr.populateGrassMM(p)
+	}
+}
+
 // scatterGrass renders one dressing stroke. If the stroke's mesh hasn't
 // finished importing yet (common on a freshly joined client replaying the
 // log before the .glb has loaded), it's parked in pendingGrass and retried
@@ -95,6 +132,9 @@ func (vr *TerrainEditor) retryPendingGrass() {
 
 // buildGrassPatch scatters count instances of mesh within the brush disc
 // and registers a grassPatch so the placement can be re-projected later.
+// All count positions are generated (RNG advances for the full set for
+// cross-client determinism) but only those whose tile is revealed are
+// added to the MultiMesh instancing.
 func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset) {
 	count := grassCount(brush.Radius, brush.Amount)
 	if count <= 0 {
@@ -109,10 +149,8 @@ func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset)
 		yaws:   make([]Angle.Radians, count),
 		scales: make([]Float.X, count),
 	}
-	mm := MultiMesh.New()
-	mm.SetTransformFormat(MultiMesh.Transform3d)
-	mm.SetMesh(asset.mesh)
-	mm.SetInstanceCount(count)
+	// Sample the full set first (must consume RNG identically on all clients
+	// regardless of which tiles are hidden at this moment).
 	for i := 0; i < count; i++ {
 		// Uniform disc sampling: sqrt keeps density even out to the rim.
 		rad := float64(brush.Radius) * math.Sqrt(rng.float())
@@ -126,14 +164,19 @@ func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset)
 		patch.bases[i] = base
 		patch.yaws[i] = yaw
 		patch.scales[i] = scale
-		mm.SetInstanceTransform(i, vr.grassTransform(base, yaw, scale, asset.xform))
 	}
+	mm := MultiMesh.New()
+	mm.SetTransformFormat(MultiMesh.Transform3d)
+	mm.SetMesh(asset.mesh)
+	// Instance count and transforms are set by populateGrassMM (only the
+	// subset on revealed tiles).
 	mmi := MultiMeshInstance3D.New()
 	mmi.SetMultimesh(mm)
 	vr.AsNode().AddChild(mmi.AsNode())
 	patch.mm = mm
 	patch.mmNode = mmi
 	vr.grassPatches = append(vr.grassPatches, patch)
+	vr.populateGrassMM(patch)
 }
 
 // reprojectGrass re-plants the instances of every patch overlapping the
@@ -145,11 +188,9 @@ func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
 		if Float.X(math.Hypot(dx, dz)) > patch.radius+radius {
 			continue
 		}
-		for i := range patch.bases {
-			if a, ok := vr.grassMeshes[patch.design]; ok {
-				patch.mm.SetInstanceTransform(i, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], a.xform))
-			}
-		}
+		// Repopulate the (filtered) MultiMesh; this recomputes grassTransform
+		// (which re-queries HeightAt) only for the instances on revealed tiles.
+		vr.populateGrassMM(patch)
 	}
 }
 
@@ -159,8 +200,7 @@ func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
 // immediately visible and is reproduced identically on every client that
 // replays the (negative-Amount) sculpt.
 func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
-	asset, ok := vr.grassMeshes[brush.Design]
-	if !ok {
+	if _, ok := vr.grassMeshes[brush.Design]; !ok {
 		// The mesh for this design hasn't arrived yet; we can't safely
 		// rebuild the MultiMesh transforms. Skip — the erase will have
 		// no visual effect until the asset is present (extremely rare
@@ -208,10 +248,9 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 		p.bases = keptB
 		p.yaws = keptY
 		p.scales = keptS
-		p.mm.SetInstanceCount(len(keptB))
-		for k := range keptB {
-			p.mm.SetInstanceTransform(k, vr.grassTransform(keptB[k], keptY[k], keptS[k], asset.xform))
-		}
+		// Rebuild the MultiMesh from the kept (full) data, but populate only
+		// adds the subset whose tiles are revealed.
+		vr.populateGrassMM(p)
 	}
 }
 

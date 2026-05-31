@@ -176,6 +176,56 @@ func (tile *TerrainTile) riverDepthAt(gx, gz int) float32 {
 	return t.riverDepth[gx+gz*hm]
 }
 
+// riverSurfaceAt reports whether grid point (gx, gz) was carved into a river
+// channel and, if so, its river surface (original ground minus the lip) and
+// flow. Like riverDepthAt it reaches one cell into the adjacent tile past an
+// edge, so the cross-section wall can find the channel's level across a tile
+// seam/corner. carved is false off-channel or off-grid.
+func (tile *TerrainTile) riverSurfaceAt(gx, gz int) (carved bool, surface, fx, fz float32) {
+	n := tile.size
+	if n == 0 {
+		n = terrainDefaultSize
+	}
+	t := tile
+	cx, cz := tile.coord.X, tile.coord.Z
+	if gx < 0 {
+		cx, gx = cx-1, gx+n
+	} else if gx > n {
+		cx, gx = cx+1, gx-n
+	}
+	if gz < 0 {
+		cz, gz = cz-1, gz+n
+	} else if gz > n {
+		cz, gz = cz+1, gz-n
+	}
+	if cx != tile.coord.X || cz != tile.coord.Z {
+		if tile.editor == nil {
+			return false, 0, 0, 0
+		}
+		nb, ok := tile.editor.tiles[tileCoord{cx, cz}]
+		if !ok {
+			return false, 0, 0, 0
+		}
+		t = nb
+		n = t.size
+		if n == 0 {
+			n = terrainDefaultSize
+		}
+	}
+	hm := n + 1
+	if gx < 0 || gz < 0 || gx >= hm || gz >= hm {
+		return false, 0, 0, 0
+	}
+	if len(t.riverDepth) < hm*hm || len(t.groundHeights) < hm*hm {
+		return false, 0, 0, 0
+	}
+	i := gx + gz*hm
+	if t.riverDepth[i] <= waterFloorEps {
+		return false, 0, 0, 0
+	}
+	return true, t.groundHeights[i] - float32(waterSurfaceDrop), t.waterFlowX[i], t.waterFlowZ[i]
+}
+
 // WaterSurfaceAt mirrors reloadWater's waterAt: where a river has been carved
 // (riverDepth above the floor within the bank collar) the surface sits at the
 // original ground minus the small lip; otherwise it is the global lake level.
@@ -234,10 +284,14 @@ func (tile *TerrainTile) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
 	g0 := g00*(1-sx) + g10*sx
 	g1 := g01*(1-sx) + g11*sx
 	ground := g0*(1-sz) + g1*sz
-	if level > ground {
+	// Lip first, then clamp up to the global level — matches reloadWater's
+	// waterAt (and the wall) so the post-process waterline tracks the rendered
+	// surface, including the band where the level sits just above the lip.
+	surface := ground - waterSurfaceDrop
+	if level > surface {
 		return level
 	}
-	return ground - waterSurfaceDrop
+	return surface
 }
 
 // applyWaterLevel sets the shared water surface level, pushes it to the water
@@ -314,50 +368,59 @@ func (tile *TerrainTile) reloadWater() {
 	floors_water := make([]float32, n*n*6*4)
 	inv := Float.X(1) / Float.X(n)
 	hasRiver := hasHeights && len(tile.groundHeights) >= hm*hm && len(tile.riverDepth) >= hm*hm
-	// waterAt returns the per-vertex water-surface Y and the normalised world
-	// XZ flow direction at grid point (x,y). Where a river has carved below the
-	// original ground (groundHeights-heights > eps) the surface sits at the
-	// original ground ("where the terrain used to be") and flows; everywhere
-	// else it falls back to the global lake level with no flow — so a project
-	// with no rivers renders exactly as before.
+	// waterAt is the SINGLE source of truth for the per-vertex water-surface Y and
+	// normalised world-XZ flow at grid point (x,y) — used by BOTH the flat plane
+	// and the cross-section wall top, so the two surfaces are welded by
+	// construction. (When the plane and the wall computed their tops from
+	// different rules they diverged at the channel edge: either the wall climbed
+	// the bank above the plane — the stray triangle — or it sat below the plane —
+	// a hole. One function removes that whole class of bug. The shader applies NO
+	// floor clamp to the geometry, so a difference here is a real gap, not
+	// something occlusion hides.)
+	//
+	// The surface is
+	//   max( min(local_ground - lip, channel_level), global_level )
+	// on any carved cell or its bank collar, and the flat global level on dry land
+	// away from a river. Taking the lip off the LOCAL ground and clamping DOWN to
+	// the nearby channel keeps the sheet from climbing a higher bank; clamping UP
+	// to the global level keeps it from dipping under the body of water it
+	// connects to (oceans, sunken banks). Dry cells fall back to the flat level so
+	// a project with no rivers renders exactly as before. riverSurfaceAt reaches
+	// across tile seams so adjacent tiles agree at a shared edge/corner.
 	waterAt := func(x, y int) (surface Float.X, fx, fz float32) {
 		surface = level
 		if !hasRiver {
 			return surface, 0, 0
 		}
-		idx := x + y*hm
-		ground := tile.groundHeights[idx]
-		// A point carries river water if it — or, so the water laps onto the
-		// bank rather than ending in a clamped wall, any neighbour within
-		// riverBankCollar cells — was carved below the original ground.
-		present := tile.riverDepth[idx] > waterFloorEps
-		for dz := -riverBankCollar; dz <= riverBankCollar && !present; dz++ {
-			for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
-				// riverDepthAt reaches across the tile seam so adjacent tiles test
-				// the same cells here and agree on water presence at a shared edge
-				// — without it their side walls disagree and a gap opens.
-				if tile.riverDepthAt(x+dx, y+dz) > waterFloorEps {
-					present = true
-					break
+		ground := tile.groundHeights[x+y*hm]
+		carved, _, cfx, cfz := tile.riverSurfaceAt(x, y)
+		found := carved
+		var channel float32
+		if !carved {
+			// Lap one cell onto the bank: adopt the LOWEST nearby channel surface
+			// so the sheet extends flat off the channel instead of ending in a
+			// vertical edge (and the higher bank terrain then occludes it).
+			for dz := -riverBankCollar; dz <= riverBankCollar; dz++ {
+				for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
+					if c, cs, ffx, ffz := tile.riverSurfaceAt(x+dx, y+dz); c && (!found || cs < channel) {
+						found, channel, cfx, cfz = true, cs, ffx, ffz
+					}
 				}
 			}
 		}
-		if !present {
-			return surface, 0, 0
+		if !found {
+			return level, 0, 0 // dry, away from any river -> the flat global lake
 		}
-		// Sit the surface at the ORIGINAL ground ("as if the terrain were still
-		// there") so the river follows the slope and connects to its banks; the
-		// shader clamps it to the carved floor, so the collar lies flush on the
-		// dry bank while the channel itself fills with visible water.
-		if float32(level) > ground {
-			surface = level // global lake is higher than this bed; keep the lake
-		} else {
-			// Sit slightly below the original ground for a small bank lip.
-			surface = Float.X(ground) - waterSurfaceDrop
+		s := ground - float32(waterSurfaceDrop) // a lip below the local terrain
+		if !carved && channel < s {
+			s = channel // bank: extend the channel level flat, don't climb the bank
 		}
-		nx, nz := tile.waterFlowX[idx], tile.waterFlowZ[idx]
-		if mag := Float.Sqrt(Float.X(nx*nx + nz*nz)); mag > 1e-6 {
-			fx, fz = nx/float32(mag), nz/float32(mag)
+		surface = Float.X(s)
+		if level > surface {
+			surface = level // never under the global level
+		}
+		if mag := Float.Sqrt(Float.X(cfx*cfx + cfz*cfz)); mag > 1e-6 {
+			fx, fz = cfx/float32(mag), cfz/float32(mag)
 		}
 		return surface, fx, fz
 	}
@@ -484,9 +547,11 @@ func (tile *TerrainTile) reloadWater() {
 					floorNear = max(worldFloorY, tile.heights[gnx+gnz*hm])
 					floorFar = max(worldFloorY, tile.heights[gfx+gfz*hm])
 				}
-				// Per-edge water surface (matches the plane edge so the wall
-				// stays connected) and flow, so a river that reaches the tile
-				// boundary raises the wall to its surface and flows along it.
+				// Per-edge water surface + flow from the SAME waterAt the plane
+				// uses, so the wall top is identical to the plane's edge row of
+				// vertices and the two weld seamlessly (no climbing triangle, no
+				// gap). waterAt already clamps the bank to the channel level, so a
+				// raised bank never lifts the wall above the river.
 				topNearS, fnx, fnz := waterAt(gnx, gnz)
 				topFarS, ffx, ffz := waterAt(gfx, gfz)
 				topNear := float32(topNearS)
@@ -510,17 +575,23 @@ func (tile *TerrainTile) reloadWater() {
 				if sp.fixed == 0 {
 					fixedPos = sp.fixed + waterSideZFightOffset
 				}
+				// Never let the bottom rise above the surface: at a dry bank vertex
+				// (bed above the channel level) the column collapses to nothing
+				// rather than drawing a wedge up to the bank. Where there is water,
+				// floor < top, so this is just the bed.
+				botNear := min(floorNear, topNear)
+				botFar := min(floorFar, topFar)
 				var tl, tr, bl, br Vector3.XYZ
 				if sp.isZFixed {
 					tl = Vector3.XYZ{pos_near, topNear, sp.fixed}
 					tr = Vector3.XYZ{pos_far, topFar, sp.fixed}
-					bl = Vector3.XYZ{pos_near, floorNear, fixedPos}
-					br = Vector3.XYZ{pos_far, floorFar, fixedPos}
+					bl = Vector3.XYZ{pos_near, botNear, fixedPos}
+					br = Vector3.XYZ{pos_far, botFar, fixedPos}
 				} else {
 					tl = Vector3.XYZ{sp.fixed, topNear, pos_near}
 					tr = Vector3.XYZ{sp.fixed, topFar, pos_far}
-					bl = Vector3.XYZ{fixedPos, floorNear, pos_near}
-					br = Vector3.XYZ{fixedPos, floorFar, pos_far}
+					bl = Vector3.XYZ{fixedPos, botNear, pos_near}
+					br = Vector3.XYZ{fixedPos, botFar, pos_far}
 				}
 				// One uniform OUTWARD normal for the whole side, so the cut-through
 				// wall is lit as a single flat face. A per-quad cross product tilts

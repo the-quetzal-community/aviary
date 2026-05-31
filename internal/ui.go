@@ -57,7 +57,6 @@ type UI struct {
 		Redo     TextureButton.Instance
 		Export   TextureButton.Instance
 		Help     TextureButton.Instance
-		Shading  TextureButton.Instance // lighting / environment rolldown trigger
 	}
 
 	// SettingsMenu is the panel that rolls out from the Toolbar triangle
@@ -71,7 +70,7 @@ type UI struct {
 
 	// EnvironmentMenu is the lighting/fog/weather rolldown (sun azimuth/
 	// elevation, energy, fog density). Triggered from the Shading button
-	// in the Toolbar. Uses the same Rollout mechanism as SettingsMenu.
+	// on the EditorIndicator. Uses the same Rollout mechanism as SettingsMenu.
 	// Its 4 sliders are created dynamically so the .tscn change stays tiny.
 	EnvironmentMenu Panel.Instance
 
@@ -140,9 +139,6 @@ func (ui *UI) Setup() {
 	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("HelpMe")); ok {
 		ui.Toolbar.Help = btn
 	}
-	if btn, ok := Object.As[TextureButton.Instance](toolbar.GetNode("Shading")); ok {
-		ui.Toolbar.Shading = btn
-	}
 	ui.Toolbar.Settings.AsBaseButton().OnPressed(ui.toggleSettings)
 	ui.Toolbar.Undo.AsBaseButton().OnPressed(ui.undo)
 	ui.Toolbar.Redo.AsBaseButton().OnPressed(ui.redo)
@@ -153,7 +149,7 @@ func (ui *UI) Setup() {
 	ui.Toolbar.Help.AsBaseButton().OnPressed(func() {
 		OS.ShellOpen(guideURL)
 	})
-	ui.Toolbar.Shading.AsBaseButton().OnPressed(ui.toggleEnvironment)
+	ui.EditorIndicator.Shading.AsBaseButton().OnPressed(ui.toggleEnvironment)
 
 	ui.buildSettingsMenu()
 	ui.buildEnvironmentMenu()
@@ -166,7 +162,7 @@ func (ui *UI) Setup() {
 
 	// Spin the cog / shading icon each time its menu rolls out or in.
 	ui.settingsRollout.icon = ui.Toolbar.Settings.AsControl()
-	ui.environmentRollout.icon = ui.Toolbar.Shading.AsControl()
+	ui.environmentRollout.icon = ui.EditorIndicator.Shading.AsControl()
 }
 
 // buildSettingsMenu wires the graphics-quality slider that lives in the

@@ -21,6 +21,12 @@ type EditorIndicator struct {
 		EditorTypes VBoxContainer.Instance
 	}
 
+	// Shading is the lighting / environment rolldown trigger. It used to
+	// live in the Toolbar but now sits beside the editor switcher; its
+	// rollout (environmentRollout) and handler still live on UI, which
+	// wires this button in UI.Setup.
+	Shading TextureButton.Instance
+
 	// Arrows is the up/down chevron overlaid on the editor icon; it spins
 	// when the selector rolls out and in (wired as the rollout's icon).
 	Arrows TextureRect.Instance

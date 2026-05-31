@@ -25,12 +25,12 @@
 [ext_resource type="Texture2D" uid="uid://47rl4j222xrm" path="res://ui/shelter.svg" id="20_i6rcl"]
 [ext_resource type="Texture2D" uid="uid://d3nq482anjp6c" path="res://ui/vehicle.svg" id="20_sb7vj"]
 [ext_resource type="Texture2D" uid="uid://bgdasw0ni1og3" path="res://ui/rounded.svg" id="21_bs2fd"]
-[ext_resource type="Texture2D" uid="uid://cgenijo08vjch" path="res://ui/gizmo/cursor.svg" id="25_0ad7g"]
+[ext_resource type="Texture2D" uid="uid://cgenijo08vjch" path="res://ui/gizmo/point.svg" id="25_0ad7g"]
 [ext_resource type="Texture2D" uid="uid://cavxbxorbvylu" path="res://ui/toaster.svg" id="25_hvudo"]
 [ext_resource type="Texture2D" uid="uid://clkb7u0w8sh2k" path="res://ui/helpme.svg" id="26_ckd56"]
 [ext_resource type="Texture2D" uid="uid://bynlkojambmd3" path="res://ui/quality.svg" id="26_hvudo"]
-[ext_resource type="Texture2D" uid="uid://dwodcy8axfahv" path="res://ui/moving.svg" id="26_nmgcu"]
-[ext_resource type="Texture2D" uid="uid://ba27w1ohk0wrl" path="res://ui/rotate.svg" id="27_nterg"]
+[ext_resource type="Texture2D" uid="uid://dwodcy8axfahv" path="res://ui/gizmo/shift.svg" id="26_nmgcu"]
+[ext_resource type="Texture2D" uid="uid://ba27w1ohk0wrl" path="res://ui/gizmo/twist.svg" id="27_nterg"]
 [ext_resource type="Texture2D" uid="uid://bme16r67ciq1p" path="res://ui/scales.svg" id="28_nterg"]
 [ext_resource type="Texture2D" uid="uid://bbuujrcrjflt8" path="res://ui/citizen.svg" id="29_hwdbu"]
 [ext_resource type="Texture2D" uid="uid://ckhyr2lsi0att" path="res://ui/critter.svg" id="30_6p2ph"]
@@ -720,9 +720,8 @@ anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -456.8579
-offset_top = -920
+offset_top = -920.0
 offset_right = 47.820557
-offset_bottom = 0
 grow_horizontal = 0
 scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(420, 0)
@@ -768,16 +767,6 @@ offset_top = 324.15732
 offset_right = 82.990524
 offset_bottom = 402.15594
 texture_normal = ExtResource("33_settings")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="Shading" type="TextureButton" parent="Toolbar" unique_id=1614308388]
-layout_mode = 0
-offset_left = 95.0
-offset_top = 305.0
-offset_right = 173.0
-offset_bottom = 383.0
-texture_normal = ExtResource("3_c55ig")
 ignore_texture_size = true
 stretch_mode = 5
 
@@ -858,6 +847,16 @@ scale = Vector2(1.2781104, 1.2592566)
 pivot_offset = Vector2(100, 100)
 mouse_filter = 2
 
+[node name="Shading" type="TextureButton" parent="EditorIndicator" unique_id=1614308388]
+layout_mode = 0
+offset_left = -20.675562
+offset_top = -1.7474875
+offset_right = 78.38157
+offset_bottom = 97.30964
+texture_normal = ExtResource("3_c55ig")
+ignore_texture_size = true
+stretch_mode = 5
+
 [node name="EditorSelector" type="Panel" parent="EditorIndicator" unique_id=519162058]
 z_index = -1
 layout_mode = 0
@@ -936,20 +935,20 @@ grow_vertical = 0
 
 [node name="EditorIcon" type="TextureButton" parent="EditorIndicator" unique_id=1042978839]
 layout_mode = 0
-offset_left = 45.90574
-offset_top = 1.6280613
-offset_right = 197.57944
-offset_bottom = 120.12313
+offset_left = 45.310535
+offset_top = 20.388313
+offset_right = 196.98424
+offset_bottom = 138.88339
 pivot_offset = Vector2(59.656982, 53.900574)
 texture_normal = ExtResource("14_8sq1u")
 stretch_mode = 4
 
 [node name="Arrows" type="TextureRect" parent="EditorIndicator" unique_id=1048505585]
 layout_mode = 1
-offset_left = 98.81948
-offset_top = 102.306656
-offset_right = 149.58871
-offset_bottom = 153.0759
+offset_left = 98.22428
+offset_top = 121.06691
+offset_right = 148.99352
+offset_bottom = 171.83615
 mouse_filter = 2
 texture = ExtResource("15_ny7lf")
 expand_mode = 1

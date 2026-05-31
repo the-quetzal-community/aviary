@@ -218,6 +218,7 @@ func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
 }
 
 func (ui *CloudControl) Ready() {
+	assertMainThread("CloudControl.Ready")
 	// Gizmo buttons are now created dynamically by SetGizmos (which
 	// runs on every editor switch) and wired at creation time in
 	// newGizmoButton. The persistent Duplicate/Delete action buttons
@@ -314,6 +315,7 @@ func (ui *CloudControl) Process(dt Float.X) {
 // themed grabber) and wires its value_changed to onChanged. Shared by the
 // brush-size and dressing-density sliders.
 func (ui *CloudControl) newToolbarSlider(min, max, step, init float64, onChanged func(value Float.X)) HSlider.Instance {
+	assertMainThread("newToolbarSlider")
 	slider := HSlider.Advanced(HSlider.New())
 	slider.AsRange().SetMin(min)
 	slider.AsRange().SetMax(max)
@@ -373,16 +375,18 @@ func (ui *CloudControl) buildDensitySlider() {
 	ui.densitySliderReady = true
 }
 
-// buildPowerSlider creates the terrain height-sculpt power slider. Like the
-// size slider it's created hidden and pinned in the toolbar; it's only
-// revealed while the terrain editor is in ModeGeometry, and feeds the
-// "editing/power" slider channel (the raise/lower brush strength).
+// buildPowerSlider creates the GizmoPower toolbar slider. Like the size slider
+// it's created hidden and pinned in the toolbar; it's only revealed while the
+// terrain editor is in ModeGeometry. It follows the active brush, feeding
+// whichever editing channel GizmoPowerEditing reports (sculpt power for
+// raise/lower, channel depth for the river tools).
 func (ui *CloudControl) buildPowerSlider() {
 	ui.powerSlider = ui.newToolbarSlider(0.1, 10, 0.1, 2, func(value Float.X) {
 		if ui.client == nil {
 			return
 		}
-		ui.client.TerrainEditor.SliderHandle(ModeGeometry, "editing/power", float64(value), false)
+		editing := ui.client.TerrainEditor.GizmoPowerEditing()
+		ui.client.TerrainEditor.SliderHandle(ModeGeometry, editing, float64(value), false)
 	})
 	ui.powerSliderReady = true
 }
@@ -391,6 +395,7 @@ func (ui *CloudControl) buildPowerSlider() {
 // When revealing, it syncs the slider's range and current value from the
 // terrain editor so it reflects the live brush radius.
 func (ui *CloudControl) setSizeSliderVisible(v bool) {
+	assertMainThread("setSizeSliderVisible")
 	if !ui.sizeSliderReady {
 		return
 	}
@@ -409,6 +414,7 @@ func (ui *CloudControl) setSizeSliderVisible(v bool) {
 // re-emitting value_changed — the caller has already applied the radius
 // (e.g. Shift+scroll resizing the terrain brush).
 func (ui *CloudControl) setSizeSliderValue(v float64) {
+	assertMainThread("setSizeSliderValue")
 	if !ui.sizeSliderReady {
 		return
 	}
@@ -418,6 +424,7 @@ func (ui *CloudControl) setSizeSliderValue(v float64) {
 // setDensitySliderVisible reveals or hides the dressing-density slider,
 // syncing its range and value from the terrain editor when revealing.
 func (ui *CloudControl) setDensitySliderVisible(v bool) {
+	assertMainThread("setDensitySliderVisible")
 	if !ui.densitySliderReady {
 		return
 	}
@@ -432,14 +439,18 @@ func (ui *CloudControl) setDensitySliderVisible(v bool) {
 	ui.densitySlider.AsCanvasItem().SetVisible(v)
 }
 
-// setPowerSliderVisible reveals or hides the terrain height-sculpt power
-// slider, syncing its range and value from the terrain editor when revealing.
+// setPowerSliderVisible reveals or hides the GizmoPower toolbar slider, syncing
+// its range and value to whatever parameter the active brush exposes (via
+// GizmoPowerEditing) when revealing. Also called on a terrain-tool change to
+// re-sync the slider to the newly selected brush's parameter.
 func (ui *CloudControl) setPowerSliderVisible(v bool) {
+	assertMainThread("setPowerSliderVisible")
 	if !ui.powerSliderReady {
 		return
 	}
 	if v && ui.client != nil {
-		init, min, max, step := ui.client.TerrainEditor.SliderConfig(ModeGeometry, "editing/power")
+		editing := ui.client.TerrainEditor.GizmoPowerEditing()
+		init, min, max, step := ui.client.TerrainEditor.SliderConfig(ModeGeometry, editing)
 		r := Range.Advanced(ui.powerSlider.AsRange())
 		r.SetMin(min)
 		r.SetMax(max)
@@ -449,10 +460,11 @@ func (ui *CloudControl) setPowerSliderVisible(v bool) {
 	ui.powerSlider.AsCanvasItem().SetVisible(v)
 }
 
-// setPowerSliderValue moves the power slider's handle to v without
-// re-emitting value_changed — the caller has already applied the power
-// (e.g. Ctrl+scroll adjusting the height-sculpt strength).
+// setPowerSliderValue moves the GizmoPower slider's handle to v without
+// re-emitting value_changed — the caller has already applied the value
+// (e.g. Ctrl+scroll adjusting the active brush's power / river depth).
 func (ui *CloudControl) setPowerSliderValue(v float64) {
+	assertMainThread("setPowerSliderValue")
 	if !ui.powerSliderReady {
 		return
 	}
@@ -483,6 +495,7 @@ func (ui *CloudControl) positionSizeSlider() {
 	)
 	const gap = 12
 	size := ui.sizeSlider.AsControl().Size()
+	assertMainThread("positionSizeSlider")
 	ui.sizeSlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
 }
 
@@ -509,6 +522,7 @@ func (ui *CloudControl) positionDensitySlider() {
 	const gap = 12
 	const stack = 56 // vertical offset below the size slider's centre line
 	size := ui.densitySlider.AsControl().Size()
+	assertMainThread("positionDensitySlider")
 	ui.densitySlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5+stack))
 }
 
@@ -534,6 +548,7 @@ func (ui *CloudControl) positionPowerSlider() {
 	)
 	const gap = 12
 	size := ui.powerSlider.AsControl().Size()
+	assertMainThread("positionPowerSlider")
 	ui.powerSlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
 }
 

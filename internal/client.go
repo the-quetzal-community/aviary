@@ -840,9 +840,10 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 			case Input.IsKeyPressed(Input.KeyCtrl) && world.Editing == Editing.Terrain:
-				// Ctrl+wheel adjusts the terrain height-sculpt power (and nudges
-				// the gizmo-toolbar power slider) instead of dollying the camera.
-				// WheelUp strengthens the brush; WheelDown weakens it.
+				// Ctrl+wheel adjusts the active brush's GizmoPower parameter —
+				// sculpt power for raise/lower, channel depth for the river tools
+				// — (and nudges the gizmo-toolbar slider) instead of dollying the
+				// camera. WheelUp increases it; WheelDown decreases it.
 				var delta Float.X
 				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
 					delta = brushPowerScrollStep
@@ -851,7 +852,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					delta = -brushPowerScrollStep
 				}
 				if delta != 0 {
-					p := world.TerrainEditor.NudgeBrushPower(delta)
+					p := world.TerrainEditor.NudgeGizmoPower(delta)
 					if world.ui != nil && world.ui.CloudControl != nil {
 						world.ui.CloudControl.setPowerSliderValue(float64(p))
 					}
