@@ -163,6 +163,15 @@ type TerrainEditor struct {
 	grassMeshes  map[musical.Design]grassAsset
 	pendingGrass []musical.Sculpt
 
+	// Undo/redo histories for the editor-level mutations (those not held per
+	// tile): dressing scatter/erase, water level, and tile extend/hide. Each
+	// committed stroke is appended; a Revert sculpt toggles the matching entry's
+	// reverted flag and the subsystem recomputes from the survivors. Per-tile
+	// height/paint/river strokes live in TerrainTile.history instead.
+	grassHistory  []editStroke
+	waterHistory  []editStroke
+	revealHistory []editStroke
+
 	client *Client
 
 	// lighting holds the shared world lighting used by both Terrain and
@@ -368,7 +377,12 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 		// (sculpt power for raise/lower, channel depth for the river tools).
 		// water-level stays a tab — it is a property of the whole terrain, not
 		// the active brush.
-		return []string{"terrain", "editing/water_level"}
+		return []string{
+			"terrain",
+			"streams",
+			"lagoons",
+			"editing/water_level",
+		}
 	case ModeMaterial:
 		return []string{
 			"terrain/aquatic",
@@ -395,30 +409,38 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 // the primary content of the tab (no library preview directory is
 // required for the tab to be shown).
 func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
-	if mode != ModeGeometry || tab != "terrain" {
+	if mode != ModeGeometry {
 		return nil
 	}
-	return []BuiltinDesign{
-		{
-			Resource: BuiltinTerrainRaise,
-			Icon:     "res://ui/terrain.svg",
-			Label:    "Raise terrain",
-		},
-		{
-			Resource: BuiltinTerrainLower,
-			Icon:     "res://ui/editing.svg",
-			Label:    "Lower terrain",
-		},
-		{
-			Resource: BuiltinTerrainRiver,
-			Icon:     "res://ui/editing.svg",
-			Label:    "River",
-		},
-		{
-			Resource: BuiltinTerrainRiverErase,
-			Icon:     "res://ui/editing.svg",
-			Label:    "River eraser",
-		},
+	switch tab {
+	case "streams":
+		return []BuiltinDesign{
+			{
+				Resource: BuiltinTerrainRiver,
+				Icon:     "res://ui/editing.svg",
+				Label:    "River",
+			},
+			{
+				Resource: BuiltinTerrainRiverErase,
+				Icon:     "res://ui/editing.svg",
+				Label:    "River eraser",
+			},
+		}
+	case "terrain":
+		return []BuiltinDesign{
+			{
+				Resource: BuiltinTerrainRaise,
+				Icon:     "res://ui/terrain.svg",
+				Label:    "Raise terrain",
+			},
+			{
+				Resource: BuiltinTerrainLower,
+				Icon:     "res://ui/editing.svg",
+				Label:    "Lower terrain",
+			},
+		}
+	default:
+		return nil
 	}
 }
 
@@ -509,7 +531,7 @@ func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, 
 			return
 		}
 		fe.lastWaterSync = time.Now()
-		fe.client.space.Sculpt(musical.Sculpt{
+		fe.client.commitSculpt(musical.Sculpt{
 			Author: fe.client.id,
 			Editor: "terrain",
 			Slider: "editing/water_level",
@@ -710,7 +732,7 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 }
 
 func (tr *TerrainEditor) Paint() {
-	tr.client.space.Sculpt(musical.Sculpt{
+	tr.client.commitSculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
@@ -780,7 +802,7 @@ func (tr *TerrainEditor) PaintDressing() {
 	}
 	tr.dressLast = tr.BrushTarget
 	tr.dressLastSet = true
-	tr.client.space.Sculpt(musical.Sculpt{
+	tr.client.commitSculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Editor: "terrain",
 		Slider: tr.DressTab,
@@ -812,7 +834,7 @@ func (tr *TerrainEditor) EraseDressing() {
 	}
 	tr.dressLast = tr.BrushTarget
 	tr.dressLastSet = true
-	tr.client.space.Sculpt(musical.Sculpt{
+	tr.client.commitSculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Editor: "terrain",
 		Slider: tr.DressTab,
@@ -930,10 +952,26 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 }
 
 func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
+	// A Revert sculpt carries the (Author, Timing) identity of a previously
+	// committed stroke; undo/redo toggle that stroke off/on and recompute the
+	// affected subsystem from the survivors. It carries the original routing
+	// fields, so dispatch it by the same keys the forward stroke used.
+	if brush.Revert {
+		vr.revertSculpt(brush)
+		return nil
+	}
+	// Seed the local Timing counter from our own replayed strokes so a fresh
+	// session never reissues an identity an undo could later collide with.
+	if brush.Commit && vr.client != nil && brush.Author == vr.client.id {
+		vr.client.noteTiming(brush.Timing)
+	}
 	// Water-level slider sculpts are routed through the terrain editor but
 	// are not height/paint/dressing edits, so handle them up front.
 	if brush.Slider == "editing/water_level" {
 		vr.applyWaterLevel(Float.X(brush.Amount))
+		if brush.Commit {
+			vr.waterHistory = append(vr.waterHistory, editStroke{brush: brush})
+		}
 		return nil
 	}
 	// "Extend the world" reveals a tile, and is the ONLY way the visible grid
@@ -945,6 +983,9 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// missing elsewhere and its revealed neighbours would wall into the gap.
 	if brush.Editor == "terrain" && brush.Slider == extendSlider {
 		vr.revealTile(vr.coordForWorld(brush.Target))
+		if brush.Commit {
+			vr.revealHistory = append(vr.revealHistory, editStroke{brush: brush})
+		}
 		return nil
 	}
 	// "Retract the world" hides a tile — the inverse of extend, and likewise
@@ -953,6 +994,9 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// survives (it just stops rendering), so a later extend restores it.
 	if brush.Editor == "terrain" && brush.Slider == hideSlider {
 		vr.hideTile(vr.coordForWorld(brush.Target))
+		if brush.Commit {
+			vr.revealHistory = append(vr.revealHistory, editStroke{brush: brush})
+		}
 		return nil
 	}
 	// Environment sliders for the shared world look (terrain + scenery).
@@ -977,6 +1021,9 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		} else {
 			vr.scatterGrass(brush)
 		}
+		if brush.Commit {
+			vr.grassHistory = append(vr.grassHistory, editStroke{brush: brush})
+		}
 		return nil
 	}
 	if brush.Author == vr.client.id {
@@ -999,6 +1046,116 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	return nil
 }
 
+// editStroke is one committed editor-level mutation (dressing / water level /
+// extend-hide) retained for undo, mirroring tileStroke for the per-tile ops.
+type editStroke struct {
+	brush    musical.Sculpt
+	reverted bool
+}
+
+// revertEdit toggles the reverted flag of the entry in hist matching
+// (author, timing) and reports whether one was found. The slice header is passed
+// by value but its elements share the backing array, so the toggle is visible to
+// the caller.
+func revertEdit(hist []editStroke, author musical.Author, timing musical.Timing) bool {
+	for i := range hist {
+		if hist[i].brush.Author == author && hist[i].brush.Timing == timing {
+			hist[i].reverted = !hist[i].reverted
+			return true
+		}
+	}
+	return false
+}
+
+// revertSculpt applies a Revert sculpt: it routes by the same keys the forward
+// stroke used, toggles the matching committed stroke's reverted flag in the
+// subsystem that owns it, and recomputes that subsystem from the survivors. Undo
+// and redo emit the identical Revert (a toggle), so replaying the persisted
+// Revert log reproduces the final state on any client.
+func (vr *TerrainEditor) revertSculpt(brush musical.Sculpt) {
+	switch {
+	case brush.Slider == "editing/water_level":
+		if revertEdit(vr.waterHistory, brush.Author, brush.Timing) {
+			vr.recomputeWater()
+		}
+	case brush.Editor == "terrain" && (brush.Slider == extendSlider || brush.Slider == hideSlider):
+		if revertEdit(vr.revealHistory, brush.Author, brush.Timing) {
+			vr.recomputeReveal()
+		}
+	case brush.Slider != "" && brush.Design != (musical.Design{}):
+		if revertEdit(vr.grassHistory, brush.Author, brush.Timing) {
+			vr.recomputeGrass()
+		}
+	default:
+		// Tile op (height / paint / river): toggle the stroke in every tile it
+		// touched and recompute those tiles from their surviving history.
+		reverted := false
+		for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
+			if tile.revert(brush.Author, brush.Timing) {
+				tile.recompute()
+				reverted = true
+			}
+		}
+		// A height change moves grass; re-plant it after the tiles recompute
+		// (deferred so the new heights are in place), mirroring the forward path.
+		if reverted && len(vr.grassPatches) > 0 {
+			target, radius := brush.Target, brush.Radius
+			Callable.Defer(Callable.New(func() {
+				vr.reprojectGrass(target, radius)
+			}))
+		}
+	}
+}
+
+// recomputeWater re-derives the water level from the surviving water-level
+// strokes (last writer wins; default −2 — the Ready baseline).
+func (vr *TerrainEditor) recomputeWater() {
+	level := Float.X(-2)
+	for i := range vr.waterHistory {
+		if !vr.waterHistory[i].reverted {
+			level = Float.X(vr.waterHistory[i].brush.Amount)
+		}
+	}
+	vr.applyWaterLevel(level)
+}
+
+// recomputeReveal returns the grid to the starter baseline and replays the
+// surviving extend/hide strokes in commit order.
+func (vr *TerrainEditor) recomputeReveal() {
+	vr.resetReveal()
+	for i := range vr.revealHistory {
+		e := vr.revealHistory[i]
+		if e.reverted {
+			continue
+		}
+		coord := vr.coordForWorld(e.brush.Target)
+		if e.brush.Slider == hideSlider {
+			vr.hideTile(coord)
+		} else {
+			vr.revealTile(coord)
+		}
+	}
+}
+
+// resetReveal returns the visible grid to the baseline — only the starter tile
+// {0,0} revealed (see Ready). recomputeReveal then replays the active log.
+// Coords are collected before hiding so a tile.hide() that touches neighbours
+// can't disturb the map mid-range.
+func (vr *TerrainEditor) resetReveal() {
+	var toHide []tileCoord
+	for coord, tile := range vr.tiles {
+		if coord != (tileCoord{0, 0}) && tile.revealed {
+			toHide = append(toHide, coord)
+		}
+	}
+	for _, coord := range toHide {
+		if tile, ok := vr.tiles[coord]; ok {
+			tile.hide()
+		}
+	}
+	vr.revealTile(tileCoord{0, 0})
+}
+
 type terrainBrushEvent struct {
 	BrushTarget Vector3.XYZ
 	BrushDeltaV Float.X
@@ -1015,7 +1172,7 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 		if !tr.PaintActive && tr.BrushActive && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased() {
 			if tr.BrushAmount != 0 {
-				tr.client.space.Sculpt(musical.Sculpt{
+				tr.client.commitSculpt(musical.Sculpt{
 					Author: tr.client.id,
 					Target: tr.BrushTarget,
 					Radius: tr.BrushRadius,
@@ -1123,7 +1280,20 @@ type TerrainTile struct {
 	// reveal); the starter tile is revealed in Ready.
 	revealed  bool
 	reloading bool
-	sculpts   []musical.Sculpt
+	// fullReload, when set before the deferred rebuild runs, makes it reset the
+	// accumulators and replay the active history (recompute) rather than just
+	// accumulating the pending batch. Set by recompute(); consumed once per frame.
+	fullReload bool
+	// sculpts is the pending batch: committed strokes that have arrived but not
+	// yet been folded into the persisted accumulators. Cleared each rebuild.
+	sculpts []musical.Sculpt
+	// history is the full ordered log of committed strokes that touch THIS tile
+	// (height/paint/river), each flagged reverted or not. Unlike sculpts it is
+	// never cleared — it is what recompute() replays to restore exact state when
+	// a stroke is reverted (undo) or restored (redo). Paint + river are
+	// destructive paint-over, so they can only be undone by replaying what
+	// survives, not by an arithmetic inverse.
+	history []tileStroke
 
 	// arrows tracks the "extend the world" markers for the four
 	// cardinal sides that don't yet have a neighbour. Keyed by the
@@ -1199,9 +1369,37 @@ func (tile *TerrainTile) Ready() {
 	tile.Reload()
 }
 
+// tileStroke is one committed terrain stroke (height/paint/river) retained for
+// undo. reverted marks it as currently undone; recompute skips reverted strokes
+// when re-deriving the tile, and a redo clears the flag again. The brush keeps
+// its stamped (Author, Timing) identity so a Revert sculpt can find it.
+type tileStroke struct {
+	brush    musical.Sculpt
+	reverted bool
+}
+
 func (tile *TerrainTile) Sculpt(brush musical.Sculpt) {
+	// Retain the committed stroke for undo (recompute replays the survivors) and
+	// queue it in the pending batch for the incremental forward rebuild.
+	tile.history = append(tile.history, tileStroke{brush: brush})
 	tile.sculpts = append(tile.sculpts, brush)
 	tile.Reload()
+}
+
+// revert toggles the reverted flag of the history stroke with the given
+// (Author, Timing) identity and returns true if a match was found. The caller
+// recompute()s the tile afterwards so the change takes effect. Toggling (rather
+// than setting) lets a single Revert sculpt express both undo and redo: each
+// Revert flips the stroke, and replaying the persisted Revert log reproduces the
+// final parity on a freshly joined client.
+func (tile *TerrainTile) revert(author musical.Author, timing musical.Timing) bool {
+	for i := range tile.history {
+		if tile.history[i].brush.Author == author && tile.history[i].brush.Timing == timing {
+			tile.history[i].reverted = !tile.history[i].reverted
+			return true
+		}
+	}
+	return false
 }
 
 // generateBase mesh, textures and the collision shape, these will change whenever a [musical.Sculpt] arrives.
@@ -1315,10 +1513,54 @@ func (tile *TerrainTile) generateBase() {
 	tile.applyRevealState()
 }
 
-// Reload applies any pending sculpt operations to the terrain tile.
-func (tile *TerrainTile) Reload() {
+// Reload folds any pending sculpt batch into the tile — the fast, incremental
+// forward path taken on every edit.
+func (tile *TerrainTile) Reload() { tile.scheduleReload(false) }
+
+// recompute re-derives the tile from scratch over the non-reverted strokes in
+// its history. Used on undo/redo: a Revert sculpt toggles a stroke's reverted
+// flag and the tile rebuilds its exact state from the survivors. Paint + river
+// are destructive paint-over, so they can only be reverted by replay, not by an
+// arithmetic inverse.
+func (tile *TerrainTile) recompute() { tile.scheduleReload(true) }
+
+// activeStrokes returns the brushes of every non-reverted history stroke, in
+// commit order — the input to a full recompute.
+func (tile *TerrainTile) activeStrokes() []musical.Sculpt {
+	out := make([]musical.Sculpt, 0, len(tile.history))
+	for i := range tile.history {
+		if !tile.history[i].reverted {
+			out = append(out, tile.history[i].brush)
+		}
+	}
+	return out
+}
+
+// resetAccumulators zeroes the persisted terrain/river/paint fields so a
+// recompute can replay the active history onto a clean slate.
+func (tile *TerrainTile) resetAccumulators() {
+	for i := range tile.groundHeights {
+		tile.groundHeights[i] = 0
+		tile.riverDepth[i] = 0
+		tile.waterFlowX[i] = 0
+		tile.waterFlowZ[i] = 0
+	}
+	for i := range tile.textures {
+		tile.textures[i] = 0
+	}
+}
+
+// scheduleReload defers a single end-of-frame rebuild, coalescing repeat
+// requests via the reloading guard. If anything this frame asked for a full
+// rebuild (recompute), the deferred body resets the accumulators and replays the
+// active history (a superset of the pending batch); otherwise it accumulates
+// only the pending batch incrementally.
+func (tile *TerrainTile) scheduleReload(full bool) {
 	if !tile.generated {
 		tile.generateBase()
+	}
+	if full {
+		tile.fullReload = true
 	}
 	if tile.reloading {
 		return // we only want to reload once per frame.
@@ -1326,10 +1568,20 @@ func (tile *TerrainTile) Reload() {
 	tile.reloading = true
 	Callable.Defer(Callable.New(func() {
 		tile.reloading = false
-		// Ensure every paint Design in the pending sculpts has a
+		// Forward edits accumulate just the pending batch; a recompute resets the
+		// accumulators and replays the full active history so reverted strokes
+		// leave no trace and survivors are reproduced exactly.
+		reset := tile.fullReload
+		tile.fullReload = false
+		strokes := tile.sculpts
+		if reset {
+			strokes = tile.activeStrokes()
+			tile.resetAccumulators()
+		}
+		// Ensure every paint Design in the strokes has a
 		// layer index in the editor's shared texture array.
 		if tile.editor != nil {
-			for _, sculpt := range tile.sculpts {
+			for _, sculpt := range strokes {
 				if sculpt.Design == (musical.Design{}) {
 					continue
 				}
@@ -1346,8 +1598,8 @@ func (tile *TerrainTile) Reload() {
 		}
 		var sample_texture = func(x, y int) int {
 			pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
-			for i := len(tile.sculpts) - 1; i >= 0; i-- {
-				sculpt := tile.sculpts[i]
+			for i := len(strokes) - 1; i >= 0; i-- {
+				sculpt := strokes[i]
 				if sculpt.Design == (musical.Design{}) {
 					continue
 				}
@@ -1363,38 +1615,40 @@ func (tile *TerrainTile) Reload() {
 			}
 			return 0
 		}
-		// sample_height_ground sums the pending NON-river height sculpts at a
-		// grid point (raise/lower). Accumulated into groundHeights, it is the
-		// terrain as if no river had ever been dug — the river's water-surface
-		// reference ("where the terrain used to be"). River strokes are applied
-		// separately to riverDepth below so they overwrite/erase rather than add.
-		var sample_height_ground = func(x, y int) Float.X {
-			pos := Vector3.Add(Vector3.XYZ{Float.X(x), 0, Float.X(y)}, offset)
-			height := Float.X(0)
-			for i := range tile.sculpts {
-				sculpt := tile.sculpts[i]
-				if sculpt.Design != (musical.Design{}) || isRiverSlider(sculpt.Slider) {
-					continue
-				}
-				// A zero-radius stroke would make the falloff 0/0 = NaN at the
-				// target vertex; that NaN accumulates into groundHeights (and
-				// thus heights), and the GPU discards every triangle touching a
-				// NaN vertex — a permanent hole in the mesh. Skip it, mirroring
-				// the river path's `if r2 <= 0 { continue }` guard.
-				if sculpt.Radius <= 0 {
-					continue
-				}
+		// Accumulate each non-river height stroke (raise/lower) into the
+		// original-ground field — the terrain as if no river had ever been dug
+		// (the river's water-surface reference "where the terrain used to be").
+		// River strokes are applied separately to riverDepth below so they
+		// overwrite/erase rather than add.
+		//
+		// The -2 floor is applied PER STROKE (not to an accumulated per-batch sum)
+		// so reverting one stroke removes exactly the contribution it added, and a
+		// from-scratch recompute over the surviving strokes matches the
+		// incremental forward path stroke for stroke.
+		for si := range strokes {
+			sculpt := strokes[si]
+			if sculpt.Design != (musical.Design{}) || isRiverSlider(sculpt.Slider) {
+				continue
+			}
+			// A zero-radius stroke would make the falloff 0/0 = NaN at the target
+			// vertex; that NaN accumulates into groundHeights (and thus heights),
+			// and the GPU discards every triangle touching a NaN vertex — a
+			// permanent hole in the mesh. Skip it, mirroring the river path's
+			// `if r2 <= 0 { continue }` guard.
+			if sculpt.Radius <= 0 {
+				continue
+			}
+			r2 := sculpt.Radius * sculpt.Radius
+			for i := 0; i < hm*hm; i++ {
+				pos := Vector3.Add(Vector3.XYZ{Float.X(i % hm), 0, Float.X(i / hm)}, offset)
 				dx := pos.X - sculpt.Target.X
 				dy := pos.Z - sculpt.Target.Z
-				if dx*dx+dy*dy <= sculpt.Radius*sculpt.Radius {
-					height += sculpt.Amount * (1 - (dx*dx+dy*dy)/(sculpt.Radius*sculpt.Radius))
+				d2 := dx*dx + dy*dy
+				if d2 > r2 {
+					continue
 				}
+				tile.groundHeights[i] += float32(max(-2, sculpt.Amount*(1-d2/r2)))
 			}
-			return max(-2, height)
-		}
-		// Accumulate this batch's raise/lower into the original-ground field.
-		for i := 0; i < hm*hm; i++ {
-			tile.groundHeights[i] += float32(sample_height_ground(i%hm, i/hm))
 		}
 		// Apply this batch's river / river-erase strokes to the persisted river
 		// depth + flow with PAINT-OVER semantics: within a stroke's disc each
@@ -1402,8 +1656,8 @@ func (tile *TerrainTile) Reload() {
 		// the blend weight (1 at the centre, 0 at the rim). So repainting at a
 		// different depth overwrites, and an erase stroke (target depth 0) digs
 		// the channel back out. Applied in log order, so every client agrees.
-		for si := range tile.sculpts {
-			sculpt := tile.sculpts[si]
+		for si := range strokes {
+			sculpt := strokes[si]
 			if sculpt.Design != (musical.Design{}) || !isRiverSlider(sculpt.Slider) {
 				continue
 			}
@@ -1496,7 +1750,7 @@ func (tile *TerrainTile) Reload() {
 		// and snap items elsewhere to its edge height (≈0 on flat terrain),
 		// which is the reset-to-0 bug.
 		heightEdited := false
-		for _, brush := range tile.sculpts {
+		for _, brush := range strokes {
 			if brush.Design == (musical.Design{}) {
 				heightEdited = true
 				break
@@ -2157,7 +2411,7 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 		}
 		return
 	}
-	ed.client.space.Sculpt(musical.Sculpt{
+	ed.client.commitSculpt(musical.Sculpt{
 		Author: ed.client.id,
 		Editor: "terrain",
 		Slider: slider,

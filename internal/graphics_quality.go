@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Viewport"
@@ -11,7 +12,8 @@ import (
 // fidelity for frame-rate by adjusting 3D antialiasing and shadow
 // filtering together, so the user doesn't have to understand MSAA vs
 // FXAA vs shadow atlas size — they just slide from "toaster" (potato)
-// to "sports car" (max).
+// to "sports car" (max). The upper two tiers additionally switch on
+// screen-space ambient occlusion (SSAO) for grounded contact shadows.
 type GraphicsQuality int
 
 const (
@@ -20,9 +22,11 @@ const (
 	QualityToaster GraphicsQuality = iota
 	// QualityAverage: FXAA only, very-low soft shadows.
 	QualityAverage
-	// QualityRefined: 2× MSAA, low soft shadows, larger atlas.
+	// QualityRefined: 2× MSAA, low soft shadows, larger atlas,
+	// medium-quality SSAO.
 	QualityRefined
-	// QualityHighest: 4× MSAA, high soft shadows, large atlas.
+	// QualityHighest: 4× MSAA, high soft shadows, large atlas,
+	// high-quality SSAO.
 	// Most expensive — the high end of the slider. (We deliberately stop
 	// at 4× MSAA and leave TAA off: 8× MSAA + TAA together stalled the
 	// renderer hard on first runtime apply.)
@@ -51,6 +55,28 @@ func (q GraphicsQuality) directionalShadowAtlasSize() int {
 		return 4096
 	default: // QualityFerrari
 		return 8192
+	}
+}
+
+// ssaoEnabled reports whether screen-space ambient occlusion should be on
+// at this tier. SSAO is moderately expensive (a full-resolution depth
+// pass), so we reserve it for the upper two "refined"/"sports car" tiers
+// and leave the potato/average tiers free of it.
+func (q GraphicsQuality) ssaoEnabled() bool {
+	return q >= QualityRefined
+}
+
+// ssaoQuality maps each tier to the global SSAO sample/blur quality. Only
+// meaningful where ssaoEnabled is true; the lower tiers return the
+// cheapest level for completeness but never actually render SSAO.
+func (q GraphicsQuality) ssaoQuality() RenderingServer.EnvironmentSSAOQuality {
+	switch q {
+	case QualityHighest:
+		return RenderingServer.EnvSsaoQualityHigh
+	case QualityRefined:
+		return RenderingServer.EnvSsaoQualityMedium
+	default:
+		return RenderingServer.EnvSsaoQualityVeryLow
 	}
 }
 
@@ -97,4 +123,24 @@ func (q GraphicsQuality) Apply(anyNode Node.Instance) {
 	RenderingServer.DirectionalSoftShadowFilterSetQuality(shadow)
 	RenderingServer.PositionalSoftShadowFilterSetQuality(shadow)
 	RenderingServer.DirectionalShadowAtlasSetSize(q.directionalShadowAtlasSize(), false)
+
+	// SSAO sample/blur quality is global renderer state, like the shadow
+	// filter above; the per-Environment on/off flag is set separately by
+	// ApplyAmbientOcclusion. The trailing args are Godot's stock defaults
+	// (no half-res, adaptive_target 0.5, 2 blur passes, fade 50→300).
+	RenderingServer.EnvironmentSetSsaoQuality(q.ssaoQuality(), false, 0.5, 2, 50, 300)
+}
+
+// ApplyAmbientOcclusion toggles screen-space ambient occlusion on the
+// given world Environment for this quality tier. It is kept separate from
+// Apply because the on/off flag lives on the Environment resource (which
+// the Client owns and creates after the UI's launch-time Apply runs),
+// whereas Apply only reaches per-viewport and global renderer state. Safe
+// to call with a nil Environment (no-op), so callers needn't guard the
+// pre-creation launch window.
+func (q GraphicsQuality) ApplyAmbientOcclusion(env Environment.Instance) {
+	if env == Environment.Nil {
+		return
+	}
+	env.SetSsaoEnabled(q.ssaoEnabled())
 }

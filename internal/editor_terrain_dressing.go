@@ -99,6 +99,39 @@ func (vr *TerrainEditor) refreshGrassVisibility() {
 	}
 }
 
+// clearGrass removes every rendered grass patch (and any pending scatters whose
+// mesh had not yet loaded). Used by recomputeGrass before replaying the active
+// dressing history on undo/redo.
+func (vr *TerrainEditor) clearGrass() {
+	for _, p := range vr.grassPatches {
+		if p.mmNode != MultiMeshInstance3D.Nil {
+			p.mmNode.AsNode().QueueFree()
+		}
+	}
+	vr.grassPatches = vr.grassPatches[:0]
+	vr.pendingGrass = vr.pendingGrass[:0]
+}
+
+// recomputeGrass rebuilds all dressing from scratch over the non-reverted strokes
+// in grassHistory, in commit order so each erase lands after the scatters it
+// trims. Used on undo/redo of a dressing stroke: a region-based erase can only be
+// reverted by replaying what survives, not by an arithmetic inverse.
+func (vr *TerrainEditor) recomputeGrass() {
+	vr.clearGrass()
+	for i := range vr.grassHistory {
+		e := vr.grassHistory[i]
+		if e.reverted {
+			continue
+		}
+		if e.brush.Amount <= 0 {
+			vr.eraseGrass(e.brush)
+		} else {
+			vr.scatterGrass(e.brush)
+		}
+	}
+	vr.refreshGrassVisibility()
+}
+
 // scatterGrass renders one dressing stroke. If the stroke's mesh hasn't
 // finished importing yet (common on a freshly joined client replaying the
 // log before the .glb has loaded), it's parked in pendingGrass and retried

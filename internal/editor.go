@@ -214,17 +214,17 @@ type ClickableEditor interface {
 
 // lighting is a small embeddable helper that gives an editor (or the shared
 // world state on TerrainEditor) the friendly world-lighting controls: Time of
-// Day, Sun Angle, Fog and Clouds. It stores these friendly values directly so
-// that adjusting one axis never discards the others (the previous design kept
-// only the derived technical az/el/energy and had to guess the missing axis on
-// every networked round-trip, which lost the Sun Angle and forced the scene to
-// night). The actual renderer mutation lives in Client.ApplyLightingMenuState
-// so there is one place that touches the DirectionalLight + Environment nodes.
+// Day, Sun Angle, Fog, Clouds, and weather (Rain, Snow, Wind). It stores these
+// friendly values directly so that adjusting one axis never discards the others.
+// The actual renderer mutation lives in Client.ApplyLightingMenuState.
 type lighting struct {
 	timeOfDay Float.X
 	sunAngle  Float.X
 	fog       Float.X
 	clouds    Float.X
+	rain      Float.X
+	snow      Float.X
+	wind      Float.X
 
 	// seeded is used so that the first time an editor becomes active it can
 	// inherit the current world look instead of snapping to zero values
@@ -244,6 +244,12 @@ func (l *lighting) handleEnvironmentSlider(slider string, v Float.X) bool {
 		l.fog = v
 	case "environment/clouds":
 		l.clouds = v
+	case "environment/rain":
+		l.rain = v
+	case "environment/snow":
+		l.snow = v
+	case "environment/wind":
+		l.wind = v
 	default:
 		return false
 	}
@@ -256,7 +262,7 @@ func (l *lighting) apply(c *Client) {
 		return
 	}
 	l.ensureSeeded(c)
-	c.ApplyLightingMenuState(l.timeOfDay, l.sunAngle, l.fog, l.clouds)
+	c.ApplyLightingMenuState(l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind)
 }
 
 // ensureSeeded copies the current world lighting state into this lighting the
@@ -266,7 +272,7 @@ func (l *lighting) ensureSeeded(c *Client) {
 	if l.seeded || c == nil {
 		return
 	}
-	l.timeOfDay, l.sunAngle, l.fog, l.clouds = c.GetLightingMenuState()
+	l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind = c.GetLightingMenuState()
 	l.seeded = true
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/CPUParticles3D"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
@@ -104,6 +105,9 @@ type Client struct {
 		sunAngle  Float.X
 		fog       Float.X
 		clouds    Float.X
+		rain      Float.X
+		snow      Float.X
+		wind      Float.X
 	}
 
 	// FocalPoint is the point in the scene that the camera is
@@ -133,6 +137,12 @@ type Client struct {
 	// Clouds slider drives its "coverage" parameter via applyCloudDensity.
 	sky ShaderMaterial.Instance
 
+	// weatherAnchor is a node positioned under the camera each frame so that
+	// rain and snow particles are always emitted in a volume around the viewer.
+	weatherAnchor Node3D.Instance
+	rainParticles CPUParticles3D.Instance
+	snowParticles CPUParticles3D.Instance
+
 	mouseOver chan Vector3.XYZ
 
 	Editing Subject
@@ -157,6 +167,14 @@ type Client struct {
 	id     musical.Author
 	record musical.WorkID
 	space  musical.UsersSpace3D
+
+	// lastTiming is a strictly-increasing per-client counter used to stamp every
+	// committed Sculpt's Timing, giving each stroke a stable (Author, Timing)
+	// identity that a Revert sculpt references for undo/redo. Seeded from the
+	// high-water mark of replayed sculpts authored by this client (see
+	// TerrainEditor.note Timing on load) so it never reuses a value across
+	// sessions. Guarded by nextTiming.
+	lastTiming musical.Timing
 
 	SharedResources
 
@@ -550,11 +568,21 @@ func (world *Client) Ready() {
 	world.Environment = env
 	world.WorldEnvironment = worldenv
 
+	// Seed SSAO on/off from the launch quality tier. The UI's launch-time
+	// Apply ran during editor.Setup above, before this Environment existed,
+	// so the per-Environment ambient-occlusion flag has to be applied here;
+	// the slider re-applies it on every move (see buildSettingsMenu).
+	defaultGraphicsQuality.ApplyAmbientOcclusion(env)
+
 	// Start the world in daytime. Driving the initial look through the same
 	// friendly path the rolldown uses keeps lightingMenuState authoritative,
 	// so the menu opens on the real values and every editor's lighting seeds
 	// from a lit world rather than the zero-value (midnight / energy 0 / black).
-	world.ApplyLightingMenuState(0.38, 0.08, 0.0, 0.0)
+	world.ApplyLightingMenuState(0.38, 0.08, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+	// Weather particles (rain, snow) + wind propagation. Created once; intensity
+	// is driven live by the environment menu via applyWeather.
+	world.setupWeatherParticles()
 
 	RenderingServer.SetDebugGenerateWireframes(true)
 
@@ -638,6 +666,18 @@ func (world *Client) Process(dt Float.X) {
 		if world.underwater != (ShaderMaterial.Instance{}) {
 			world.underwater.SetShaderParameter("water_level", float64(world.TerrainEditor.WaterSurfaceAt(camPos)))
 			world.underwater.SetShaderParameter("terrain_level", float64(world.TerrainEditor.HeightAt(camPos)))
+		}
+	}
+
+	// Keep weather particles centered on the camera (XZ) so rain/snow is always
+	// visible around the viewer in the infinite world. High Y keeps the emission
+	// volume above us.
+	if world.weatherAnchor != Node3D.Nil {
+		camNode := world.FocalPoint.Lens.Camera.AsNode3D()
+		if camNode != Node3D.Nil {
+			cp := camNode.GlobalPosition()
+			// Sit well above the camera so particles fall through the view.
+			world.weatherAnchor.AsNode3D().SetGlobalPosition(Vector3.New(cp.X, cp.Y+28, cp.Z))
 		}
 	}
 
@@ -1276,20 +1316,32 @@ func (world *Client) activeLightingEditorKey() string {
 func (world *Client) applyLightingStateFromSlider(slider string, value Float.X) {
 	switch slider {
 	case "environment/time_of_day":
-		_, angle, fog, clouds := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(value, angle, fog, clouds)
+		_, angle, fog, clouds, rain, snow, wind := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(value, angle, fog, clouds, rain, snow, wind)
 
 	case "environment/sun_angle":
-		tod, _, fog, clouds := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, value, fog, clouds)
+		tod, _, fog, clouds, rain, snow, wind := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, value, fog, clouds, rain, snow, wind)
 
 	case "environment/fog":
-		tod, angle, _, clouds := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, value, clouds)
+		tod, angle, _, clouds, rain, snow, wind := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, value, clouds, rain, snow, wind)
 
 	case "environment/clouds":
-		tod, angle, fog, _ := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, fog, value)
+		tod, angle, fog, _, rain, snow, wind := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, value, rain, snow, wind)
+
+	case "environment/rain":
+		tod, angle, fog, clouds, _, snow, wind := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, value, snow, wind)
+
+	case "environment/snow":
+		tod, angle, fog, clouds, rain, _, wind := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, value, wind)
+
+	case "environment/wind":
+		tod, angle, fog, clouds, rain, snow, _ := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, value)
 
 	// Old technical names are no longer supported (pre-release).
 	default:
@@ -1318,18 +1370,21 @@ func (world *Client) applyLightingStateFromSlider(slider string, value Float.X) 
 }
 
 // ApplyLightingMenuState is the single authoritative way to drive the
-// friendly lighting controls (Time of Day + Sun Angle + Fog + Clouds).
-// It updates the stored friendly state and immediately applies the
-// corresponding low-level lighting.
-func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds Float.X) {
+// friendly lighting + weather controls (Time of Day + Sun Angle + Fog + Clouds + Rain + Snow + Wind).
+// It updates the stored friendly state and immediately applies visuals.
+func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds, rain, snow, wind Float.X) {
 	world.lightingMenuState.timeOfDay = timeOfDay
 	world.lightingMenuState.sunAngle = sunAngle
 	world.lightingMenuState.fog = fog
 	world.lightingMenuState.clouds = clouds
+	world.lightingMenuState.rain = rain
+	world.lightingMenuState.snow = snow
+	world.lightingMenuState.wind = wind
 
 	az, el, en, fd := world.mapTimeOfDaySunAngleFog(timeOfDay, sunAngle, fog)
 	world.applyLightingState(az, el, en, fd)
 	world.applyCloudDensity(clouds)
+	world.applyWeather(rain, snow, wind)
 }
 
 // applyCloudDensity pushes the cloud coverage (0 = clear, 1 = overcast) into
@@ -1340,12 +1395,18 @@ func (world *Client) applyCloudDensity(clouds Float.X) {
 	}
 }
 
-// GetLightingMenuState returns the current friendly lighting values.
-func (world *Client) GetLightingMenuState() (timeOfDay, sunAngle, fog, clouds Float.X) {
-	return world.lightingMenuState.timeOfDay,
-		world.lightingMenuState.sunAngle,
-		world.lightingMenuState.fog,
-		world.lightingMenuState.clouds
+// applyWeather is called whenever rain/snow/wind change. It drives particle
+// intensity and the wind uniforms on sky + foliage (when available).
+func (world *Client) applyWeather(rain, snow, wind Float.X) {
+	// Real implementation added after particle nodes are created in Ready.
+	// For now this is safe to call early (particles may be Nil).
+	world.updateWeatherIntensity(rain, snow, wind)
+}
+
+// GetLightingMenuState returns the current friendly lighting + weather values.
+func (world *Client) GetLightingMenuState() (timeOfDay, sunAngle, fog, clouds, rain, snow, wind Float.X) {
+	s := world.lightingMenuState
+	return s.timeOfDay, s.sunAngle, s.fog, s.clouds, s.rain, s.snow, s.wind
 }
 
 // mapTimeOfDaySunAngleFog converts the friendly, artist-friendly slider values
@@ -1374,4 +1435,115 @@ func (world *Client) mapTimeOfDaySunAngleFog(timeOfDay, sunAngle, fog Float.X) (
 	fogDensity = fog * 0.055
 
 	return az, el, energy, fogDensity
+}
+
+// setupWeatherParticles creates the global rain and snow particle systems.
+// They live under a weatherAnchor that is moved to follow the camera every frame.
+func (world *Client) setupWeatherParticles() {
+	anchor := Node3D.New()
+	anchor.AsNode().SetName("WeatherAnchor")
+	world.AsNode().AddChild(anchor.AsNode())
+	world.weatherAnchor = anchor
+
+	// Rain: fast falling streaks, dense when slider is high.
+	rain := CPUParticles3D.New()
+	rain.AsNode().SetName("Rain")
+	rain.SetAmount(1500)
+	rain.SetLifetime(1.2)
+	rain.SetEmissionShape(CPUParticles3D.EmissionShapeBox)
+	rain.SetEmissionBoxExtents(Vector3.New(45, 3, 45))
+	rain.SetDirection(Vector3.New(0, -1, 0))
+	rain.SetInitialVelocityMin(18)
+	rain.SetInitialVelocityMax(24)
+	rain.SetGravity(Vector3.New(0, -4, 0))
+	rain.SetScaleAmountMin(0.03)
+	rain.SetScaleAmountMax(0.06)
+	rain.SetColor(Color.RGBA{R: 0.75, G: 0.78, B: 0.85, A: 0.6})
+	world.weatherAnchor.AsNode().AddChild(rain.AsNode())
+	world.rainParticles = rain
+
+	// Snow: slower, fluffier, with more horizontal spread.
+	snow := CPUParticles3D.New()
+	snow.AsNode().SetName("Snow")
+	snow.SetAmount(600)
+	snow.SetLifetime(3.5)
+	snow.SetEmissionShape(CPUParticles3D.EmissionShapeBox)
+	snow.SetEmissionBoxExtents(Vector3.New(40, 4, 40))
+	snow.SetDirection(Vector3.New(0, -1, 0))
+	snow.SetInitialVelocityMin(1.5)
+	snow.SetInitialVelocityMax(3.5)
+	snow.SetGravity(Vector3.New(0, -0.6, 0))
+	snow.SetScaleAmountMin(0.08)
+	snow.SetScaleAmountMax(0.18)
+	snow.SetColor(Color.RGBA{R: 0.92, G: 0.94, B: 0.98, A: 0.85})
+	world.weatherAnchor.AsNode().AddChild(snow.AsNode())
+	world.snowParticles = snow
+
+	// Start disabled; intensity is driven later by environment sliders via Apply.
+	rain.SetEmitting(false)
+	snow.SetEmitting(false)
+}
+
+// updateWeatherIntensity modulates emission rate (via amount) and wind bias
+// for the precipitation particles, and also pushes wind into sky + foliage.
+func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
+	// Rain
+	if world.rainParticles != CPUParticles3D.Nil {
+		if rain > 0.001 {
+			amt := int(1500 * float64(rain))
+			if amt < 8 {
+				amt = 8 // minimum visible sprinkle instead of 0 or 1
+			}
+			world.rainParticles.SetAmount(amt)
+			world.rainParticles.SetEmitting(true)
+			// Slight wind tilt on rain direction
+			wx := Float.X(wind) * 0.6
+			world.rainParticles.SetDirection(Vector3.New(wx, -1, 0))
+		} else {
+			world.rainParticles.SetEmitting(false)
+		}
+	}
+
+	// Snow
+	if world.snowParticles != CPUParticles3D.Nil {
+		if snow > 0.001 {
+			amt := int(650 * float64(snow))
+			if amt < 6 {
+				amt = 6
+			}
+			world.snowParticles.SetAmount(amt)
+			world.snowParticles.SetEmitting(true)
+			// Wind pushes snow more horizontally
+			wx := Float.X(wind) * 1.8
+			wz := Float.X(wind) * 0.4
+			world.snowParticles.SetDirection(Vector3.New(wx, -0.7, wz))
+		} else {
+			world.snowParticles.SetEmitting(false)
+		}
+	}
+
+	// Sky cloud drift speed scales with wind (base wind in shader is gentle).
+	if world.sky != (ShaderMaterial.Instance{}) {
+		base := Vector2.New(0.045, 0.014)
+		w := Float.X(wind)
+		world.sky.SetShaderParameter("cloud_wind", Vector2.New(
+			float64(base.X*(1+1.8*w)),
+			float64(base.Y*(1+1.8*w)),
+		))
+	}
+
+	// Foliage editor preview wind (if active).
+	if world.FoliageEditor != nil && world.FoliageEditor.leafletMaterial != (ShaderMaterial.Instance{}) {
+		mat := world.FoliageEditor.leafletMaterial
+		// wind_strength in shader is 0..0.5 range; map our 0..1 nicely.
+		str := 0.02 + float64(wind)*0.22
+		mat.SetShaderParameter("wind_strength", str)
+		// Slightly faster gusts at high wind.
+		spd := 1.2 + float64(wind)*1.8
+		mat.SetShaderParameter("wind_speed", spd)
+		// Bias the wind direction a little with the wind slider (keeps it lively).
+		dirx := 0.85 + float64(wind)*0.3
+		diry := 0.35 + float64(wind)*0.15
+		mat.SetShaderParameter("wind_dir", Vector2.New(dirx, diry))
+	}
 }

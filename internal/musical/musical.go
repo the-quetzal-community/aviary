@@ -157,6 +157,7 @@ type Sculpt struct {
 	Orient Angle.Radians
 
 	Commit bool // if false, then this is a preview.
+	Revert bool // revert this sculpt.
 }
 
 type LookAt struct {

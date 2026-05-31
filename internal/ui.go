@@ -205,7 +205,13 @@ func (ui *UI) buildSettingsMenu() {
 	// the handler — the explicit Apply below covers the initial render.
 	slider.AsRange().SetValue(Float.X(defaultGraphicsQuality))
 	Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
-		GraphicsQuality(int(value)).Apply(ui.AsNode())
+		q := GraphicsQuality(int(value))
+		q.Apply(ui.AsNode())
+		// SSAO's on/off flag lives on the world Environment, not the
+		// viewport/global state Apply touches; toggle it alongside.
+		if ui.client != nil {
+			q.ApplyAmbientOcclusion(ui.client.Environment)
+		}
 	})
 
 	// Apply the launch default so the renderer matches the slider's
@@ -237,7 +243,7 @@ func (ui *UI) buildEnvironmentMenu() {
 	// (same pattern as the QualitySpacer in SettingsMenu).
 	if container.AsNode().GetChildCount() == 0 {
 		spacer := Control.New()
-		spacer.SetCustomMinimumSize(Vector2.New(0, 520))
+		spacer.SetCustomMinimumSize(Vector2.New(0, 620))
 		spacer.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
 		container.AsNode().AddChild(spacer.AsNode())
 	}
@@ -292,40 +298,64 @@ func (ui *UI) buildEnvironmentMenu() {
 	sunAng := Float.X(0.08)
 	fg := Float.X(0.0)
 	cl := Float.X(0.0)
+	rn := Float.X(0.0)
+	sn := Float.X(0.0)
+	wn := Float.X(0.0)
 	if ui.client != nil {
-		tod, sunAng, fg, cl = ui.client.GetLightingMenuState()
+		tod, sunAng, fg, cl, rn, sn, wn = ui.client.GetLightingMenuState()
 	}
 
 	// Friendly, non-technical controls. We drive them through
 	// ApplyLightingMenuState so each axis stays completely independent.
 	makeRow("Time of Day", 0, 1, 0.005, tod, func(v Float.X) {
 		if ui.client != nil {
-			_, angle, fog, clouds := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(v, angle, fog, clouds)
+			_, angle, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(v, angle, fog, clouds, rain, snow, wind)
 		}
 		// Still send the Sculpt for networking + persistence
 		ui.sendEnvironmentSlider("environment/time_of_day", v)
 	})
 	makeRow("Sun Angle", 0, 1, 0.005, sunAng, func(v Float.X) {
 		if ui.client != nil {
-			tod, _, fog, clouds := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, v, fog, clouds)
+			tod, _, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, v, fog, clouds, rain, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/sun_angle", v)
 	})
 	makeRow("Fog / Atmosphere", 0, 1, 0.01, fg, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, _, clouds := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, v, clouds)
+			tod, angle, _, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, v, clouds, rain, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/fog", v)
 	})
 	makeRow("Clouds", 0, 1, 0.01, cl, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, fog, _ := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, v)
+			tod, angle, fog, _, rain, snow, wind := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, v, rain, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/clouds", v)
+	})
+	makeRow("Rain", 0, 1, 0.01, rn, func(v Float.X) {
+		if ui.client != nil {
+			tod, angle, fog, clouds, _, snow, wind := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, v, snow, wind)
+		}
+		ui.sendEnvironmentSlider("environment/rain", v)
+	})
+	makeRow("Snow", 0, 1, 0.01, sn, func(v Float.X) {
+		if ui.client != nil {
+			tod, angle, fog, clouds, rain, _, wind := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, v, wind)
+		}
+		ui.sendEnvironmentSlider("environment/snow", v)
+	})
+	makeRow("Wind", 0, 1, 0.01, wn, func(v Float.X) {
+		if ui.client != nil {
+			tod, angle, fog, clouds, rain, snow, _ := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, v)
+		}
+		ui.sendEnvironmentSlider("environment/wind", v)
 	})
 }
 

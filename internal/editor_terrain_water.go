@@ -107,7 +107,7 @@ func (tr *TerrainEditor) PaintRiver() {
 		}
 		brush.Amount = -depth // negative carve depth; overwrites on repaint
 	}
-	tr.client.space.Sculpt(brush)
+	tr.client.commitSculpt(brush)
 }
 
 // riverBrushActive reports whether a river paint or erase tool is selected.
@@ -378,15 +378,22 @@ func (tile *TerrainTile) reloadWater() {
 	// floor clamp to the geometry, so a difference here is a real gap, not
 	// something occlusion hides.)
 	//
-	// The surface is
-	//   max( min(local_ground - lip, channel_level), global_level )
-	// on any carved cell or its bank collar, and the flat global level on dry land
-	// away from a river. Taking the lip off the LOCAL ground and clamping DOWN to
-	// the nearby channel keeps the sheet from climbing a higher bank; clamping UP
-	// to the global level keeps it from dipping under the body of water it
+	// The surface sits a lip below the LOCAL original ground ("where the terrain
+	// used to be") on any carved cell or its bank collar, and at the flat global
+	// level on dry land away from a river. Following the local ground is what
+	// makes the river slope naturally downstream and lap up to meet its banks (the
+	// "river height" — flattening the collar to the nearby channel level instead
+	// read as wrong); the lip keeps a sliver of bank above the waterline. It is
+	// clamped UP to the global level so it never dips under the body of water it
 	// connects to (oceans, sunken banks). Dry cells fall back to the flat level so
 	// a project with no rivers renders exactly as before. riverSurfaceAt reaches
 	// across tile seams so adjacent tiles agree at a shared edge/corner.
+	//
+	// The wall top uses this SAME function, so the cross-section wall and the flat
+	// plane are one welded surface: where the river laps up a bank the wall climbs
+	// WITH the plane (no disconnected stray triangle), and they can never open a
+	// gap (no hole). The shader applies no floor clamp to the geometry, so this
+	// per-vertex agreement is the only thing keeping the two surfaces together.
 	waterAt := func(x, y int) (surface Float.X, fx, fz float32) {
 		surface = level
 		if !hasRiver {
@@ -395,15 +402,14 @@ func (tile *TerrainTile) reloadWater() {
 		ground := tile.groundHeights[x+y*hm]
 		carved, _, cfx, cfz := tile.riverSurfaceAt(x, y)
 		found := carved
-		var channel float32
 		if !carved {
-			// Lap one cell onto the bank: adopt the LOWEST nearby channel surface
-			// so the sheet extends flat off the channel instead of ending in a
-			// vertical edge (and the higher bank terrain then occludes it).
-			for dz := -riverBankCollar; dz <= riverBankCollar; dz++ {
+			// Lap one cell onto the bank: present if any neighbour within the
+			// collar is a channel; adopt that channel's flow direction.
+			for dz := -riverBankCollar; dz <= riverBankCollar && !found; dz++ {
 				for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
-					if c, cs, ffx, ffz := tile.riverSurfaceAt(x+dx, y+dz); c && (!found || cs < channel) {
-						found, channel, cfx, cfz = true, cs, ffx, ffz
+					if c, _, ffx, ffz := tile.riverSurfaceAt(x+dx, y+dz); c {
+						found, cfx, cfz = true, ffx, ffz
+						break
 					}
 				}
 			}
@@ -411,11 +417,7 @@ func (tile *TerrainTile) reloadWater() {
 		if !found {
 			return level, 0, 0 // dry, away from any river -> the flat global lake
 		}
-		s := ground - float32(waterSurfaceDrop) // a lip below the local terrain
-		if !carved && channel < s {
-			s = channel // bank: extend the channel level flat, don't climb the bank
-		}
-		surface = Float.X(s)
+		surface = Float.X(ground) - waterSurfaceDrop // a lip below the local terrain
 		if level > surface {
 			surface = level // never under the global level
 		}
@@ -549,9 +551,9 @@ func (tile *TerrainTile) reloadWater() {
 				}
 				// Per-edge water surface + flow from the SAME waterAt the plane
 				// uses, so the wall top is identical to the plane's edge row of
-				// vertices and the two weld seamlessly (no climbing triangle, no
-				// gap). waterAt already clamps the bank to the channel level, so a
-				// raised bank never lifts the wall above the river.
+				// vertices and the two weld seamlessly: where the river laps up a
+				// bank the wall climbs WITH the plane as one surface (no
+				// disconnected triangle), and they can never open a gap (no hole).
 				topNearS, fnx, fnz := waterAt(gnx, gnz)
 				topFarS, ffx, ffz := waterAt(gfx, gfz)
 				topNear := float32(topNearS)
