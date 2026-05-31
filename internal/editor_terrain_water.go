@@ -128,6 +128,54 @@ func (tr *TerrainEditor) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
 	return tile.WaterSurfaceAt(pos)
 }
 
+// riverDepthAt returns the accumulated river depth at grid point (gx, gz),
+// reaching one cell into the adjacent tile when the point lies just past this
+// tile's edge. The bank-collar dilation (here and in reloadWater) uses it so two
+// tiles sharing an edge test the SAME cells around the seam and agree on whether
+// the edge carries water. Without it each tile's collar stops at its own
+// boundary, the two can disagree, and the water side walls open a gap at the
+// seam. Returns 0 when there is no such tile or its river data isn't ready.
+func (tile *TerrainTile) riverDepthAt(gx, gz int) float32 {
+	n := tile.size
+	if n == 0 {
+		n = terrainDefaultSize
+	}
+	t := tile
+	cx, cz := tile.coord.X, tile.coord.Z
+	// This tile's x == n is the seam shared with the +X neighbour's x == 0, so
+	// x == n+1 maps to that neighbour's x == 1 (and x == -1 to the -X
+	// neighbour's x == n-1); likewise for z.
+	if gx < 0 {
+		cx, gx = cx-1, gx+n
+	} else if gx > n {
+		cx, gx = cx+1, gx-n
+	}
+	if gz < 0 {
+		cz, gz = cz-1, gz+n
+	} else if gz > n {
+		cz, gz = cz+1, gz-n
+	}
+	if cx != tile.coord.X || cz != tile.coord.Z {
+		if tile.editor == nil {
+			return 0
+		}
+		nb, ok := tile.editor.tiles[tileCoord{cx, cz}]
+		if !ok {
+			return 0
+		}
+		t = nb
+		n = t.size
+		if n == 0 {
+			n = terrainDefaultSize
+		}
+	}
+	hm := n + 1
+	if gx < 0 || gz < 0 || gx >= hm || gz >= hm || len(t.riverDepth) < hm*hm {
+		return 0
+	}
+	return t.riverDepth[gx+gz*hm]
+}
+
 // WaterSurfaceAt mirrors reloadWater's waterAt: where a river has been carved
 // (riverDepth above the floor within the bank collar) the surface sits at the
 // original ground minus the small lip; otherwise it is the global lake level.
@@ -165,11 +213,9 @@ func (tile *TerrainTile) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
 	cx, cz := int(x+0.5), int(z+0.5)
 	for dz := -riverBankCollar; dz <= riverBankCollar && !present; dz++ {
 		for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
-			gx, gz := cx+dx, cz+dz
-			if gx < 0 || gz < 0 || gx >= hm || gz >= hm {
-				continue
-			}
-			if tile.riverDepth[gx+gz*hm] > waterFloorEps {
+			// riverDepthAt reaches across the tile seam so the waterline agrees
+			// with the neighbour at a shared edge (matches reloadWater).
+			if tile.riverDepthAt(cx+dx, cz+dz) > waterFloorEps {
 				present = true
 				break
 			}
@@ -287,11 +333,10 @@ func (tile *TerrainTile) reloadWater() {
 		present := tile.riverDepth[idx] > waterFloorEps
 		for dz := -riverBankCollar; dz <= riverBankCollar && !present; dz++ {
 			for dx := -riverBankCollar; dx <= riverBankCollar; dx++ {
-				gx, gz := x+dx, y+dz
-				if gx < 0 || gz < 0 || gx >= hm || gz >= hm {
-					continue
-				}
-				if tile.riverDepth[gx+gz*hm] > waterFloorEps {
+				// riverDepthAt reaches across the tile seam so adjacent tiles test
+				// the same cells here and agree on water presence at a shared edge
+				// — without it their side walls disagree and a gap opens.
+				if tile.riverDepthAt(x+dx, y+dz) > waterFloorEps {
 					present = true
 					break
 				}
@@ -446,40 +491,55 @@ func (tile *TerrainTile) reloadWater() {
 				topFarS, ffx, ffz := waterAt(gfx, gfz)
 				topNear := float32(topNearS)
 				topFar := float32(topFarS)
-				// Sit the wall bottom on the terrain bed at this edge (the lower of
-				// the two floor-clamped edges): it reaches the bed without dangling
-				// below it for a river in raised ground, and bottoms out at the
-				// world floor for one carved to the minimum (matching the skirt).
-				bottom := min(floorNear, floorFar)
-				// Nudge the wall fractionally inboard of the terrain skirt
-				// (which sits on the exact edge) so the coplanar walls don't
-				// z-fight, while staying under the water plane so no surface gap
-				// shows. fixed is 0 or n; inboard is toward the centre.
+				// The wall bottom is PER-VERTEX (bl on the near floor, br on the
+				// far floor) so it follows the bed exactly: a flat min() bottom
+				// dipped below the terrain on the higher side of a sloping edge —
+				// the translucent wall then hung in front of the rock — and put
+				// adjacent cells' bottoms at different heights so they didn't line
+				// up. Per-vertex, neighbouring cells share the same floor at their
+				// shared edge, so they meet.
+				//
+				// The TOP sits on the EXACT tile edge so it meets the water plane
+				// (and the neighbouring tiles' walls) seamlessly at the waterline —
+				// nudging the top inboard left a visible gap at water level. Only
+				// the BOTTOM is nudged inboard, where the wall would otherwise be
+				// coplanar with the rock skirt's buried +2.2 lip and z-fight; that
+				// overlap is down near the bed. fixed is 0 or n; inboard is toward
+				// the centre.
 				fixedPos := sp.fixed - waterSideZFightOffset
 				if sp.fixed == 0 {
 					fixedPos = sp.fixed + waterSideZFightOffset
 				}
 				var tl, tr, bl, br Vector3.XYZ
 				if sp.isZFixed {
-					tl = Vector3.XYZ{pos_near, topNear, fixedPos}
-					tr = Vector3.XYZ{pos_far, topFar, fixedPos}
-					bl = Vector3.XYZ{pos_near, bottom, fixedPos}
-					br = Vector3.XYZ{pos_far, bottom, fixedPos}
+					tl = Vector3.XYZ{pos_near, topNear, sp.fixed}
+					tr = Vector3.XYZ{pos_far, topFar, sp.fixed}
+					bl = Vector3.XYZ{pos_near, floorNear, fixedPos}
+					br = Vector3.XYZ{pos_far, floorFar, fixedPos}
 				} else {
-					tl = Vector3.XYZ{fixedPos, topNear, pos_near}
-					tr = Vector3.XYZ{fixedPos, topFar, pos_far}
-					bl = Vector3.XYZ{fixedPos, bottom, pos_near}
-					br = Vector3.XYZ{fixedPos, bottom, pos_far}
+					tl = Vector3.XYZ{sp.fixed, topNear, pos_near}
+					tr = Vector3.XYZ{sp.fixed, topFar, pos_far}
+					bl = Vector3.XYZ{fixedPos, floorNear, pos_near}
+					br = Vector3.XYZ{fixedPos, floorFar, pos_far}
 				}
-				var v1, v2 Vector3.XYZ
-				if sp.flippedWinding {
-					v1 = Vector3.Sub(tr, bl)
-					v2 = Vector3.Sub(tl, bl)
+				// One uniform OUTWARD normal for the whole side, so the cut-through
+				// wall is lit as a single flat face. A per-quad cross product tilts
+				// slightly with the sloping bed/surface (and the small inboard
+				// slant), and that faceting catches specular as bright vertical
+				// seams between cells — worst at tile boundaries, where the two
+				// tiles' meshes are flat-shaded with the most-divergent normals.
+				var nrm Vector3.XYZ
+				if sp.isZFixed {
+					nrm = Vector3.XYZ{0, 0, 1}
+					if sp.fixed == 0 {
+						nrm = Vector3.XYZ{0, 0, -1}
+					}
 				} else {
-					v1 = Vector3.Sub(tl, bl)
-					v2 = Vector3.Sub(tr, bl)
+					nrm = Vector3.XYZ{1, 0, 0}
+					if sp.fixed == 0 {
+						nrm = Vector3.XYZ{-1, 0, 0}
+					}
 				}
-				nrm := Vector3.Normalized(Vector3.Cross(v1, v2))
 				// Triangle 1
 				vertices_side[index_base+0] = bl
 				normals_side[index_base+0] = nrm
