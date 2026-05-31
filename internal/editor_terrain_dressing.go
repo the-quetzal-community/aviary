@@ -11,6 +11,7 @@ import (
 	"graphics.gd/classdb/MultiMeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/Texture2D"
@@ -42,8 +43,12 @@ type grassPatch struct {
 	radius   Float.X
 	category string // dressing tab (grasses/foliage/mineral/...) for params + transform rules
 
-	mm     MultiMesh.Instance
-	mmNode MultiMeshInstance3D.Instance
+	// One MultiMesh per design sub-mesh (see grassAsset.parts): a library
+	// foliage prop is often several meshes (trunk / canopy / leaf nodes), so a
+	// patch renders a parallel MultiMesh for each. mms[i] corresponds to
+	// grassMeshes[design].parts[i]; all share the per-instance scatter below.
+	mms     []MultiMesh.Instance
+	mmNodes []MultiMeshInstance3D.Instance
 
 	// Per-instance scatter, kept so a later height sculpt can re-plant the
 	// instances on the reshaped surface. bases hold world X/Z (Y is
@@ -53,14 +58,24 @@ type grassPatch struct {
 	scales []Float.X
 }
 
-// grassAsset holds the extracted mesh plus the transform that was applied
-// to it inside its source .glb scene (product of the MeshInstance3D and
-// ancestor nodes). Composing this into every MultiMesh instance transform
-// preserves authored pivots and any orientation fixes the author put on
-// the nodes (rather than assuming raw vertex data is Y-up at the origin).
-type grassAsset struct {
+// grassMeshPart is one renderable sub-mesh of a dressing design plus the
+// transform that was applied to it inside its source .glb scene (product of
+// the MeshInstance3D and ancestor nodes). Composing this into every MultiMesh
+// instance transform preserves authored pivots and any orientation fixes the
+// author put on the nodes (rather than assuming raw vertex data is Y-up at the
+// origin).
+type grassMeshPart struct {
 	mesh  Mesh.Instance
 	xform Transform3D.BasisOrigin
+}
+
+// grassAsset is the set of sub-meshes a dressing design instances. Library
+// foliage props are frequently authored as several separate meshes (a trunk
+// node plus distinct canopy / leaf nodes — see the glTF meshes), so a design
+// resolves to one or more parts; instancing only the first dropped whole parts
+// of the model (typically the leaves, which then went invisible).
+type grassAsset struct {
+	parts []grassMeshPart
 }
 
 // dressingParams configures the scatter behaviour per dressing category
@@ -104,12 +119,13 @@ var dressingDefaults = map[string]dressingParams{
 // later reveals can add the omitted instances without re-sampling RNG.
 // Called from build/erase/reproject and when tiles change revealed state.
 func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
-	if patch.mm == MultiMesh.Nil {
-		return
-	}
 	asset, ok := vr.grassMeshes[patch.design]
-	if !ok || asset.mesh == Mesh.Nil {
-		patch.mm.SetInstanceCount(0)
+	if !ok || len(asset.parts) == 0 {
+		for _, mm := range patch.mms {
+			if mm != MultiMesh.Nil {
+				mm.SetInstanceCount(0)
+			}
+		}
 		return
 	}
 	var visible []int
@@ -119,9 +135,18 @@ func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
 		}
 	}
 	n := len(visible)
-	patch.mm.SetInstanceCount(n)
-	for k, i := range visible {
-		patch.mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], asset.xform, patch.category))
+	// Each part's MultiMesh gets the SAME scatter, composed with that part's own
+	// authored sub-mesh transform so trunk / canopy / leaves stay registered.
+	for pi := range patch.mms {
+		mm := patch.mms[pi]
+		if mm == MultiMesh.Nil || pi >= len(asset.parts) {
+			continue
+		}
+		xform := asset.parts[pi].xform
+		mm.SetInstanceCount(n)
+		for k, i := range visible {
+			mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], xform, patch.category))
+		}
 	}
 }
 
@@ -140,9 +165,7 @@ func (vr *TerrainEditor) refreshGrassVisibility() {
 // dressing history on undo/redo.
 func (vr *TerrainEditor) clearGrass() {
 	for _, p := range vr.grassPatches {
-		if p.mmNode != MultiMeshInstance3D.Nil {
-			p.mmNode.AsNode().QueueFree()
-		}
+		p.freeNodes()
 	}
 	vr.grassPatches = vr.grassPatches[:0]
 	vr.pendingGrass = vr.pendingGrass[:0]
@@ -246,25 +269,49 @@ func (vr *TerrainEditor) fillPatch(patch *grassPatch, brush musical.Sculpt, asse
 	return true
 }
 
-// makeGrassPatch builds (but does not register) a scatter patch plus its
-// MultiMesh node for one dressing stroke, populated for the currently revealed
-// tiles. buildGrassPatch registers it as committed scenery; the hover preview
-// holds it transiently instead. Returns nil when the stroke scatters nothing.
+// freeNodes queues every MultiMeshInstance3D node of the patch for deletion and
+// clears the patch's node/MultiMesh slices. Shared by clearGrass, the empty-
+// patch path of eraseGrass, clearDressPreview and node rebuilds.
+func (p *grassPatch) freeNodes() {
+	for _, n := range p.mmNodes {
+		if n != MultiMeshInstance3D.Nil {
+			n.AsNode().QueueFree()
+		}
+	}
+	p.mms = p.mms[:0]
+	p.mmNodes = p.mmNodes[:0]
+}
+
+// buildPatchNodes (re)creates one MultiMeshInstance3D per asset part, parents
+// them under the editor and stores them on the patch (aligned with
+// asset.parts). Any pre-existing nodes are freed first, so it doubles as the
+// design-swap rebuild for the hover preview. Instance counts/transforms are
+// filled separately by populateGrassMM (only the revealed-tile subset).
+func (vr *TerrainEditor) buildPatchNodes(patch *grassPatch, asset grassAsset) {
+	patch.freeNodes()
+	for _, part := range asset.parts {
+		mm := MultiMesh.New()
+		mm.SetTransformFormat(MultiMesh.Transform3d)
+		mm.SetMesh(part.mesh)
+		mmi := MultiMeshInstance3D.New()
+		mmi.SetMultimesh(mm)
+		vr.AsNode().AddChild(mmi.AsNode())
+		patch.mms = append(patch.mms, mm)
+		patch.mmNodes = append(patch.mmNodes, mmi)
+	}
+}
+
+// makeGrassPatch builds (but does not register) a scatter patch plus a
+// MultiMesh node per design sub-mesh for one dressing stroke, populated for the
+// currently revealed tiles. buildGrassPatch registers it as committed scenery;
+// the hover preview holds it transiently instead. Returns nil when the stroke
+// scatters nothing.
 func (vr *TerrainEditor) makeGrassPatch(brush musical.Sculpt, asset grassAsset) *grassPatch {
 	patch := &grassPatch{}
 	if !vr.fillPatch(patch, brush, asset) {
 		return nil
 	}
-	mm := MultiMesh.New()
-	mm.SetTransformFormat(MultiMesh.Transform3d)
-	mm.SetMesh(asset.mesh)
-	// Instance count and transforms are set by populateGrassMM (only the
-	// subset on revealed tiles).
-	mmi := MultiMeshInstance3D.New()
-	mmi.SetMultimesh(mm)
-	vr.AsNode().AddChild(mmi.AsNode())
-	patch.mm = mm
-	patch.mmNode = mmi
+	vr.buildPatchNodes(patch, asset)
 	vr.populateGrassMM(patch)
 	return patch
 }
@@ -340,13 +387,18 @@ func (vr *TerrainEditor) updateDressPreview() {
 	}
 	if vr.dressPreview == nil {
 		vr.dressPreview = vr.makeGrassPatch(brush, asset)
-	} else if !vr.fillPatch(vr.dressPreview, brush, asset) {
-		vr.clearDressPreview()
-		return
 	} else {
-		// Reuse the existing node (no per-move node churn): swap the mesh in case
-		// the design changed and repopulate the revealed-tile subset.
-		vr.dressPreview.mm.SetMesh(asset.mesh)
+		prevDesign := vr.dressPreview.design // fillPatch overwrites patch.design
+		if !vr.fillPatch(vr.dressPreview, brush, asset) {
+			vr.clearDressPreview()
+			return
+		}
+		// Reuse the existing nodes on a plain move (no per-move node churn), but
+		// rebuild them when the design changed — its part set (trunk/canopy/leaf
+		// MultiMeshes) may differ from the one the preview nodes were built for.
+		if prevDesign != brush.Design || len(vr.dressPreview.mms) != len(asset.parts) {
+			vr.buildPatchNodes(vr.dressPreview, asset)
+		}
 		vr.populateGrassMM(vr.dressPreview)
 	}
 	vr.dressPreviewKey = key
@@ -357,9 +409,7 @@ func (vr *TerrainEditor) clearDressPreview() {
 	if vr.dressPreview == nil {
 		return
 	}
-	if vr.dressPreview.mmNode != MultiMeshInstance3D.Nil {
-		vr.dressPreview.mmNode.AsNode().QueueFree()
-	}
+	vr.dressPreview.freeNodes()
 	vr.dressPreview = nil
 	vr.dressPreviewKey = dressKey{}
 }
@@ -440,9 +490,7 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 		}
 
 		if len(keptB) == 0 {
-			if p.mmNode != MultiMeshInstance3D.Nil {
-				p.mmNode.AsNode().QueueFree()
-			}
+			p.freeNodes()
 			vr.grassPatches = append(vr.grassPatches[:i], vr.grassPatches[i+1:]...)
 			continue
 		}
@@ -500,14 +548,15 @@ func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, sca
 	return Transform3D.BasisOrigin{Basis: corrected, Origin: finalOrigin}
 }
 
-// grassMeshFor resolves (and caches) the Mesh (plus its source-scene
-// transform) to instance for a dressing Design. Returns ok=false until
-// the Design's .glb has been imported. The category determines whether
-// we force the grass wind wrapper (only for grasses) or leave the mesh's
-// own materials (foliage/mineral reuse their authored shaders).
+// grassMeshFor resolves (and caches) the set of sub-meshes (each plus its
+// source-scene transform) to instance for a dressing Design. Returns ok=false
+// until the Design's .glb has been imported AND every material-sharing surface
+// has finished downloading. The category determines whether we force the grass
+// wind wrapper (only for grasses) or leave the mesh's own materials
+// (foliage/mineral reuse their authored shaders).
 func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (grassAsset, bool) {
 	if a, ok := vr.grassMeshes[design]; ok {
-		return a, a.mesh != Mesh.Nil
+		return a, len(a.parts) > 0
 	}
 	sceneID, ok := vr.client.packed_scenes[design]
 	if !ok {
@@ -518,40 +567,112 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 		return grassAsset{}, false
 	}
 	root := Object.To[Node3D.Instance](scene.Instantiate())
-	mi, sourceXform, found := firstMeshInstance(root.AsNode())
-	if !found {
+	parts := allMeshInstances(root.AsNode())
+	if len(parts) == 0 {
 		root.AsNode().QueueFree()
 		return grassAsset{}, false
 	}
-	mesh := Object.Leak(mi.Mesh())
+	// Scenery library props (foliage/mineral/boulders) are
+	// MaterialSharingMeshInstance3D nodes whose surface material streams from
+	// library.pck. grassMeshFor extracts the bare meshes without ever adding the
+	// instances to the tree, so those nodes' Ready — which is what loads and
+	// assigns the shared material — never runs, leaving surface 0 on Godot's grey
+	// default. We resolve the materials ourselves. First make sure EVERY part's
+	// material has downloaded before committing to (and leaking) any mesh, so a
+	// retry frame doesn't leak the parts that happened to be ready already; until
+	// then report not-ready so the stroke parks in pendingGrass / the hover
+	// preview retries next frame instead of baking grey meshes that never refresh.
+	// We probe every part (rather than bailing on the first) so all of a
+	// multi-part prop's materials start downloading at once instead of one per
+	// retry frame.
+	allReady := true
+	for _, part := range parts {
+		if ms, ok := Object.As[*MaterialSharingMeshInstance3D](part.mi); ok {
+			if _, ready := vr.sharedDressMaterial(ms); !ready {
+				allReady = false
+			}
+		}
+	}
+	if !allReady {
+		root.AsNode().QueueFree()
+		return grassAsset{}, false
+	}
 	// MultiMesh cannot carry per-instance material overrides, so any sway has to
-	// live in the one surface material. Grasses wrap in grass_wind (every vertex
-	// leans by height), foliage wraps in foliage_wind_mm (trunk planted, canopy
+	// live in the surface material. Grasses wrap in grass_wind (every vertex leans
+	// by height), foliage wraps in foliage_wind_mm (trunk planted, canopy
 	// flutters); everything else (boulders, mineral, pebbles) keeps the imported
 	// material exactly as authored so scattered instances match the same mesh
 	// placed as scenery.
 	kind := vr.windKindFor(category)
-	for i := 0; i < mesh.GetSurfaceCount(); i++ {
-		src := mi.GetSurfaceOverrideMaterial(i)
-		if src == Material.Nil {
-			src = mesh.SurfaceGetMaterial(i)
-		}
-		if src == Material.Nil {
+	var asset grassAsset
+	for _, part := range parts {
+		mi := part.mi
+		mesh := Object.Leak(mi.Mesh())
+		if mesh == Mesh.Nil {
 			continue
 		}
-		switch kind {
-		case "grass":
-			mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
-		case "foliage":
-			mesh.SurfaceSetMaterial(i, vr.foliageWindMaterial(src))
-		default:
-			mesh.SurfaceSetMaterial(i, src)
+		if ms, ok := Object.As[*MaterialSharingMeshInstance3D](mi); ok {
+			if mat, ready := vr.sharedDressMaterial(ms); ready && mat != Material.Nil {
+				mesh.SurfaceSetMaterial(0, mat)
+			}
 		}
+		for i := 0; i < mesh.GetSurfaceCount(); i++ {
+			src := mi.GetSurfaceOverrideMaterial(i)
+			if src == Material.Nil {
+				src = mesh.SurfaceGetMaterial(i)
+			}
+			if src == Material.Nil {
+				continue
+			}
+			switch kind {
+			case "grass":
+				mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
+			case "foliage":
+				mesh.SurfaceSetMaterial(i, vr.foliageWindMaterial(src))
+			default:
+				mesh.SurfaceSetMaterial(i, src)
+			}
+		}
+		asset.parts = append(asset.parts, grassMeshPart{mesh: mesh, xform: part.xform})
 	}
 	root.AsNode().QueueFree()
-	asset := grassAsset{mesh: mesh, xform: sourceXform}
+	if len(asset.parts) == 0 {
+		return grassAsset{}, false
+	}
 	vr.grassMeshes[design] = asset
 	return asset, true
+}
+
+// sharedDressMaterial resolves the surface material for a material-sharing
+// scenery mesh used by the dressing brushes, off the main thread so a
+// not-yet-downloaded library.pck material doesn't stall the editor/VR. The
+// first call kicks off the load and reports ready=false; subsequent calls
+// return ready=false while it's in flight, then the cached material once it
+// has arrived. AO overrides are duplicated onto the material exactly as the
+// synchronous MaterialSharingMeshInstance3D path does. A failed load caches
+// Material.Nil with ready=true, so the caller stops retrying and falls back
+// to the (untextured) mesh rather than spinning forever.
+func (vr *TerrainEditor) sharedDressMaterial(ms *MaterialSharingMeshInstance3D) (Material.Instance, bool) {
+	key := sharingKey{Identity: ms.Identity, Material: ms.Material}
+	if mat, ok := vr.dressSharedMats[key]; ok {
+		return mat, true
+	}
+	if vr.dressMatPending[key] {
+		return Material.Nil, false
+	}
+	vr.dressMatPending[key] = true
+	overrideAO := ms.OverrideAO
+	LoadAsync(ms.Material, func(mat Material.Instance) {
+		final := mat
+		if mat != Material.Nil && overrideAO != Texture2D.Nil {
+			dup := Object.Leak(Resource.Duplicate(Object.To[BaseMaterial3D.Instance](mat)))
+			dup.SetAoTexture(overrideAO)
+			final = dup.AsMaterial()
+		}
+		vr.dressSharedMats[key] = final
+		delete(vr.dressMatPending, key)
+	})
+	return Material.Nil, false
 }
 
 // grassWindMaterial wraps a grass surface's imported material in the shared
@@ -629,35 +750,41 @@ func (vr *TerrainEditor) foliageWindMaterial(src Material.Instance) Material.Ins
 	return mat.AsMaterial()
 }
 
-// firstMeshInstance returns the first MeshInstance3D found in a (possibly
-// nested) imported scene tree together with the accumulated transform
-// (relative to the scene root) that was applied to it by the glTF nodes.
-// .glb roots usually wrap the mesh a couple of nodes deep; preserving the
-// transform ensures authored pivots and orientation fixes are not lost
-// when the raw mesh is fed to a MultiMesh.
-func firstMeshInstance(n Node.Instance) (MeshInstance3D.Instance, Transform3D.BasisOrigin, bool) {
-	identity := Transform3D.BasisOrigin{Basis: Basis.Identity, Origin: Vector3.Zero}
-	return firstMeshRecursive(n, identity)
+// meshInstancePart pairs a MeshInstance3D found in an imported scene with the
+// transform (relative to the scene root) that the glTF nodes applied to it.
+type meshInstancePart struct {
+	mi    MeshInstance3D.Instance
+	xform Transform3D.BasisOrigin
 }
 
-func firstMeshRecursive(n Node.Instance, parentXform Transform3D.BasisOrigin) (MeshInstance3D.Instance, Transform3D.BasisOrigin, bool) {
-	// Compute the transform of *this* node (if it is a Node3D) composed
-	// onto the parent. This becomes the global xform for any MI here.
+// allMeshInstances returns EVERY MeshInstance3D in a (possibly nested) imported
+// scene tree, each with its accumulated transform relative to the scene root.
+// .glb roots usually wrap the meshes a couple of nodes deep, and a single prop
+// is frequently several mesh nodes (trunk / canopy / leaves); preserving each
+// node's transform keeps authored pivots and orientation fixes intact when the
+// raw meshes are fed to MultiMeshes, and collecting all of them (not just the
+// first) means no part of the model goes missing.
+func allMeshInstances(n Node.Instance) []meshInstancePart {
+	identity := Transform3D.BasisOrigin{Basis: Basis.Identity, Origin: Vector3.Zero}
+	var out []meshInstancePart
+	collectMeshInstances(n, identity, &out)
+	return out
+}
+
+func collectMeshInstances(n Node.Instance, parentXform Transform3D.BasisOrigin, out *[]meshInstancePart) {
+	// Compose this node's local transform (if it is a Node3D) onto the parent;
+	// this is the global xform for a MeshInstance3D here and the parent for any
+	// descendants.
 	nodeXform := parentXform
 	if n3d, ok := Object.As[Node3D.Instance](n); ok {
-		local := n3d.Transform()
-		nodeXform = Transform3D.Mul(parentXform, local)
+		nodeXform = Transform3D.Mul(parentXform, n3d.Transform())
 	}
-
 	if mi, ok := Object.As[MeshInstance3D.Instance](n); ok {
-		return mi, nodeXform, true
+		*out = append(*out, meshInstancePart{mi: mi, xform: nodeXform})
 	}
 	for i := 0; i < n.GetChildCount(); i++ {
-		if mi, xf, ok := firstMeshRecursive(n.GetChild(i), nodeXform); ok {
-			return mi, xf, true
-		}
+		collectMeshInstances(n.GetChild(i), nodeXform, out)
 	}
-	return MeshInstance3D.Nil, Transform3D.BasisOrigin{}, false
 }
 
 // grassSeed derives a deterministic 64-bit seed from the sculpt's identity

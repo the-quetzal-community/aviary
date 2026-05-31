@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bbxlp7iu0au36"
-path="res://.godot/imported/organic.svg-d24a7404ebf198c7b9ae6d872762f4a1.ctex"
+uid="uid://cxvatae0y4ycr"
+path="res://.godot/imported/organic.svg-7b5643d05b01b2ed00b5c75226f79448.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/organic.svg"
-dest_files=["res://.godot/imported/organic.svg-d24a7404ebf198c7b9ae6d872762f4a1.ctex"]
+source_file="res://ui/terrain/organic.svg"
+dest_files=["res://.godot/imported/organic.svg-7b5643d05b01b2ed00b5c75226f79448.ctex"]
 
 [params]
 
@@ -37,7 +37,7 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=2
 svg/scale=1.0
 editor/scale_with_editor_scale=false
 editor/convert_colors_with_editor_theme=false

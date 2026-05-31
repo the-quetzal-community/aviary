@@ -1,4 +1,4 @@
-# Aviary
+# Aviary™
 
 Inspired by the creative capabilities of popular RTS, City Builder and Tycoon games, the vision of Aviary 
 (still in early & open development), is to provide an equivalent collection of simple to use editors, that are 

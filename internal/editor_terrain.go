@@ -12,14 +12,11 @@ import (
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/FileAccess"
-	"graphics.gd/classdb/GeometryInstance3D"
 	"graphics.gd/classdb/GPUParticles3D"
+	"graphics.gd/classdb/GeometryInstance3D"
 	"graphics.gd/classdb/HeightMapShape3D"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
-	"graphics.gd/classdb/ParticleProcessMaterial"
-	"graphics.gd/classdb/QuadMesh"
-	"graphics.gd/variant/AABB"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Material"
@@ -27,6 +24,8 @@ import (
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/ParticleProcessMaterial"
+	"graphics.gd/classdb/QuadMesh"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
@@ -35,6 +34,7 @@ import (
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
 	"graphics.gd/classdb/TextureRect"
+	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Color"
@@ -195,6 +195,16 @@ type TerrainEditor struct {
 	grassPatches []*grassPatch
 	grassMeshes  map[musical.Design]grassAsset
 	pendingGrass []musical.Sculpt
+
+	// dressSharedMats caches the resolved surface material for scenery library
+	// props scattered by the foliage/boulder brushes. Those are
+	// MaterialSharingMeshInstance3D nodes whose material streams from
+	// library.pck, but grassMeshFor extracts the bare mesh without adding the
+	// instance to the tree, so the node's Ready (which would load the material)
+	// never runs. We load it ourselves off the main thread; dressMatPending
+	// dedupes the in-flight load while the stroke parks in pendingGrass.
+	dressSharedMats map[sharingKey]Material.Instance
+	dressMatPending map[sharingKey]bool
 
 	// dressPreview is the transient hover scatter shown in ModeDressing before a
 	// stroke commits — the dressing analogue of the height/paint brush previews.
@@ -921,6 +931,8 @@ func (tr *TerrainEditor) Ready() {
 	// their live values from the environment Wind slider.
 	ensureGrassWindGlobals()
 	tr.grassMeshes = make(map[musical.Design]grassAsset)
+	tr.dressSharedMats = make(map[sharingKey]Material.Instance)
+	tr.dressMatPending = make(map[sharingKey]bool)
 	tr.objectPreviewOffsets = make(map[Node3D.ID]Float.X)
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
@@ -1204,11 +1216,11 @@ func (tr *TerrainEditor) EraseDressingCategory(category string) {
 	tr.client.commitSculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Editor: "terrain",
-		Slider: category,           // either a real category or ClearAllDressingCategory ("*")
+		Slider: category, // either a real category or ClearAllDressingCategory ("*")
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
-		Amount: -0.5,               // negative signals erase
-		Design: musical.Design{},   // zero + special Slider → all categories (bomb)
+		Amount: -0.5,             // negative signals erase
+		Design: musical.Design{}, // zero + special Slider → all categories (bomb)
 		Commit: true,
 	})
 
@@ -1941,10 +1953,10 @@ const (
 	// Dressing category clearers (armed from the "removal" tab in ModeDressing).
 	// These arm a brush that emits negative-Amount sculpts for the whole category
 	// (all designs under that Slider), replacing the old Ctrl+Shift hack.
-	BuiltinDressingClearGrasses  = "procedural://dressing/clear_grasses"
-	BuiltinDressingClearPebbles  = "procedural://dressing/clear_pebbles"
-	BuiltinDressingClearFoliage  = "procedural://dressing/clear_foliage"
-	BuiltinDressingClearMineral  = "procedural://dressing/clear_mineral"
+	BuiltinDressingClearGrasses = "procedural://dressing/clear_grasses"
+	BuiltinDressingClearPebbles = "procedural://dressing/clear_pebbles"
+	BuiltinDressingClearFoliage = "procedural://dressing/clear_foliage"
+	BuiltinDressingClearMineral = "procedural://dressing/clear_mineral"
 
 	// BuiltinDressingClearAll (the "bomb") clears every dressing category at once.
 	BuiltinDressingClearAll = "procedural://dressing/clear_all"
@@ -1954,7 +1966,6 @@ const (
 // When a negative-Amount sculpt arrives with this Slider and Design==zero,
 // eraseGrass removes instances from *all* categories inside the brush disc.
 const ClearAllDressingCategory = "*"
-
 
 // extendSlider tags the explicit "extend the world" mutation an arrow click
 // emits. Target carries the new chunk's world-space center; TerrainEditor.Sculpt

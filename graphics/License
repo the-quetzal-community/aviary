@@ -1,3 +1,12 @@
+QCTL the.quetzal.community/trademark-license
+
+icon.svg - Aviary™ Copyright (C) Quentin Quaadgras 2025-11-11
+
+CC0 https://creativecommons.org/publicdomain/zero/1.0/
+
+ui/triangle.svg - Quentin Quaadgras
+ui/pointer.svg - Quentin Quaadgras
+
 CC-BY-SA 3.0 https://creativecommons.org/licenses/by-sa/3.0/
 
 default/leaflet.png - Wildfire Games (http://www.wildfiregames.com/)
@@ -9,19 +18,22 @@ CC-BY-SA 4.0 https://creativecommons.org/licenses/by/sa/4.0/
 
 ui/colour.svg - Crossover1370
 ui/slider.svg - Quentin Quaadgras
+ui/slider.png - Quentin Quaadgras
 
 CC-BY 3.0 https://creativecommons.org/licenses/by/3.0/
 (all UI icons are from The Noun Project & have been color adjusted)
 
 ui/quality_low.png - Ardiansyah (Toaster, Noun Project)
 ui/quality_high.png - Lars Meiertoberens (Sports Car, Noun Project)
-ui/terrain.svg - Nanik Haq
+ui/texture.svg - Nanik Haq
 ui/foliage.svg - Taewon Kang
 ui/mineral.svg - Free Fair & Healthy
 ui/shelter.svg - Lars Meiertoberens
 ui/critter.svg - Round Pixel
 ui/citizen.svg - Wilson Joseph
 ui/special.svg - Hayley D'Auria
+
+ui/terrain.svg - iconcheese
 
 ui/housing.svg - NTT
 ui/village.svg - Imron Sadewo
@@ -30,14 +42,15 @@ ui/farming.svg - Topicons07
 ui/obelisk.svg - Pekosman
 ui/defense.svg - ircham
 
-ui/aquatic.svg - BnB Studio
-ui/dryland.svg - Rabiya Anwer
-ui/manmade.svg - Road Signs
-ui/organic.svg - Hamish
-ui/volcano.svg - ani rofiqah
-ui/deserts.svg - nur fitri komariya
-ui/forests.svg - Athok
-ui/glacial.svg - Fahrul Oktaviana
+ui/terrain/aquatic.svg - BnB Studio
+ui/terrain/dryland.svg - Rabiya Anwer
+ui/terrain/manmade.svg - Road Signs
+ui/terrain/organic.svg - Hamish
+ui/terrain/volcano.svg - ani rofiqah
+ui/terrain/deserts.svg - nur fitri komariya
+ui/terrain/forests.svg - Athok
+ui/terrain/glacial.svg - Fahrul Oktaviana
+ui/terrain/organic.svg - Pong Pong
 
 ui/mystuff.svg - Maan Icons
 ui/sharing.svg - NOVILAMISASTRA
@@ -60,13 +73,14 @@ ui/sailing.svg - Design Queen
 ui/gliding.svg - sandra
 ui/sliding.svg - VectorsLab
 ui/aerials.svg - Ochtavia asmieza
-ui/engines.svg - Rchicons Avatar
+ui/booster.svg - Rchicons Avatar
 ui/mirrors.svg - Dio Sugiharto
 ui/torches.svg - Sentya Irma
 ui/exhaust.svg - Maz Wan
 ui/spinner.svg - Amethyst Studio
-ui/walking.svg - WR Graphic Garage
+ui/walkers.svg - WR Graphic Garage
 ui/details.svg - Brickclay
+ui/cannons.svg - DinosoftLabs
 
 ui/shelter.svg - Adrien Coquet
 ui/divider.svg - Bakunetsu Kaito
@@ -77,7 +91,7 @@ ui/fencing.svg - Bakunetsu Kaito
 ui/windows.svg - Bakunetsu Kaito & Quentin Quaadgras (added windows)
 ui/rooftop.svg - Bakunetsu Kaito
 ui/ladders.svg - Bakunetsu Kaito
-ui/awnings.svg - WavoCC
+ui/hanging.svg - WavoCC
 
 ui/benches.svg - Tayyab Mahmood
 ui/candles.svg - farra nugraha
@@ -92,11 +106,6 @@ ui/editor.svg  - Aybige
 ui/arrows.svg - Alice Design
 ui/editing.svg - kumakamu
 ui/explore.svg - Kmg Design
-
-ui/cursor.svg - PixelX
-ui/moving.svg - Xela Ub
-ui/rotate.svg - Aman
-ui/scales.svg - Febri Ardianto
 
 ui/rounded.svg - Quentin Quaadgras
 
@@ -125,6 +134,7 @@ ui/foliage/editing/twist_rate.svg - Cédric Villain, Adrien Coquet & Quentin Qua
 ui/foliage/editing/v_multiplier.svg - Kim Love
 
 ui/foliage/editing/seed.svg - yus
+ui/mineral/editing/seed.svg - yus
 ui/mineral/editing/noise_scale.svg - PEBIAN
 ui/mineral/editing/noise_strength.svg - Gregor Cresnar
 ui/mineral/editing/scrape_count.svg - Rizsign
@@ -166,6 +176,11 @@ ui/canyons.svg - Triman
 
 ui/gizmo/brush.svg - MBR
 ui/gizmo/power.svg - Juicy Fish
+ui/gizmo/point.svg - PixelX
+ui/gizmo/shift.svg - Xela Ub
+ui/gizmo/twist.svg - Aman
+ui/gizmo/scale.svg - Febri Ardianto
+ui/gizmo/float.svg - Adrien Coquet
 
 ui/daytime.svg - Yudhi Restu Pebriyanto
 ui/sunside.svg - Francesca Ameglio
@@ -180,3 +195,9 @@ ui/removal.svg - Studio Danro
 ui/scythe.svg - Juicy Fish
 ui/axe.svg - Hanbai
 ui/pickaxe.svg - Hanbai
+ui/rake.svg - Ayub Irawan
+
+ui/coaster.svg - Andy Horvath
+ui/trash.svg - Julynn B.
+ui/liquids.svg - Amazona Adorada
+ui/mounted.svg - businessicons13
