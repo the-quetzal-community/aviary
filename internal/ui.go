@@ -21,6 +21,7 @@ import (
 	"graphics.gd/classdb/Range"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
+	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/Tween"
 	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Callable"
@@ -94,6 +95,11 @@ type UI struct {
 	// environmentRollout drives the new Shading/lighting rolldown.
 	// Mutually exclusive with the other two top-right rollouts.
 	environmentRollout Rollout
+
+	// environmentSliders maps each environment/* slider key to its handle so
+	// the rolldown can be re-synced to the authoritative lighting state when
+	// it opens (the persisted state loads after the menu is first built).
+	environmentSliders map[string]HSlider.Instance
 
 	// undoSpin/redoSpin remember each button's resting rotation so the
 	// click spin can return to the designed tilt instead of snapping
@@ -219,6 +225,12 @@ func (ui *UI) buildSettingsMenu() {
 	defaultGraphicsQuality.Apply(ui.AsNode())
 }
 
+// environmentTopSpacer is the height (in EnvironmentMenu-local units) of the
+// blank Control inserted before the first slider, reserving room for the
+// EditorIndicator's white triangle the panel rolls out from. Tweak this to
+// move the slider stack up or down.
+const environmentTopSpacer Float.X = 372
+
 // buildEnvironmentMenu creates the slider content for the lighting rolldown
 // (Time of Day, Sun Angle, Fog, Clouds). The outer Panel lives in editor.tscn
 // (EnvironmentMenu) so it participates in the same Rollout + scaling machinery
@@ -228,6 +240,7 @@ func (ui *UI) buildEnvironmentMenu() {
 	if ui.EnvironmentMenu.AsControl() == Control.Nil {
 		return
 	}
+	ui.environmentSliders = make(map[string]HSlider.Instance)
 	// Ensure we have a container to host the rows.
 	containerNode := ui.EnvironmentMenu.AsNode().GetNode("Types")
 	var container VBoxContainer.Instance
@@ -239,14 +252,14 @@ func (ui *UI) buildEnvironmentMenu() {
 		ui.EnvironmentMenu.AsNode().AddChild(container.AsNode())
 	}
 
-	// Make sure the content is pushed below the rotated Toolbar triangle
-	// (same pattern as the QualitySpacer in SettingsMenu).
-	if container.AsNode().GetChildCount() == 0 {
-		spacer := Control.New()
-		spacer.SetCustomMinimumSize(Vector2.New(0, 620))
-		spacer.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
-		container.AsNode().AddChild(spacer.AsNode())
-	}
+	// Push the slider rows below the EditorIndicator's white triangle (the
+	// toolbar this panel rolls out from) with a leading spacer, so they only
+	// appear past its height. This is the single source of truth for that
+	// gap — adjust environmentTopSpacer to move the first slider up/down.
+	spacer := Control.New()
+	spacer.SetCustomMinimumSize(Vector2.New(0, environmentTopSpacer))
+	spacer.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
+	container.AsNode().AddChild(spacer.AsNode())
 
 	// Downscale grabber exactly like the quality slider.
 	const grabberSize = 64
@@ -258,19 +271,39 @@ func (ui *UI) buildEnvironmentMenu() {
 		}
 	}
 
-	// Helper to make one labeled row.
-	makeRow := func(labelText string, minV, maxV, step, initV Float.X, onChange func(Float.X)) {
+	// Helper to make one labeled row. The caption is an icon loaded from
+	// res://ui/<icon>.svg; if that texture isn't present yet (the icons are
+	// still being sourced) it falls back to the text label so the row is
+	// never blank.
+	makeRow := func(sliderKey, icon, labelText string, minV, maxV, step, initV Float.X, onChange func(Float.X)) {
 		row := HBoxContainer.New()
 		row.AsControl().SetCustomMinimumSize(Vector2.New(0, 28))
 
-		lbl := Label.New()
-		lbl.SetText(labelText)
-		lbl.AsControl().SetCustomMinimumSize(Vector2.New(90, 0))
-		// Small readable size for the compact rolldown.
-		lbl.AsControl().AddThemeFontSizeOverride("font_size", 14)
+		if tex := LoadSync[Texture2D.Instance]("res://ui/" + icon + ".svg"); tex != Texture2D.Nil {
+			ico := TextureRect.New()
+			ico.SetTexture(tex)
+			ico.SetExpandMode(TextureRect.ExpandIgnoreSize)
+			ico.SetStretchMode(TextureRect.StretchKeepAspectCentered)
+			ico.AsControl().SetCustomMinimumSize(Vector2.New(72, 72))
+			ico.AsControl().SetMouseFilter(Control.MouseFilterIgnore)
+			row.AsNode().AddChild(ico.AsNode())
+		} else {
+			lbl := Label.New()
+			lbl.SetText(labelText)
+			lbl.AsControl().SetCustomMinimumSize(Vector2.New(90, 0))
+			// Small readable size for the compact rolldown.
+			lbl.AsControl().AddThemeFontSizeOverride("font_size", 14)
+			row.AsNode().AddChild(lbl.AsNode())
+		}
 
 		sld := HSlider.Advanced(HSlider.New())
-		sld.AsControl().SetCustomMinimumSize(Vector2.New(140, 24))
+		ui.environmentSliders[sliderKey] = HSlider.Instance(sld)
+		// Let the slider grab all the horizontal space the fixed-width label
+		// leaves, so it spans the full panel width regardless of how wide the
+		// triangle (and thus the panel) ends up.
+		sldControl := HSlider.Instance(sld).AsControl()
+		sldControl.SetCustomMinimumSize(Vector2.New(0, 24))
+		sldControl.SetSizeFlagsHorizontal(Control.SizeExpandFill)
 		sld.AsRange().SetMin(float64(minV))
 		sld.AsRange().SetMax(float64(maxV))
 		sld.AsRange().SetStep(float64(step))
@@ -285,7 +318,6 @@ func (ui *UI) buildEnvironmentMenu() {
 
 		Range.Instance(sld.AsRange()).OnValueChanged(onChange)
 
-		row.AsNode().AddChild(lbl.AsNode())
 		row.AsNode().AddChild(HSlider.Instance(sld).AsNode())
 		container.AsNode().AddChild(row.AsNode())
 	}
@@ -307,7 +339,7 @@ func (ui *UI) buildEnvironmentMenu() {
 
 	// Friendly, non-technical controls. We drive them through
 	// ApplyLightingMenuState so each axis stays completely independent.
-	makeRow("Time of Day", 0, 1, 0.005, tod, func(v Float.X) {
+	makeRow("environment/time_of_day", "daytime", "Time of Day", 0, 1, 0.005, tod, func(v Float.X) {
 		if ui.client != nil {
 			_, angle, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(v, angle, fog, clouds, rain, snow, wind)
@@ -315,42 +347,42 @@ func (ui *UI) buildEnvironmentMenu() {
 		// Still send the Sculpt for networking + persistence
 		ui.sendEnvironmentSlider("environment/time_of_day", v)
 	})
-	makeRow("Sun Angle", 0, 1, 0.005, sunAng, func(v Float.X) {
+	makeRow("environment/sun_angle", "sunside", "Sun Angle", 0, 1, 0.005, sunAng, func(v Float.X) {
 		if ui.client != nil {
 			tod, _, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(tod, v, fog, clouds, rain, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/sun_angle", v)
 	})
-	makeRow("Fog / Atmosphere", 0, 1, 0.01, fg, func(v Float.X) {
+	makeRow("environment/fog", "fogmist", "Fog / Atmosphere", 0, 1, 0.01, fg, func(v Float.X) {
 		if ui.client != nil {
 			tod, angle, _, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(tod, angle, v, clouds, rain, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/fog", v)
 	})
-	makeRow("Clouds", 0, 1, 0.01, cl, func(v Float.X) {
+	makeRow("environment/clouds", "cumulus", "Clouds", 0, 1, 0.01, cl, func(v Float.X) {
 		if ui.client != nil {
 			tod, angle, fog, _, rain, snow, wind := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(tod, angle, fog, v, rain, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/clouds", v)
 	})
-	makeRow("Rain", 0, 1, 0.01, rn, func(v Float.X) {
+	makeRow("environment/rain", "raining", "Rain", 0, 1, 0.01, rn, func(v Float.X) {
 		if ui.client != nil {
 			tod, angle, fog, clouds, _, snow, wind := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, v, snow, wind)
 		}
 		ui.sendEnvironmentSlider("environment/rain", v)
 	})
-	makeRow("Snow", 0, 1, 0.01, sn, func(v Float.X) {
+	makeRow("environment/snow", "snowing", "Snow", 0, 1, 0.01, sn, func(v Float.X) {
 		if ui.client != nil {
 			tod, angle, fog, clouds, rain, _, wind := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, v, wind)
 		}
 		ui.sendEnvironmentSlider("environment/snow", v)
 	})
-	makeRow("Wind", 0, 1, 0.01, wn, func(v Float.X) {
+	makeRow("environment/wind", "cyclone", "Wind", 0, 1, 0.01, wn, func(v Float.X) {
 		if ui.client != nil {
 			tod, angle, fog, clouds, rain, snow, _ := ui.client.GetLightingMenuState()
 			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, v)
@@ -387,7 +419,37 @@ func (ui *UI) toggleSettings() {
 
 // toggleEnvironment rolls the lighting/fog/weather menu (Shading button).
 func (ui *UI) toggleEnvironment() {
+	// Re-sync the handles to the live lighting state before revealing them:
+	// buildEnvironmentMenu seeds the sliders once during Setup, but the
+	// persisted environment/* sculpts that carry the real values replay only
+	// after the world loads, so the seed is stale by the time the user opens
+	// the menu. By now the world is loaded, so GetLightingMenuState is right.
+	ui.syncEnvironmentSliders()
 	ui.environmentRollout.Toggle(ui.EnvironmentMenu.AsControl())
+}
+
+// syncEnvironmentSliders sets each lighting slider's handle to the current
+// authoritative value from the Client's lightingMenuState. It uses
+// SetValueNoSignal so refreshing the handle doesn't re-fire OnValueChanged
+// (which would echo a redundant Sculpt back out). Safe to call repeatedly.
+func (ui *UI) syncEnvironmentSliders() {
+	if ui.client == nil || ui.environmentSliders == nil {
+		return
+	}
+	tod, angle, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
+	for key, v := range map[string]Float.X{
+		"environment/time_of_day": tod,
+		"environment/sun_angle":   angle,
+		"environment/fog":         fog,
+		"environment/clouds":      clouds,
+		"environment/rain":        rain,
+		"environment/snow":        snow,
+		"environment/wind":        wind,
+	} {
+		if sld, ok := ui.environmentSliders[key]; ok {
+			sld.AsRange().SetValueNoSignal(v)
+		}
+	}
 }
 
 func (ui *UI) SetMode(mode Mode) {
@@ -680,6 +742,15 @@ func (ui *UI) scaling() {
 	if sm := ui.SettingsMenu.AsControl(); sm != Control.Nil {
 		sm.SetPivotOffset(Vector2.New(sm.Size().X, 0))
 		ui.scaleDefault(sm)
+	}
+	// EnvironmentMenu rolls out from the EditorIndicator's white triangle, so
+	// scale it with the same factor as that triangle to keep their widths in
+	// lock-step across display sizes (the panel is authored to the triangle's
+	// width). Pin the pivot to the panel's right edge first so it stays flush
+	// to the top-right corner, exactly as SettingsMenu does above.
+	if em := ui.EnvironmentMenu.AsControl(); em != Control.Nil {
+		em.SetPivotOffset(Vector2.New(em.Size().X, 0))
+		ui.scaleDefault(em)
 	}
 
 	// ViewSelector needs to be centered to the top center

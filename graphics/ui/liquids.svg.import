@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://q7w5t75mrmsd"
-path="res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"
+uid="uid://dd6byn6bfq6ke"
+path="res://.godot/imported/liquids.svg-580de499baa2e8db8e440654b5a7b62b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/gizmo/float.svg"
-dest_files=["res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"]
+source_file="res://ui/liquids.svg"
+dest_files=["res://.godot/imported/liquids.svg-580de499baa2e8db8e440654b5a7b62b.ctex"]
 
 [params]
 

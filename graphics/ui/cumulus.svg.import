@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://q7w5t75mrmsd"
-path="res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"
+uid="uid://cn8yeh870w56t"
+path="res://.godot/imported/cumulus.svg-7336dbf85b73381bb01e381505f54e73.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/gizmo/float.svg"
-dest_files=["res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"]
+source_file="res://ui/cumulus.svg"
+dest_files=["res://.godot/imported/cumulus.svg-7336dbf85b73381bb01e381505f54e73.ctex"]
 
 [params]
 

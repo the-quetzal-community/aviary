@@ -3,6 +3,7 @@ package internal
 import (
 	"math"
 
+	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
@@ -10,6 +11,9 @@ import (
 	"graphics.gd/classdb/MultiMeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/Shader"
+	"graphics.gd/classdb/ShaderMaterial"
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Basis"
 	"graphics.gd/variant/Euler"
@@ -340,18 +344,64 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design) (grassAsset, bool) 
 		return grassAsset{}, false
 	}
 	mesh := Object.Leak(mi.Mesh())
-	// Promote any surface override materials onto the shared Mesh so the
-	// MultiMesh — which has no per-instance MeshInstance3D to carry
-	// overrides — still renders the grass with its textures.
+	// Promote each surface's material onto the shared Mesh — the MultiMesh has
+	// no per-instance MeshInstance3D to carry overrides — and wrap it in the
+	// wind-sway shader so the blades animate. The override (if any) wins over
+	// the mesh's own material, matching how the source scene would have drawn.
 	for i := 0; i < mesh.GetSurfaceCount(); i++ {
-		if ov := mi.GetSurfaceOverrideMaterial(i); ov != Material.Nil {
-			mesh.SurfaceSetMaterial(i, ov)
+		src := mi.GetSurfaceOverrideMaterial(i)
+		if src == Material.Nil {
+			src = mesh.SurfaceGetMaterial(i)
 		}
+		if src == Material.Nil {
+			continue
+		}
+		mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
 	}
 	root.AsNode().QueueFree()
 	asset := grassAsset{mesh: mesh, xform: sourceXform}
 	vr.grassMeshes[design] = asset
 	return asset, true
+}
+
+// grassWindMaterial wraps a grass surface's imported material in the shared
+// wind-sway ShaderMaterial so the MultiMesh blades animate. To keep the look
+// identical to the source (the wind shader can't subclass a BaseMaterial3D),
+// the surface's albedo, normal map, roughness and metallic are copied across.
+// Wind itself is a global shader parameter (see updateWeatherIntensity), not a
+// per-material uniform. If the shader isn't loaded, the source isn't a
+// BaseMaterial3D, or it carries no albedo texture, the original material is
+// returned unchanged so the grass still renders — just without wind.
+func (vr *TerrainEditor) grassWindMaterial(src Material.Instance) Material.Instance {
+	if vr.grassWindShader == Shader.Nil {
+		return src
+	}
+	base, ok := Object.As[BaseMaterial3D.Instance](src)
+	if !ok {
+		return src
+	}
+	tex := base.AlbedoTexture()
+	if tex == Texture2D.Nil {
+		return src
+	}
+	mat := ShaderMaterial.New().
+		SetShader(vr.grassWindShader).
+		SetShaderParameter("albedo_texture", tex).
+		SetShaderParameter("albedo", base.AlbedoColor()).
+		SetShaderParameter("roughness", base.Roughness()).
+		SetShaderParameter("metallic", base.Metallic())
+	// Carry the normal map across so the blades keep their shaded relief
+	// (the source grass materials are normal-mapped; without this they look
+	// flat). has_normal_texture gates sampling so an unset sampler — which
+	// Godot fills with white — never tilts the normal.
+	if base.NormalEnabled() {
+		if nrm := base.NormalTexture(); nrm != Texture2D.Nil {
+			mat.SetShaderParameter("normal_texture", nrm)
+			mat.SetShaderParameter("normal_scale", base.NormalScale())
+			mat.SetShaderParameter("has_normal_texture", true)
+		}
+	}
+	return mat.AsMaterial()
 }
 
 // firstMeshInstance returns the first MeshInstance3D found in a (possibly

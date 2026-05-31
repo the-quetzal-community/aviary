@@ -719,12 +719,12 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -548.13086
+offset_left = -400.0
 offset_top = -920.0
-offset_right = 139.0935
+offset_right = 0.0
 grow_horizontal = 0
 scale = Vector2(0.5, 0.5)
-pivot_offset = Vector2(420, 0)
+pivot_offset = Vector2(400, 0)
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
 
@@ -738,11 +738,6 @@ offset_right = -12.0
 offset_bottom = -8.0
 grow_horizontal = 2
 grow_vertical = 2
-
-[node name="Spacer" type="Control" parent="EnvironmentMenu/Types" unique_id=1700005002]
-custom_minimum_size = Vector2(0, 520)
-layout_mode = 2
-mouse_filter = 2
 
 [node name="Toolbar" type="Triangle" parent="." unique_id=1700002000]
 right_angled = true

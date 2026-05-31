@@ -17,12 +17,13 @@ import (
 
 	"github.com/google/uuid"
 	"graphics.gd/classdb/Camera3D"
-	"graphics.gd/classdb/CPUParticles3D"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/GPUParticles3D"
+	"graphics.gd/classdb/GeometryInstance3D"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
@@ -38,6 +39,7 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/ParticleProcessMaterial"
 	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
 	"graphics.gd/classdb/QuadMesh"
 	"graphics.gd/classdb/RayCast3D"
@@ -52,6 +54,7 @@ import (
 	"graphics.gd/classdb/XRCamera3D"
 	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/classdb/XROrigin3D"
+	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Color"
@@ -139,9 +142,11 @@ type Client struct {
 
 	// weatherAnchor is a node positioned under the camera each frame so that
 	// rain and snow particles are always emitted in a volume around the viewer.
-	weatherAnchor Node3D.Instance
-	rainParticles CPUParticles3D.Instance
-	snowParticles CPUParticles3D.Instance
+	weatherAnchor       Node3D.Instance
+	rainParticles       GPUParticles3D.Instance
+	snowParticles       GPUParticles3D.Instance
+	rainProcessMaterial ParticleProcessMaterial.Instance
+	snowProcessMaterial ParticleProcessMaterial.Instance
 
 	mouseOver chan Vector3.XYZ
 
@@ -669,15 +674,23 @@ func (world *Client) Process(dt Float.X) {
 		}
 	}
 
-	// Keep weather particles centered on the camera (XZ) so rain/snow is always
-	// visible around the viewer in the infinite world. High Y keeps the emission
-	// volume above us.
+	// Keep weather particles following the camera position + yaw so the emission
+	// volume is always oriented toward where the player is looking. This prevents
+	// the "empty when you turn around" problem common with weather systems.
 	if world.weatherAnchor != Node3D.Nil {
-		camNode := world.FocalPoint.Lens.Camera.AsNode3D()
-		if camNode != Node3D.Nil {
+		if cam := Viewport.Get(world.AsNode()).GetCamera3d(); cam != Camera3D.Nil {
+			camNode := cam.AsNode3D()
 			cp := camNode.GlobalPosition()
-			// Sit well above the camera so particles fall through the view.
-			world.weatherAnchor.AsNode3D().SetGlobalPosition(Vector3.New(cp.X, cp.Y+28, cp.Z))
+
+			anchor := world.weatherAnchor.AsNode3D()
+			anchor.SetGlobalPosition(Vector3.New(cp.X, cp.Y+12, cp.Z))
+
+			// Only copy yaw (Y rotation) so the tall box always faces the view direction.
+			// Pitch/roll would tilt the weather which looks wrong.
+			rot := camNode.GlobalRotation()
+			rot.X = 0
+			rot.Z = 0
+			anchor.SetGlobalRotation(rot)
 		}
 	}
 
@@ -1445,78 +1458,136 @@ func (world *Client) setupWeatherParticles() {
 	world.AsNode().AddChild(anchor.AsNode())
 	world.weatherAnchor = anchor
 
-	// Rain: fast falling streaks, dense when slider is high.
-	rain := CPUParticles3D.New()
+	// Rain: tall vertical emission volume (GPU particles for performance at high counts).
+	rain := GPUParticles3D.New()
 	rain.AsNode().SetName("Rain")
-	rain.SetAmount(1500)
-	rain.SetLifetime(1.2)
-	rain.SetEmissionShape(CPUParticles3D.EmissionShapeBox)
-	rain.SetEmissionBoxExtents(Vector3.New(45, 3, 45))
-	rain.SetDirection(Vector3.New(0, -1, 0))
-	rain.SetInitialVelocityMin(18)
-	rain.SetInitialVelocityMax(24)
-	rain.SetGravity(Vector3.New(0, -4, 0))
-	rain.SetScaleAmountMin(0.03)
-	rain.SetScaleAmountMax(0.06)
-	rain.SetColor(Color.RGBA{R: 0.75, G: 0.78, B: 0.85, A: 0.6})
+	rain.SetAmount(1400)
+	rain.SetLifetime(1.3)
+	rain.SetDrawPasses(1)
+	streak := QuadMesh.New().AsPlaneMesh().SetSize(Vector2.New(0.022, 0.48)).AsMesh()
+	rain.SetDrawPass1(streak)
+	rain.SetVisibilityAabb(AABB.PositionSize{
+		Position: Vector3.New(-180, -90, -180),
+		Size:     Vector3.New(360, 200, 360),
+	})
+	rain.SetPreprocess(0.8)
+	rain.SetDrawOrder(GPUParticles3D.DrawOrderViewDepth)
+	rain.SetLocalCoords(false)
+	rain.AsGeometryInstance3D().SetCastShadow(GeometryInstance3D.ShadowCastingSettingOff)
+
+	rainMat := ParticleProcessMaterial.New()
+	rainMat.SetEmissionShape(ParticleProcessMaterial.EmissionShapeBox)
+	rainMat.SetEmissionBoxExtents(Vector3.New(160, 55, 160))
+	rainMat.SetDirection(Vector3.New(0, -1, 0))
+	rainMat.SetSpread(8) // small random angle helps fill the view when looking around
+	rainMat.SetInitialVelocityMin(16)
+	rainMat.SetInitialVelocityMax(23)
+	rainMat.SetGravity(Vector3.New(0, -2.5, 0))
+	rainMat.SetScaleMin(0.85)
+	rainMat.SetScaleMax(1.1)
+	rainMat.SetColor(Color.RGBA{R: 0.82, G: 0.85, B: 0.92, A: 0.72})
+	rain.SetProcessMaterial(rainMat.AsMaterial())
+
 	world.weatherAnchor.AsNode().AddChild(rain.AsNode())
 	world.rainParticles = rain
+	world.rainProcessMaterial = rainMat
 
-	// Snow: slower, fluffier, with more horizontal spread.
-	snow := CPUParticles3D.New()
+	// Snow (GPU particles): tall volume for visibility in every direction.
+	snow := GPUParticles3D.New()
 	snow.AsNode().SetName("Snow")
-	snow.SetAmount(600)
-	snow.SetLifetime(3.5)
-	snow.SetEmissionShape(CPUParticles3D.EmissionShapeBox)
-	snow.SetEmissionBoxExtents(Vector3.New(40, 4, 40))
-	snow.SetDirection(Vector3.New(0, -1, 0))
-	snow.SetInitialVelocityMin(1.5)
-	snow.SetInitialVelocityMax(3.5)
-	snow.SetGravity(Vector3.New(0, -0.6, 0))
-	snow.SetScaleAmountMin(0.08)
-	snow.SetScaleAmountMax(0.18)
-	snow.SetColor(Color.RGBA{R: 0.92, G: 0.94, B: 0.98, A: 0.85})
+	snow.SetAmount(3000)
+	snow.SetLifetime(4.8)
+	snow.SetDrawPasses(1)
+	flake := QuadMesh.New().AsPlaneMesh().SetSize(Vector2.New(0.16, 0.16)).AsMesh()
+	snow.SetDrawPass1(flake)
+	snow.SetVisibilityAabb(AABB.PositionSize{
+		Position: Vector3.New(-175, -85, -175),
+		Size:     Vector3.New(350, 190, 350),
+	})
+	snow.SetPreprocess(1.8)
+	snow.SetDrawOrder(GPUParticles3D.DrawOrderViewDepth)
+	snow.SetLocalCoords(false)
+	snow.AsGeometryInstance3D().SetCastShadow(GeometryInstance3D.ShadowCastingSettingOff)
+
+	snowMat := ParticleProcessMaterial.New()
+	snowMat.SetEmissionShape(ParticleProcessMaterial.EmissionShapeBox)
+	snowMat.SetEmissionBoxExtents(Vector3.New(155, 52, 155))
+	snowMat.SetDirection(Vector3.New(0, -1, 0))
+	snowMat.SetSpread(12) // helps snow fill space in all directions
+	snowMat.SetInitialVelocityMin(0.8)
+	snowMat.SetInitialVelocityMax(2.6)
+	snowMat.SetGravity(Vector3.New(0, -0.35, 0))
+	snowMat.SetScaleMin(0.22)
+	snowMat.SetScaleMax(0.42)
+	snowMat.SetColor(Color.RGBA{R: 0.96, G: 0.97, B: 1.0, A: 0.92})
+	snowMat.SetAngularVelocityMin(-28)
+	snowMat.SetAngularVelocityMax(28)
+	snow.SetProcessMaterial(snowMat.AsMaterial())
+
 	world.weatherAnchor.AsNode().AddChild(snow.AsNode())
 	world.snowParticles = snow
+	world.snowProcessMaterial = snowMat
 
 	// Start disabled; intensity is driven later by environment sliders via Apply.
 	rain.SetEmitting(false)
 	snow.SetEmitting(false)
 }
 
+// grassWindGlobalsOnce guards one-time registration of the global shader
+// parameters the terrain grass wind shader reads (grass_wind.gdshader). They
+// live on the RenderingServer, which is process-global, so registering once —
+// before any grass shader compiles — is enough; updateWeatherIntensity then
+// just writes the current values. Registering up front also stops Godot from
+// logging "global parameter not found" when the first grass blade renders.
+var grassWindGlobalsOnce sync.Once
+
+func ensureGrassWindGlobals() {
+	grassWindGlobalsOnce.Do(func() {
+		RenderingServer.GlobalShaderParameterAdd("grass_wind_strength", RenderingServer.GlobalVarTypeFloat, float64(0.05))
+		RenderingServer.GlobalShaderParameterAdd("grass_wind_speed", RenderingServer.GlobalVarTypeFloat, float64(1.1))
+		RenderingServer.GlobalShaderParameterAdd("grass_wind_dir", RenderingServer.GlobalVarTypeVec2, Vector2.New(0.85, 0.35))
+		RenderingServer.GlobalShaderParameterAdd("grass_wind_bias", RenderingServer.GlobalVarTypeFloat, float64(0.0))
+	})
+}
+
 // updateWeatherIntensity modulates emission rate (via amount) and wind bias
-// for the precipitation particles, and also pushes wind into sky + foliage.
+// for the precipitation particles, and also pushes wind into sky + foliage +
+// terrain grass.
 func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
-	// Rain
-	if world.rainParticles != CPUParticles3D.Nil {
+	// Rain (GPU)
+	if world.rainParticles != GPUParticles3D.Nil {
 		if rain > 0.001 {
-			amt := int(1500 * float64(rain))
+			amt := int(1400 * float64(rain))
 			if amt < 8 {
-				amt = 8 // minimum visible sprinkle instead of 0 or 1
+				amt = 8
 			}
 			world.rainParticles.SetAmount(amt)
 			world.rainParticles.SetEmitting(true)
-			// Slight wind tilt on rain direction
-			wx := Float.X(wind) * 0.6
-			world.rainParticles.SetDirection(Vector3.New(wx, -1, 0))
+
+			if world.rainProcessMaterial != (ParticleProcessMaterial.Instance{}) {
+				wx := Float.X(wind) * 1.1
+				world.rainProcessMaterial.SetDirection(Vector3.New(wx, -1, 0))
+			}
 		} else {
 			world.rainParticles.SetEmitting(false)
 		}
 	}
 
-	// Snow
-	if world.snowParticles != CPUParticles3D.Nil {
+	// Snow (GPU)
+	if world.snowParticles != GPUParticles3D.Nil {
 		if snow > 0.001 {
-			amt := int(650 * float64(snow))
-			if amt < 6 {
-				amt = 6
+			amt := int(2600 * float64(snow))
+			if amt < 25 {
+				amt = 25
 			}
 			world.snowParticles.SetAmount(amt)
 			world.snowParticles.SetEmitting(true)
-			// Wind pushes snow more horizontally
-			wx := Float.X(wind) * 1.8
-			wz := Float.X(wind) * 0.4
-			world.snowParticles.SetDirection(Vector3.New(wx, -0.7, wz))
+
+			if world.snowProcessMaterial != (ParticleProcessMaterial.Instance{}) {
+				wx := Float.X(wind) * 2.4
+				wz := Float.X(wind) * 0.7
+				world.snowProcessMaterial.SetDirection(Vector3.New(wx, -0.65, wz))
+			}
 		} else {
 			world.snowParticles.SetEmitting(false)
 		}
@@ -1545,5 +1616,27 @@ func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
 		dirx := 0.85 + float64(wind)*0.3
 		diry := 0.35 + float64(wind)*0.15
 		mat.SetShaderParameter("wind_dir", Vector2.New(dirx, diry))
+	}
+
+	// Terrain grass wind (global shader parameters; see grass_wind.gdshader).
+	// strength is the lean as a fraction of blade height (the shader caps it at
+	// 0.8 so it never lies flat). Keep a faint idle breeze, then ramp up: at the
+	// top the blades are pulled ~0.8 of the way over and held there, jittering.
+	// gust speed scales up too so the high-wind "pull" flutters rapidly.
+	ensureGrassWindGlobals()
+	wf := float64(wind)
+	RenderingServer.GlobalShaderParameterSet("grass_wind_strength", 0.03+wf*0.8)
+	RenderingServer.GlobalShaderParameterSet("grass_wind_speed", 0.9+wf*3.1)
+	RenderingServer.GlobalShaderParameterSet("grass_wind_dir", Vector2.New(0.85+wf*0.3, 0.35+wf*0.15))
+	// One-sidedness ramps in late (squared) so low/mid wind keeps the symmetric
+	// travelling waves, and only the top of the slider becomes the steady
+	// hard-pull-in-one-direction hurricane look.
+	RenderingServer.GlobalShaderParameterSet("grass_wind_bias", wf*wf)
+
+	// Ocean swell scales with wind: no wind ⇒ glassy water (wave_height 0), up
+	// to heavy hurricane swell at the top. The shader fades these long swells
+	// out in shallow water, so this only heaves the open sea.
+	if world.TerrainEditor != nil && world.TerrainEditor.water_shader != (ShaderMaterial.Instance{}) {
+		world.TerrainEditor.water_shader.SetShaderParameter("wave_height", wf*2.0)
 	}
 }

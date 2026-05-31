@@ -21,6 +21,11 @@ uniform float height;
 uniform float radius;
 uniform bool brush_active;
 uniform bool paint_active;
+// >0.5 while the river-erase ("no water") brush previews refilling a channel.
+// CUSTOM2.r carries the original ground height per vertex; the brush disc blends
+// the bed up toward it (see vertex()), so the eraser shows the terrain rising
+// back to ground before the stroke commits.
+uniform float river_fill = 0.0;
 
 uniform vec3 selection;
 uniform bool selection_active;
@@ -41,6 +46,16 @@ void vertex() {
     // uplift the terrain, if within radius
     if (dx*dx+dy*dy < radius*radius) {
         VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
+    }
+    // River-erase ("no water") preview: fill the carved channel back toward the
+    // original ground (CUSTOM2.r) inside the brush disc, matching what one erase
+    // stroke commits (riverDepth -> 0, so the bed rises to the original ground).
+    // The same disc falloff as the carve blends the bed up toward ground, so the
+    // river shoals and the separately-rendered water is occluded where the channel
+    // fills. Inert unless the eraser is previewing (river_fill > 0.5).
+    if (river_fill > 0.5 && dx*dx+dy*dy < radius*radius) {
+        float fw = 1.0 - (dx*dx+dy*dy)/(radius*radius);
+        VERTEX.y = mix(VERTEX.y, CUSTOM2.r, fw);
     }
     VERTEX.y = max(VERTEX.y, -2.0);
     world = VERTEX;

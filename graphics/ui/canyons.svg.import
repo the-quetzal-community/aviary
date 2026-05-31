@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://q7w5t75mrmsd"
-path="res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"
+uid="uid://1druk76k5rlq"
+path="res://.godot/imported/canyons.svg-199be958b0fe3ae978d75a73223fef16.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/gizmo/float.svg"
-dest_files=["res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"]
+source_file="res://ui/canyons.svg"
+dest_files=["res://.godot/imported/canyons.svg-199be958b0fe3ae978d75a73223fef16.ctex"]
 
 [params]
 

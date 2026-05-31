@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://q7w5t75mrmsd"
-path="res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"
+uid="uid://cxcfallqdqjip"
+path="res://.godot/imported/daytime.svg-772e284786855d6ec3adc0e6c0d0d193.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/gizmo/float.svg"
-dest_files=["res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"]
+source_file="res://ui/daytime.svg"
+dest_files=["res://.godot/imported/daytime.svg-772e284786855d6ec3adc0e6c0d0d193.ctex"]
 
 [params]
 

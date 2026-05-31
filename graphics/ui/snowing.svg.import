@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://q7w5t75mrmsd"
-path="res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"
+uid="uid://bxbafs01aevbm"
+path="res://.godot/imported/snowing.svg-7c70a721a6b511a0cf111dd464f2539e.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://ui/gizmo/float.svg"
-dest_files=["res://.godot/imported/float.svg-ca2abf4b32500987b35e8f3781965520.ctex"]
+source_file="res://ui/snowing.svg"
+dest_files=["res://.godot/imported/snowing.svg-7c70a721a6b511a0cf111dd464f2539e.ctex"]
 
 [params]
 

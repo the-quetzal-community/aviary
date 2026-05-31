@@ -163,6 +163,11 @@ type TerrainEditor struct {
 	grassMeshes  map[musical.Design]grassAsset
 	pendingGrass []musical.Sculpt
 
+	// grassWindShader is the shared wind-sway shader applied to every grass
+	// blade mesh (see grassWindMaterial). Loaded once in Ready; the imported
+	// grass material's albedo texture is copied onto a per-design instance.
+	grassWindShader Shader.Instance
+
 	// Undo/redo histories for the editor-level mutations (those not held per
 	// tile): dressing scatter/erase, water level, and tile extend/hide. Each
 	// committed stroke is appended; a Revert sculpt toggles the matching entry's
@@ -379,8 +384,7 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 		// the active brush.
 		return []string{
 			"terrain",
-			"streams",
-			"lagoons",
+			"liquids",
 			"editing/water_level",
 		}
 	case ModeMaterial:
@@ -413,16 +417,16 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 		return nil
 	}
 	switch tab {
-	case "streams":
+	case "liquids":
 		return []BuiltinDesign{
 			{
 				Resource: BuiltinTerrainRiver,
-				Icon:     "res://ui/editing.svg",
+				Icon:     "res://ui/streams.svg",
 				Label:    "River",
 			},
 			{
 				Resource: BuiltinTerrainRiverErase,
-				Icon:     "res://ui/editing.svg",
+				Icon:     "res://ui/nowater.svg",
 				Label:    "River eraser",
 			},
 		}
@@ -435,7 +439,7 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 			},
 			{
 				Resource: BuiltinTerrainLower,
-				Icon:     "res://ui/editing.svg",
+				Icon:     "res://ui/canyons.svg",
 				Label:    "Lower terrain",
 			},
 		}
@@ -643,7 +647,10 @@ func (tr *TerrainEditor) Ready() {
 		SetShaderParameter("uv1_scale", Vector2.New(8, 8)).
 		SetShaderParameter("texture_albedo", textures).
 		SetShaderParameter("radius", 2.0).
-		SetShaderParameter("height", 0.0)
+		SetShaderParameter("height", 0.0).
+		// 1 while the river-erase ("no water") brush previews filling the channel
+		// back to the original ground; see terrain.gdshader's river_fill block.
+		SetShaderParameter("river_fill", 0.0)
 
 	rock := LoadSync[Texture2D.Instance]("res://default/mineral.jpg")
 	buried := LoadSync[Shader.Instance]("res://shader/buried.gdshader")
@@ -669,7 +676,10 @@ func (tr *TerrainEditor) Ready() {
 		// the raise/lower height preview before it commits (see water.gdshader).
 		SetShaderParameter("radius", 2.0).
 		SetShaderParameter("height", 0.0).
-		SetShaderParameter("river_preview", 0.0)
+		SetShaderParameter("river_preview", 0.0).
+		// Start glassy — wave height is driven by the environment Wind slider
+		// (see updateWeatherIntensity); no wind means no swell.
+		SetShaderParameter("wave_height", 0.0)
 
 	// Default level -2 == skirt bottom == hidden under flat terrain.
 	tr.WaterLevel = -2
@@ -680,6 +690,11 @@ func (tr *TerrainEditor) Ready() {
 	tr.BrushDensity = 0.5
 	tr.BrushRiverDepth = riverDefaultDepth
 
+	tr.grassWindShader = LoadSync[Shader.Instance]("res://shader/grass_wind.gdshader")
+	// Make sure the grass wind global shader parameters exist before any grass
+	// blade (and thus the shader) can render; updateWeatherIntensity writes
+	// their live values from the environment Wind slider.
+	ensureGrassWindGlobals()
 	tr.grassMeshes = make(map[musical.Design]grassAsset)
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
@@ -929,21 +944,34 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		// carve (height) plus a still-water fill at the cursor (river_preview, the
 		// channel depth) so the river's water shows before the live stroke commits.
 		riverPreview := Float.X(0)
-		if vr.TerrainBrush == BuiltinTerrainRiver {
+		riverFill := Float.X(0)
+		switch vr.TerrainBrush {
+		case BuiltinTerrainRiver:
 			depth := vr.BrushRiverDepth
 			if depth <= 0 {
 				depth = riverDefaultDepth
 			}
 			preview = -depth
 			riverPreview = depth
+		case BuiltinTerrainRiverErase:
+			// The eraser fills the channel back to the original ground rather
+			// than carving (riverDepth -> 0 on commit). Keep the uniform height
+			// preview neutral and instead flag the terrain shader to raise the
+			// bed per-vertex toward the original ground (CUSTOM2.r) inside the
+			// disc, so the river shoals and the (separately rendered) water is
+			// occluded where the channel fills — matching one committed stroke.
+			preview = 0
+			riverFill = 1
 		}
 		vr.shader.SetShaderParameter("height", preview)
+		vr.shader.SetShaderParameter("river_fill", riverFill)
 		vr.shader_buried.SetShaderParameter("height", preview)
 		vr.water_shader.SetShaderParameter("height", preview)
 		vr.water_shader.SetShaderParameter("river_preview", riverPreview)
 	} else {
 		vr.BrushAmount = 0.0
 		vr.shader.SetShaderParameter("height", 0.0)
+		vr.shader.SetShaderParameter("river_fill", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("river_preview", 0.0)
@@ -1325,6 +1353,11 @@ type TerrainTile struct {
 	uvs      []Vector2.XY
 	textures []float32
 	weights  []float32
+	// ground is the per-vertex original ground height (groundHeights, i.e. the
+	// terrain as if no river had been carved), uploaded as CUSTOM2.r. The
+	// river-erase preview reads it to raise the bed back toward the original
+	// ground inside the brush disc (see terrain.gdshader's river_fill block).
+	ground []float32
 
 	// cached geometry — side walls (only exposed cardinal sides × size
 	// segments × 6 verts per quad). Internal sides (where a neighbour
@@ -1439,6 +1472,7 @@ func (tile *TerrainTile) generateBase() {
 	tile.uvs = make([]Vector2.XY, n*n*6)
 	tile.textures = make([]float32, n*n*6*4)
 	tile.weights = make([]float32, n*n*6*4)
+	tile.ground = make([]float32, n*n*6) // CUSTOM2.r: original ground per vertex
 	inv := Float.X(1) / Float.X(n)
 	add := func(index int, x, y int, w1, w2, w3, w4 Float.X) {
 		tile.vertices[index] = Vector3.XYZ{Float.X(x), Float.X(tile.heights[x+y*hm]), Float.X(y)}
@@ -1448,6 +1482,7 @@ func (tile *TerrainTile) generateBase() {
 		tile.weights[index*4+1] = float32(w2)
 		tile.weights[index*4+2] = float32(w3)
 		tile.weights[index*4+3] = float32(w4)
+		tile.ground[index] = tile.groundHeights[x+y*hm]
 	}
 	for x := 0; x < n; x++ {
 		for y := 0; y < n; y++ {
@@ -1465,11 +1500,13 @@ func (tile *TerrainTile) generateBase() {
 		Mesh.ArrayNormal:  tile.normals,
 		Mesh.ArrayCustom0: tile.textures,
 		Mesh.ArrayCustom1: tile.weights,
+		Mesh.ArrayCustom2: tile.ground,
 	}
 	mesh.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, attributes[:], nil, nil,
 		Mesh.ArrayFormatVertex|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
-			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
+			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift|
+			Mesh.ArrayFormat(Mesh.ArrayCustomRFloat)<<Mesh.ArrayFormatCustom2Shift,
 	)
 	tile.Mesh.
 		SetMesh(mesh.AsMesh()).
@@ -1699,9 +1736,13 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 			tile.heights[i] = tile.groundHeights[i] - tile.riverDepth[i]
 		}
 		inv := Float.X(1) / Float.X(n)
+		if len(tile.ground) != n*n*6 {
+			tile.ground = make([]float32, n*n*6)
+		}
 		update := func(index int, cell_x, cell_y int, x, y int) {
 			tile.vertices[index].Y = tile.heights[x+y*hm]
 			tile.uvs[index] = Vector2.XY{Float.X(x) * inv, Float.X(y) * inv}
+			tile.ground[index] = tile.groundHeights[x+y*hm]
 			if sample := sample_texture(cell_x, cell_y); sample != 0 {
 				tile.textures[index*4+0] = float32(sample) // top left
 			}
@@ -1732,13 +1773,15 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 			Mesh.ArrayNormal:  tile.normals,
 			Mesh.ArrayCustom0: tile.textures,
 			Mesh.ArrayCustom1: tile.weights,
+			Mesh.ArrayCustom2: tile.ground,
 		}
 		mesh := Object.To[ArrayMesh.Instance](tile.Mesh.Mesh())
 		mesh.ClearSurfaces()
 		mesh.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, attributes[:], nil, nil,
 			Mesh.ArrayFormatVertex|
 				Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom0Shift|
-				Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift,
+				Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift|
+				Mesh.ArrayFormat(Mesh.ArrayCustomRFloat)<<Mesh.ArrayFormatCustom2Shift,
 		)
 		mesh.RegenNormalMaps()
 		// If this batch changed terrain height (any empty-Design sculpt: raise,
