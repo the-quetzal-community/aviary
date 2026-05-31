@@ -821,20 +821,8 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	// Tilt the camera up and down with R and F.
 	if !world.scroll_lock {
 		if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
-			if !Input.IsKeyPressed(Input.KeyShift) {
-				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
-					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
-					//pos = Vector3.Add(pos, Vector3.New(0, 0, -0.4))
-					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
-					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
-				}
-				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
-					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
-					//pos = Vector3.Add(pos, Vector3.New(0, 0, 0.4))
-					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
-					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
-				}
-			} else if world.Editing == Editing.Terrain {
+			switch {
+			case Input.IsKeyPressed(Input.KeyShift) && world.Editing == Editing.Terrain:
 				// Shift+wheel resizes the terrain brush (and nudges the gizmo-
 				// toolbar size slider) instead of dollying the camera. WheelUp
 				// grows the brush; WheelDown shrinks it.
@@ -850,6 +838,36 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					if world.ui != nil && world.ui.CloudControl != nil {
 						world.ui.CloudControl.setSizeSliderValue(float64(r))
 					}
+				}
+			case Input.IsKeyPressed(Input.KeyCtrl) && world.Editing == Editing.Terrain:
+				// Ctrl+wheel adjusts the terrain height-sculpt power (and nudges
+				// the gizmo-toolbar power slider) instead of dollying the camera.
+				// WheelUp strengthens the brush; WheelDown weakens it.
+				var delta Float.X
+				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+					delta = brushPowerScrollStep
+				}
+				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+					delta = -brushPowerScrollStep
+				}
+				if delta != 0 {
+					p := world.TerrainEditor.NudgeBrushPower(delta)
+					if world.ui != nil && world.ui.CloudControl != nil {
+						world.ui.CloudControl.setPowerSliderValue(float64(p))
+					}
+				}
+			case !Input.IsKeyPressed(Input.KeyShift):
+				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
+					//pos = Vector3.Add(pos, Vector3.New(0, 0, -0.4))
+					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
+					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
+				}
+				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
+					//pos = Vector3.Add(pos, Vector3.New(0, 0, 0.4))
+					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
+					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
 				}
 			}
 			switch {

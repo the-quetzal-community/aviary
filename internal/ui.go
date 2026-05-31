@@ -377,9 +377,10 @@ func (ui *UI) SetMode(mode Mode) {
 	ui.mode = mode
 	ui.Editor.Refresh(ui.client.Editing, "", ui.mode)
 	if ui.CloudControl != nil {
-		// The dressing-density slider is only relevant while dressing the
-		// terrain; mirror the editor gate used in StartEditing.
+		// The dressing-density and height-power sliders are each only relevant
+		// in their own mode; mirror the editor gates used in StartEditing.
 		ui.CloudControl.setDensitySliderVisible(ui.client.Editing == Editing.Terrain && mode == ModeDressing)
+		ui.CloudControl.setPowerSliderVisible(ui.client.Editing == Editing.Terrain && mode == ModeGeometry)
 	}
 }
 

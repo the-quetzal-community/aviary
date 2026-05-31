@@ -116,6 +116,12 @@ type CloudControl struct {
 	densitySlider      HSlider.Instance
 	densitySliderReady bool
 
+	// powerSlider is the terrain height-sculpt power slider, shown only
+	// while the terrain editor is in ModeGeometry. It's pinned next to the
+	// GizmoPower button and feeds the "editing/power" slider channel.
+	powerSlider      HSlider.Instance
+	powerSliderReady bool
+
 	// gizmoButtons maps the Gizmo values currently present in the toolbar
 	// (per the active editor's SetGizmos order) to their TextureButton (or
 	// Control for the action buttons). These are always *borrowed*
@@ -246,6 +252,7 @@ func (ui *CloudControl) Ready() {
 
 	ui.buildSizeSlider()
 	ui.buildDensitySlider()
+	ui.buildPowerSlider()
 }
 
 func (ui *CloudControl) set_update_available(restart func(), available bool) {
@@ -289,6 +296,7 @@ func (ui *CloudControl) set_join_code(code networking.Code) {
 func (ui *CloudControl) Process(dt Float.X) {
 	ui.positionSizeSlider()
 	ui.positionDensitySlider()
+	ui.positionPowerSlider()
 	for {
 		select {
 		case fn := <-ui.on_process:
@@ -365,6 +373,20 @@ func (ui *CloudControl) buildDensitySlider() {
 	ui.densitySliderReady = true
 }
 
+// buildPowerSlider creates the terrain height-sculpt power slider. Like the
+// size slider it's created hidden and pinned in the toolbar; it's only
+// revealed while the terrain editor is in ModeGeometry, and feeds the
+// "editing/power" slider channel (the raise/lower brush strength).
+func (ui *CloudControl) buildPowerSlider() {
+	ui.powerSlider = ui.newToolbarSlider(0.1, 10, 0.1, 2, func(value Float.X) {
+		if ui.client == nil {
+			return
+		}
+		ui.client.TerrainEditor.SliderHandle(ModeGeometry, "editing/power", float64(value), false)
+	})
+	ui.powerSliderReady = true
+}
+
 // setSizeSliderVisible reveals or hides the terrain brush-size slider.
 // When revealing, it syncs the slider's range and current value from the
 // terrain editor so it reflects the live brush radius.
@@ -408,6 +430,33 @@ func (ui *CloudControl) setDensitySliderVisible(v bool) {
 		ui.densitySlider.AsRange().SetValueNoSignal(Float.X(init))
 	}
 	ui.densitySlider.AsCanvasItem().SetVisible(v)
+}
+
+// setPowerSliderVisible reveals or hides the terrain height-sculpt power
+// slider, syncing its range and value from the terrain editor when revealing.
+func (ui *CloudControl) setPowerSliderVisible(v bool) {
+	if !ui.powerSliderReady {
+		return
+	}
+	if v && ui.client != nil {
+		init, min, max, step := ui.client.TerrainEditor.SliderConfig(ModeGeometry, "editing/power")
+		r := Range.Advanced(ui.powerSlider.AsRange())
+		r.SetMin(min)
+		r.SetMax(max)
+		r.SetStep(step)
+		ui.powerSlider.AsRange().SetValueNoSignal(Float.X(init))
+	}
+	ui.powerSlider.AsCanvasItem().SetVisible(v)
+}
+
+// setPowerSliderValue moves the power slider's handle to v without
+// re-emitting value_changed — the caller has already applied the power
+// (e.g. Ctrl+scroll adjusting the height-sculpt strength).
+func (ui *CloudControl) setPowerSliderValue(v float64) {
+	if !ui.powerSliderReady {
+		return
+	}
+	ui.powerSlider.AsRange().SetValueNoSignal(Float.X(v))
 }
 
 // positionSizeSlider pins the size slider just to the right of the Shift
@@ -461,6 +510,31 @@ func (ui *CloudControl) positionDensitySlider() {
 	const stack = 56 // vertical offset below the size slider's centre line
 	size := ui.densitySlider.AsControl().Size()
 	ui.densitySlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5+stack))
+}
+
+// positionPowerSlider pins the height-sculpt power slider just to the right
+// of the GizmoPower button each frame while it's visible, the same way the
+// size slider tracks the GizmoBrush button.
+func (ui *CloudControl) positionPowerSlider() {
+	if !ui.powerSliderReady || !ui.powerSlider.AsCanvasItem().Visible() {
+		return
+	}
+	power := ui.gizmoControl(GizmoPower)
+	if power == Control.Nil {
+		return
+	}
+	types := ui.GizmoTypes.AsControl()
+	// Right-edge vertical-centre of the GizmoPower button in CloudControl space.
+	edge := Vector2.Add(
+		types.Position(),
+		Vector2.Mul(
+			Vector2.Add(power.Position(), Vector2.New(power.Size().X, power.Size().Y*0.5)),
+			types.Scale(),
+		),
+	)
+	const gap = 12
+	size := ui.powerSlider.AsControl().Size()
+	ui.powerSlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
 }
 
 // isGizmoAllowed reports whether the given gizmo is currently permitted

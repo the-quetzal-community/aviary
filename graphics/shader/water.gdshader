@@ -78,6 +78,22 @@ uniform float min_alpha : hint_range(0.0, 1.0) = 0.45;
 // carried per-vertex in VERTEX.y).
 uniform float water_level = 0.0;
 
+// --- Terrain-sculpt preview (mirrors terrain.gdshader / buried.gdshader) -----
+// While the raise/lower brush previews a height change, the water tracks the
+// previewed terrain so it doesn't detach from the ground before the sculpt
+// commits. The bed (v_floor) always follows the displacement; the water surface
+// follows only on rivers (which sit on the ground) — lakes keep their flat
+// level, matching what reloadWater rebuilds. `height` is 0 when not previewing,
+// so off-preview (and in the scenery editor) this block is inert.
+uniform vec3 uplift;
+uniform float height = 0.0;
+uniform float radius = 1.0;
+// >0 when the river brush is active: its value is the channel depth. The bed is
+// carved by the negative `height` above; this additionally lifts the otherwise
+// hidden still-water plane to ~ground level inside the brush disc, so the river's
+// water shows before the stroke commits (no flow direction is known on hover).
+uniform float river_preview = 0.0;
+
 varying vec3 world_pos;   // world position (XZ used for texture lookups)
 varying float v_surface;  // per-vertex base water surface (world Y)
 varying float v_floor;    // per-vertex terrain floor (world Y)
@@ -105,11 +121,48 @@ vec3 gerstner(vec4 w, vec3 pos, inout vec3 tangent, inout vec3 binormal, float t
 }
 
 void vertex() {
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; // undisplaced — keeps texture UVs stable
-	v_surface = world_pos.y;
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; // XZ kept undisplaced — keeps texture UVs stable
 	v_floor = CUSTOM0.r;
 	v_flow = CUSTOM0.gb;
 	v_slope = CUSTOM0.a;
+	float ground_ref = CUSTOM0.r; // original ground here, before the carve below
+
+	// Terrain-sculpt preview: lift/sink the water with the previewed terrain
+	// using the SAME world-space falloff as terrain.gdshader, so the water and
+	// the previewed ground stay welded. The bed always moves; the surface moves
+	// only on flowing (river) vertices, so lakes keep their flat level and the
+	// raised bed simply shoals the water (then the opaque terrain occludes it,
+	// exactly as after the commit). Only world_pos.y is touched, so the XZ-keyed
+	// texture UVs stay stable.
+	if (height != 0.0 && radius > 0.0) {
+		float bdx = world_pos.x - uplift.x;
+		float bdz = world_pos.z - uplift.z;
+		float bd2 = bdx * bdx + bdz * bdz;
+		if (bd2 < radius * radius) {
+			float disp = height * (1.0 - bd2 / (radius * radius));
+			v_floor = max(v_floor + disp, -2.0);
+			if (length(v_flow) > 0.001) {
+				world_pos.y += disp; // river surface rides the ground
+			}
+		}
+	}
+
+	// River-tool preview: lift the (otherwise hidden) still-water plane to just
+	// below the original ground inside the brush disc so the channel's water
+	// shows before the stroke commits. The bed itself is carved by the negative
+	// `height` block above; here we ONLY raise the surface, never lower it, so a
+	// pre-existing higher lake is preserved. Fades to the hidden level at the rim.
+	if (river_preview > 0.0 && radius > 0.0) {
+		float rdx = world_pos.x - uplift.x;
+		float rdz = world_pos.z - uplift.z;
+		float rd2 = rdx * rdx + rdz * rdz;
+		if (rd2 < radius * radius) {
+			float weight = 1.0 - rd2 / (radius * radius);
+			float target = ground_ref - 0.2; // 0.2 == waterSurfaceDrop (editor_terrain_water.go)
+			world_pos.y = max(world_pos.y, mix(world_pos.y, target, weight));
+		}
+	}
+	v_surface = world_pos.y;
 
 	// The water body's vertical cross-section walls carry a horizontal mesh
 	// normal; the flat surface carries an up normal. Flag the walls so they

@@ -104,7 +104,13 @@ type TerrainEditor struct {
 	BrushTarget Vector3.XYZ
 	BrushRadius Float.X
 	BrushAmount Float.X
-	BrushDeltaV Float.X
+	// BrushPower is the height-sculpt strength one click applies with the
+	// raise/lower tools — set by the GizmoPower slider in the gizmo toolbar.
+	// A press applies ±BrushPower in a single shot (sign from the tool +
+	// button); holding no longer keeps increasing the effect. Local-only:
+	// the resulting amount rides in each height Sculpt, so remote clients
+	// reshape the terrain identically.
+	BrushPower  Float.X
 	brushEvents chan terrainBrushEvent
 
 	// TerrainBrush is the currently selected terrain sculpt tool when in
@@ -267,10 +273,11 @@ func (fe *TerrainEditor) Name() string { return "terrain" }
 func (fe *TerrainEditor) EnableEditor() {
 	// Terrain is a brush editor: it sculpts/paints the ground rather than
 	// selecting & transforming placed entities, so it offers only the brush
-	// tool. Declaring it here also makes the brush the active gizmo (the
+	// tools. Declaring it here also makes the brush the active gizmo (the
 	// neutral Point tool is not in the set, so SetGizmos switches off it) —
-	// the brush-size slider then anchors to this button.
-	fe.client.SetGizmos([]Gizmo{GizmoBrush})
+	// the brush-size slider anchors to GizmoBrush and the height-sculpt
+	// power slider anchors to GizmoPower.
+	fe.client.SetGizmos([]Gizmo{GizmoBrush, GizmoPower})
 	fe.shader.SetShaderParameter("brush_active", true)
 	fe.shader_buried.SetShaderParameter("brush_active", true)
 	fe.setArrowsVisible(true)
@@ -285,6 +292,9 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.shader_buried.
 		SetShaderParameter("height", 0.0).
 		SetShaderParameter("brush_active", false)
+	fe.water_shader.
+		SetShaderParameter("height", 0.0).
+		SetShaderParameter("river_preview", 0.0)
 	fe.BrushActive = false
 	fe.PaintActive = false
 	fe.DressActive = false
@@ -418,9 +428,20 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
 	switch editing {
 	case "editing/radius":
-		// Brush radius is a local-only highlight control; not synced.
+		// Brush radius is a local-only highlight control; not synced. Push it
+		// to BOTH the top-surface and side-wall (buried) shaders so the brush
+		// preview lifts the exposed wall vertices over the same disc. Without
+		// the side-shader update the walls previewed with the stale initial
+		// radius (too small) until the real sculpt arrived and rebuilt them.
 		fe.BrushRadius = Float.X(value)
 		fe.shader.SetShaderParameter("radius", fe.BrushRadius)
+		fe.shader_buried.SetShaderParameter("radius", fe.BrushRadius)
+		fe.water_shader.SetShaderParameter("radius", fe.BrushRadius)
+	case "editing/power":
+		// Height-sculpt strength: a local-only brush control (the resulting
+		// amount is carried per-stroke in the Sculpt's Amount, so it still
+		// reproduces on every client). Not itself synced.
+		fe.BrushPower = Float.X(value)
 	case "dressing/density":
 		fe.BrushDensity = Float.X(value)
 	case "editing/river_depth":
@@ -452,6 +473,9 @@ func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, 
 
 func (fe *TerrainEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
 	switch editing {
+	case "editing/power":
+		// value, min, max, step (height units applied per click)
+		return float64(fe.BrushPower), 0.1, 10, 0.1
 	case "dressing/density":
 		return float64(fe.BrushDensity), 0, 1, 0.01
 	case "editing/river_depth":
@@ -484,6 +508,26 @@ func (fe *TerrainEditor) NudgeBrushRadius(delta Float.X) Float.X {
 	}
 	fe.SliderHandle(ModeGeometry, "editing/radius", float64(r), false)
 	return fe.BrushRadius
+}
+
+// brushPowerScrollStep is how much one mouse-wheel notch changes the terrain
+// height-sculpt power when Ctrl is held (see Client.handleScroll).
+const brushPowerScrollStep Float.X = 0.5
+
+// NudgeBrushPower changes the height-sculpt power by delta, clamped to the
+// slider's configured range. It returns the new power so callers can sync the
+// gizmo-toolbar power slider. Used by the Ctrl+wheel shortcut.
+func (fe *TerrainEditor) NudgeBrushPower(delta Float.X) Float.X {
+	_, min, max, _ := fe.SliderConfig(ModeGeometry, "editing/power")
+	p := fe.BrushPower + delta
+	if p < Float.X(min) {
+		p = Float.X(min)
+	}
+	if p > Float.X(max) {
+		p = Float.X(max)
+	}
+	fe.SliderHandle(ModeGeometry, "editing/power", float64(p), false)
+	return fe.BrushPower
 }
 
 func (tr *TerrainEditor) Ready() {
@@ -520,13 +564,19 @@ func (tr *TerrainEditor) Ready() {
 		SetShaderParameter("normalmap_a_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_N_A.png")).
 		SetShaderParameter("normalmap_b_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_N_B.png")).
 		SetShaderParameter("uv_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_UV.png")).
-		SetShaderParameter("foam_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Foam.png"))
+		SetShaderParameter("foam_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Foam.png")).
+		// Mirror the terrain shaders' brush-preview uniforms so the water tracks
+		// the raise/lower height preview before it commits (see water.gdshader).
+		SetShaderParameter("radius", 2.0).
+		SetShaderParameter("height", 0.0).
+		SetShaderParameter("river_preview", 0.0)
 
 	// Default level -2 == skirt bottom == hidden under flat terrain.
 	tr.WaterLevel = -2
 	tr.water_shader.SetShaderParameter("water_level", float64(tr.WaterLevel))
 
 	tr.BrushRadius = 2.0
+	tr.BrushPower = 2.0
 	tr.BrushDensity = 0.5
 	tr.BrushRiverDepth = riverDefaultDepth
 
@@ -613,7 +663,6 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		tr.TerrainBrush = ""
 		tr.BrushActive = false
 		tr.BrushAmount = 0
-		tr.BrushDeltaV = 0
 		active = true
 	}
 	if active {
@@ -725,6 +774,7 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			vr.BrushTarget = event.BrushTarget
 			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			vr.shader_buried.SetShaderParameter("uplift", event.BrushTarget)
+			vr.water_shader.SetShaderParameter("uplift", event.BrushTarget)
 			if vr.client.Editing != Editing.Terrain {
 				vr.BrushActive = false
 				break
@@ -736,37 +786,60 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 				// strokes are committed by the client's throttle loop
 				// (PaintDressing). Never arm the height brush here.
 				vr.BrushTarget = event.BrushTarget
-				vr.BrushDeltaV = 0
 			} else if !vr.PaintActive && vr.client.ui.mode != ModeMaterial {
 				// Height sculpt input is only accepted when a terrain brush
 				// tool has been explicitly selected in ModeGeometry, or we
-				// are already mid-stroke (BrushActive). This replaces the
-				// previous "any click in geometry arm the brush" behaviour.
+				// are already mid-stroke (BrushActive). A press carries the
+				// signed GizmoPower amount in BrushDeltaV; apply it in one
+				// shot. Holding no longer keeps increasing the effect — a
+				// motion event (BrushDeltaV 0) only moves the brush preview.
 				if vr.TerrainBrush != "" || vr.BrushActive {
 					vr.BrushTarget = event.BrushTarget
-					vr.BrushDeltaV = event.BrushDeltaV
 					if event.BrushDeltaV != 0 {
+						vr.BrushAmount = event.BrushDeltaV
 						vr.BrushActive = true
 					}
-				} else {
-					vr.BrushDeltaV = 0
 				}
-			} else {
-				vr.BrushDeltaV = 0
 			}
 			continue
 		default:
 		}
 		break
 	}
-	if vr.BrushActive && !vr.PaintActive && vr.client.ui.mode == ModeGeometry && vr.TerrainBrush != "" {
-		vr.BrushAmount += dt * vr.BrushDeltaV
-		vr.shader.SetShaderParameter("height", vr.BrushAmount)
-		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
+	if !vr.PaintActive && vr.client.ui.mode == ModeGeometry && vr.TerrainBrush != "" {
+		// Height-sculpt preview: show the terrain shifted by the brush amount
+		// before the user clicks to confirm it. While a press is held, preview
+		// the actual pressed amount (BrushAmount); otherwise preview the tool's
+		// primary (LMB) GizmoPower amount so the shift is visible on hover.
+		// terrainBrushDelta is 0 for non-height tools (e.g. the river brush),
+		// so those show no height preview.
+		preview := vr.BrushAmount
+		if !vr.BrushActive {
+			preview = vr.terrainBrushDelta(true)
+		}
+		// The river brush isn't a height bump (terrainBrushDelta is 0 for it), so
+		// without this it previewed nothing. Preview its channel as a negative
+		// carve (height) plus a still-water fill at the cursor (river_preview, the
+		// channel depth) so the river's water shows before the live stroke commits.
+		riverPreview := Float.X(0)
+		if vr.TerrainBrush == BuiltinTerrainRiver {
+			depth := vr.BrushRiverDepth
+			if depth <= 0 {
+				depth = riverDefaultDepth
+			}
+			preview = -depth
+			riverPreview = depth
+		}
+		vr.shader.SetShaderParameter("height", preview)
+		vr.shader_buried.SetShaderParameter("height", preview)
+		vr.water_shader.SetShaderParameter("height", preview)
+		vr.water_shader.SetShaderParameter("river_preview", riverPreview)
 	} else {
 		vr.BrushAmount = 0.0
-		vr.shader.SetShaderParameter("height", vr.BrushAmount)
-		vr.shader_buried.SetShaderParameter("height", vr.BrushAmount)
+		vr.shader.SetShaderParameter("height", 0.0)
+		vr.shader_buried.SetShaderParameter("height", 0.0)
+		vr.water_shader.SetShaderParameter("height", 0.0)
+		vr.water_shader.SetShaderParameter("river_preview", 0.0)
 	}
 	vr.retryPendingGrass()
 }
@@ -858,7 +931,6 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 				})
 			}
 			tr.BrushAmount = 0.0
-			tr.BrushDeltaV = 0.0
 			tr.BrushActive = false
 		}
 		if event.ButtonIndex() == Input.MouseButtonRight && tr.PaintActive {
@@ -897,23 +969,24 @@ const (
 // spilling over an edge).
 const extendSlider = "extend"
 
-// terrainBrushDelta returns the signed delta to feed into the height brush
-// for the given mouse button, according to the currently selected terrain
-// brush tool. The "raise" tool makes the primary button (LMB) raise terrain;
-// the "lower" tool makes the primary button lower terrain. The secondary
-// button (RMB) always inverts the tool's direction.
+// terrainBrushDelta returns the signed height amount one click applies for
+// the given mouse button, according to the currently selected terrain brush
+// tool and the GizmoPower slider. The "raise" tool makes the primary button
+// (LMB) raise terrain; the "lower" tool makes the primary button lower it.
+// The secondary button (RMB) always inverts the tool's direction. The
+// magnitude is the GizmoPower strength (BrushPower), applied in one shot.
 func (tr *TerrainEditor) terrainBrushDelta(leftButton bool) Float.X {
 	switch tr.TerrainBrush {
 	case BuiltinTerrainRaise:
 		if leftButton {
-			return 2
+			return tr.BrushPower
 		}
-		return -2
+		return -tr.BrushPower
 	case BuiltinTerrainLower:
 		if leftButton {
-			return -2
+			return -tr.BrushPower
 		}
-		return 2
+		return tr.BrushPower
 	default:
 		return 0
 	}

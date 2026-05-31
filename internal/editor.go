@@ -117,6 +117,7 @@ func (world *Client) StartEditing(subject Subject) {
 		world.ui.CloudControl.setSizeSliderVisible(subject == Editing.Terrain)
 		world.TerrainEditor.SetWaterVisible(subject == Editing.Terrain || subject == Editing.Scenery)
 		world.ui.CloudControl.setDensitySliderVisible(subject == Editing.Terrain && world.ui.mode == ModeDressing)
+		world.ui.CloudControl.setPowerSliderVisible(subject == Editing.Terrain && world.ui.mode == ModeGeometry)
 	}
 	UserState.Editor = subject
 	world.saveUserState()
