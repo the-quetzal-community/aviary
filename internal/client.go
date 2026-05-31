@@ -735,11 +735,17 @@ func (world *Client) Process(dt Float.X) {
 	if world.TerrainEditor.DressActive && world.TerrainEditor.brushStrokeActive {
 		te := world.TerrainEditor
 		if time.Since(world.last_PaintAt) > time.Second/5 {
-			if Input.IsKeyPressed(Input.KeyCtrl) && Input.IsKeyPressed(Input.KeyShift) {
-				te.EraseDressing()
-			} else {
-				te.PaintDressing()
-			}
+			te.PaintDressing()
+			world.last_PaintAt = time.Now()
+		}
+	}
+
+	// Category removal tools (armed from the "removal" tab in ModeDressing).
+	// These are the replacement for the old Ctrl+Shift + dressing-design gesture.
+	if world.TerrainEditor.ClearActive && world.TerrainEditor.brushStrokeActive {
+		te := world.TerrainEditor
+		if time.Since(world.last_PaintAt) > time.Second/5 {
+			te.EraseDressingCategory(te.ClearCategory)
 			world.last_PaintAt = time.Now()
 		}
 	}

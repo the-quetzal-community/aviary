@@ -31,11 +31,19 @@ type SceneryEditor struct {
 	client *Client
 }
 
+// sceneryLibraryScale is the "library placement" factor every scenery design is
+// scaled by when dropped into the world (on top of any intrinsic root scale the
+// .glb/.scn carries — see PreviewRenderer.attach). The library meshes are
+// authored ~10× their in-world size, so this brings them down to size. The
+// dressing brush scatters those same library meshes and applies the SAME factor
+// (see dressingParams.baseScale) so a scattered prop matches its scenery size.
+const sceneryLibraryScale Float.X = 0.1
+
 func (*SceneryEditor) Views() []string          { return nil }
 func (*SceneryEditor) SwitchToView(view string) {}
 
 func (editor *SceneryEditor) Ready() {
-	editor.Preview.defaultScale = Vector3.New(0.1, 0.1, 0.1)
+	editor.Preview.defaultScale = Vector3.New(sceneryLibraryScale, sceneryLibraryScale, sceneryLibraryScale)
 	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
 }
 

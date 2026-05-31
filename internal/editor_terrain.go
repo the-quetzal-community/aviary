@@ -127,16 +127,39 @@ type TerrainEditor struct {
 
 	//
 	// Dressing brush parameters. ModeDressing scatters instanced meshes
-	// (grasses, pebbles) across the terrain surface. A stroke is recorded
-	// as one musical.Sculpt (Editor "terrain", Slider = the dressing tab,
-	// Amount = density, Design = the scattered mesh) so the placement is
-	// observable by, and deterministically reproducible on, every client —
-	// the scatter is seeded purely from the sculpt's Author/Target/Radius.
+	// (grasses, pebbles, foliage, mineral/boulders) across the terrain
+	// surface. A stroke is recorded as one musical.Sculpt (Editor "terrain",
+	// Slider = the dressing tab, Amount = density, Design = the scattered
+	// mesh) so the placement is observable by, and deterministically
+	// reproducible on, every client — the scatter is seeded purely from the
+	// sculpt's Author/Target/Radius.
 	//
 	DressActive  bool   // a dressing design is selected and the brush is armed
 	DressDesign  string // selected mesh resource (res://...glb), local only
-	DressTab     string // dressing category ("grasses"/"pebbles")
+	DressTab     string // dressing category ("grasses"/"pebbles"/"foliage"/"mineral")
 	BrushDensity Float.X
+	// dressDesignID is the musical.Design for DressDesign, resolved ONCE in
+	// SelectDesign. MusicalDesign reserves an id + emits an Import the first time
+	// it sees a resource, so the per-frame preview and per-segment paint must use
+	// this cached value rather than re-resolving (which would spam imports).
+	dressDesignID musical.Design
+	// dressSeed is the scatter seed for the NEXT dressing stroke. The relative
+	// arrangement is derived purely from this seed (Target only translates it),
+	// so the hover preview slides smoothly with the brush instead of reshuffling
+	// every frame. It is held fixed while hovering, committed verbatim into each
+	// stroke's Sculpt.Random (so the placement is predetermined + reproduced
+	// identically on every client), and advanced after each committed segment so
+	// a drag scatters varied patches rather than stamping one repeatedly.
+	dressSeed uint64
+
+	//
+	// Clear brush state (armed by picking a clearer from the "removal" tab
+	// in ModeDressing). These tools emit negative-Amount dressing sculpts
+	// that erase *all* instances of the chosen category (Slider) inside the
+	// disc, regardless of Design. This replaces the legacy Ctrl+Shift gesture.
+	//
+	ClearActive   bool   // a removal tool is armed
+	ClearCategory string // "grasses", "pebbles", "foliage", or "mineral"
 
 	// BrushRiverDepth is how far below the original ground the river brush
 	// carves its channel (the water then fills back to the original ground).
@@ -166,6 +189,16 @@ type TerrainEditor struct {
 	grassPatches []*grassPatch
 	grassMeshes  map[musical.Design]grassAsset
 	pendingGrass []musical.Sculpt
+
+	// dressPreview is the transient hover scatter shown in ModeDressing before a
+	// stroke commits — the dressing analogue of the height/paint brush previews.
+	// It renders the EXACT instances a click would place (same seed the commit
+	// stores in Sculpt.Random), is local-only (never committed, broadcast, or
+	// added to grassPatches), and is rebuilt when the brush moves/re-tunes and
+	// torn down on commit / on leaving the dressing tool. dressPreviewKey is the
+	// quantised brush state it was built for, so an unchanged hover skips rebuild.
+	dressPreview    *grassPatch
+	dressPreviewKey dressKey
 
 	// grassWindShader is the shared wind-sway shader applied to every grass
 	// blade mesh (see grassWindMaterial). Loaded once in Ready; the imported
@@ -416,6 +449,8 @@ func (fe *TerrainEditor) syncBrushSliders() {
 func (fe *TerrainEditor) ChangeEditor() {
 	fe.shader.
 		SetShaderParameter("height", 0.0).
+		SetShaderParameter("river_fill", 0.0).
+		SetShaderParameter("river_carve", 0.0).
 		SetShaderParameter("brush_active", false).
 		SetShaderParameter("paint_active", false)
 	fe.shader_buried.
@@ -433,6 +468,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 	// Settle any objects/grass left displaced by a hover preview — Process (which
 	// otherwise resets the preview each frame) won't run for this editor anymore.
 	fe.clearObjectPreview()
+	fe.clearDressPreview()
 
 	// Make sure the toolbar gizmos + sliders reflect the cleared brush state.
 	// (CancelPaint has explicit teardown; ChangeEditor must also keep the UI
@@ -501,6 +537,9 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 		return []string{
 			"grasses",
 			"pebbles",
+			"foliage",
+			"mineral",
+			"removal",
 		}
 	default:
 		return nil
@@ -512,7 +551,7 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 // the primary content of the tab (no library preview directory is
 // required for the tab to be shown).
 func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
-	if mode != ModeGeometry {
+	if mode != ModeGeometry && !(mode == ModeDressing && tab == "removal") {
 		return nil
 	}
 	switch tab {
@@ -542,6 +581,32 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 				Label:    "Lower terrain",
 			},
 		}
+	case "removal":
+		// Category-wide erasers for ModeDressing. These replace the old
+		// Ctrl+Shift + armed-design gesture. Each tool clears *all* instances
+		// of the matching dressing category (Slider) inside the brush disc.
+		return []BuiltinDesign{
+			{
+				Resource: BuiltinDressingClearGrasses,
+				Icon:     "res://ui/scythe.svg",
+				Label:    "Scythe — clear grasses",
+			},
+			{
+				Resource: BuiltinDressingClearPebbles,
+				Icon:     "res://ui/rake.svg",
+				Label:    "Rake — clear pebbles",
+			},
+			{
+				Resource: BuiltinDressingClearFoliage,
+				Icon:     "res://ui/axe.svg",
+				Label:    "Axe — clear foliage",
+			},
+			{
+				Resource: BuiltinDressingClearMineral,
+				Icon:     "res://ui/pickaxe.svg",
+				Label:    "Pickaxe — clear mineral / boulders",
+			},
+		}
 	default:
 		return nil
 	}
@@ -549,15 +614,40 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 
 func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	if mode == ModeDressing {
+		// Clear-sentinel tools from the "removal" tab — arm a category-wide
+		// eraser instead of a normal placement brush.
+		switch design {
+		case BuiltinDressingClearGrasses:
+			fe.ArmClearBrush("grasses")
+			return
+		case BuiltinDressingClearPebbles:
+			fe.ArmClearBrush("pebbles")
+			return
+		case BuiltinDressingClearFoliage:
+			fe.ArmClearBrush("foliage")
+			return
+		case BuiltinDressingClearMineral:
+			fe.ArmClearBrush("mineral")
+			return
+		}
+
 		// Arm the dressing brush: the selected mesh scatters across the
 		// surface on the next stroke. The tab (parent dir, e.g.
-		// "grasses") is carried into the sculpt's Slider so the category
-		// round-trips and remote clients route it the same way.
+		// "grasses" or "foliage") is carried into the sculpt's Slider so the
+		// category round-trips and remote clients route it the same way.
 		fe.CancelPaint()
 		fe.DressActive = true
 		fe.DressDesign = design
 		fe.DressTab = path.Base(path.Dir(design))
 		fe.BrushDesign = design
+		// Resolve (and kick off the import of) the design ONCE here, so the live
+		// preview and each paint segment reuse the same id instead of re-importing.
+		if fe.client != nil {
+			fe.dressDesignID = fe.client.MusicalDesign(design)
+		}
+		// Roll a fresh scatter seed for this tool selection so the previewed
+		// arrangement is fixed (no per-move reshuffle) until it commits.
+		fe.dressSeed = nextSeed(fe.dressSeed)
 		// Allow the very next user-initiated stroke after picking a design
 		// to fire without the movement-spacing guard (original behaviour).
 		fe.dressLastSet = false
@@ -754,7 +844,10 @@ func (tr *TerrainEditor) Ready() {
 		SetShaderParameter("height", 0.0).
 		// 1 while the river-erase ("no water") brush previews filling the channel
 		// back to the original ground; see terrain.gdshader's river_fill block.
-		SetShaderParameter("river_fill", 0.0)
+		SetShaderParameter("river_fill", 0.0).
+		// >0 (channel depth) while the river carve brush previews; see river_carve
+		// in terrain.gdshader (paint-over bed carve).
+		SetShaderParameter("river_carve", 0.0)
 
 	rock := LoadSync[Texture2D.Instance]("res://default/mineral.jpg")
 	buried := LoadSync[Shader.Instance]("res://shader/buried.gdshader")
@@ -927,6 +1020,13 @@ func (tr *TerrainEditor) CancelPaint() bool {
 	if tr.DressActive {
 		tr.DressActive = false
 		tr.brushStrokeActive = false
+		tr.clearDressPreview()
+		active = true
+	}
+	if tr.ClearActive {
+		tr.ClearActive = false
+		tr.ClearCategory = ""
+		tr.brushStrokeActive = false
 		active = true
 	}
 	clearedBrush := false
@@ -1005,9 +1105,17 @@ func (tr *TerrainEditor) PaintDressing() {
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
 		Amount: tr.BrushDensity,
-		Design: tr.client.MusicalDesign(tr.DressDesign),
+		Design: tr.dressDesignID,
+		// Lock the scatter seed (the exact one the hover preview showed) into the
+		// stroke so the placement is predetermined: every client and every replay
+		// regenerates the identical arrangement from Random, translated to Target,
+		// independent of position. 0 (legacy) falls back to grassSeed in fillPatch.
+		Random: int64(tr.dressSeed),
 		Commit: true,
 	})
+	// Advance the seed so the next segment of a drag (and the next hover preview)
+	// scatters a different patch rather than stamping this one repeatedly.
+	tr.dressSeed = nextSeed(tr.dressSeed)
 }
 
 // EraseDressing commits an erase stroke for the current dressing brush.
@@ -1037,9 +1145,70 @@ func (tr *TerrainEditor) EraseDressing() {
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
 		Amount: -tr.BrushDensity, // <=0 signals erase for this Design
-		Design: tr.client.MusicalDesign(tr.DressDesign),
+		Design: tr.dressDesignID,
 		Commit: true,
 	})
+}
+
+// EraseDressingCategory is the category-wide analogue of EraseDressing.
+// It is driven by the "removal" tab tools (scythe, axe, etc.). It emits
+// a negative-Amount sculpt with Design==zero; the Sculpt handler +
+// eraseGrass treat this as "erase everything whose patch.category matches
+// the Slider, regardless of the concrete scattered Design".
+func (tr *TerrainEditor) EraseDressingCategory(category string) {
+	if !tr.ClearActive || category == "" {
+		return
+	}
+	if tr.dressLastSet {
+		dx := tr.BrushTarget.X - tr.dressLast.X
+		dz := tr.BrushTarget.Z - tr.dressLast.Z
+		spacing := tr.BrushRadius * 0.5
+		if dx*dx+dz*dz < spacing*spacing {
+			return
+		}
+	}
+	tr.dressLast = tr.BrushTarget
+	tr.dressLastSet = true
+	tr.client.commitSculpt(musical.Sculpt{
+		Author: tr.client.id,
+		Editor: "terrain",
+		Slider: category,
+		Target: tr.BrushTarget,
+		Radius: tr.BrushRadius,
+		Amount: -0.5, // negative signals erase; magnitude is ignored for category clears
+		Design: musical.Design{}, // zero → category-wide in eraseGrass
+		Commit: true,
+	})
+}
+
+// ArmClearBrush is called from SelectDesign when one of the four
+// procedural://dressing/clear_* sentinels is chosen from the "removal" tab.
+// It puts the TerrainEditor into category-erase mode (ClearActive) and
+// prepares the shared brush UI affordances (ring, density slider).
+func (tr *TerrainEditor) ArmClearBrush(category string) {
+	tr.CancelPaint()
+	tr.DressActive = false
+	tr.ClearActive = true
+	tr.ClearCategory = category
+	tr.BrushDesign = "" // not a real design
+	tr.dressLastSet = false
+	tr.EnableEditor()
+	tr.refreshGizmoPowerSlider() // re-use the machinery that shows brush controls
+}
+
+// CancelClearBrush turns off the removal brush state. Safe to call even
+// if nothing was armed.
+func (tr *TerrainEditor) CancelClearBrush() {
+	if !tr.ClearActive {
+		return
+	}
+	tr.ClearActive = false
+	tr.ClearCategory = ""
+	tr.brushStrokeActive = false
+	// Hide any brush ring / size slider that the clear tool may have enabled.
+	if tr.client != nil && tr.client.ui != nil && tr.client.ui.CloudControl != nil {
+		tr.client.ui.CloudControl.setSizeSliderVisible(false)
+	}
 }
 
 // HeightAt looks up the terrain height at the given world position
@@ -1126,6 +1295,7 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		// channel depth) so the river's water shows before the live stroke commits.
 		riverPreview := Float.X(0)
 		riverFill := Float.X(0)
+		riverCarve := Float.X(0)
 		switch vr.TerrainBrush {
 		case BuiltinTerrainRiver:
 			depth := vr.BrushRiverDepth
@@ -1134,6 +1304,10 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			}
 			preview = -depth
 			riverPreview = depth
+			// Carve the bed with PAINT-OVER semantics (matching the commit) instead
+			// of the additive `height` bump, so an overlapping drag segment doesn't
+			// dig the channel additively deeper than it will actually be.
+			riverCarve = depth
 		case BuiltinTerrainRiverErase:
 			// The eraser fills the channel back to the original ground rather
 			// than carving (riverDepth -> 0 on commit). Keep the uniform height
@@ -1146,6 +1320,7 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		}
 		vr.shader.SetShaderParameter("height", preview)
 		vr.shader.SetShaderParameter("river_fill", riverFill)
+		vr.shader.SetShaderParameter("river_carve", riverCarve)
 		vr.shader_buried.SetShaderParameter("height", preview)
 		vr.water_shader.SetShaderParameter("height", preview)
 		vr.water_shader.SetShaderParameter("river_preview", riverPreview)
@@ -1159,12 +1334,17 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		vr.BrushAmount = 0.0
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader.SetShaderParameter("river_fill", 0.0)
+		vr.shader.SetShaderParameter("river_carve", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("river_preview", 0.0)
 		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, 0)
 		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, 0)
 	}
+	// Live dressing-brush preview: render the scatter a click would place while
+	// hovering in ModeDressing (cleared while stroking / off-tool). Independent of
+	// the height/paint preview branch above.
+	vr.updateDressPreview()
 	vr.retryPendingGrass()
 }
 
@@ -1231,8 +1411,17 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	}
 	// A dressing stroke carries the category in Slider and the scattered
 	// mesh in Design; positive Amount adds instances, <=0 erases any
-	// matching instances whose centers fall inside the disc.
-	if brush.Slider != "" && brush.Design != (musical.Design{}) {
+	// matching instances whose centers fall inside the disc. Newer tabs
+	// (foliage, mineral) reuse the same deterministic scatter path and
+	// history as grasses/pebbles.
+	//
+	// Category-clear tools (the "removal" tab) emit with Design==zero and
+	// a negative Amount; they are still valid dressing sculpts and must be
+	// routed to eraseGrass (which then matches on Slider/category only).
+	isDressing := brush.Slider != "" &&
+		(brush.Design != (musical.Design{}) ||
+			(brush.Amount <= 0 && isDressingCategory(brush.Slider)))
+	if isDressing {
 		if brush.Amount <= 0 {
 			vr.eraseGrass(brush)
 		} else {
@@ -1245,6 +1434,7 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	}
 	if brush.Author == vr.client.id {
 		vr.shader.SetShaderParameter("height", 0.0)
+		vr.shader.SetShaderParameter("river_carve", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 	}
 	// A height sculpt (no Design, nonzero Amount — raise/lower or a river carve)
@@ -1596,12 +1786,21 @@ const worldFloorY float32 = -2.0
 
 // Builtin terrain brush sentinels for the procedural:// convention used
 // by BuiltinDesignProvider. These are the "builtin-aviary" items that
-// appear in the "terrain" tab under ModeGeometry for the TerrainEditor.
+// appear in the "terrain" tab under ModeGeometry (raise/lower/river) or
+// the "removal" tab under ModeDressing (category erasers for dressing).
 const (
 	BuiltinTerrainRaise      = "procedural://terrain/raise"
 	BuiltinTerrainLower      = "procedural://terrain/lower"
 	BuiltinTerrainRiver      = "procedural://terrain/river"
 	BuiltinTerrainRiverErase = "procedural://terrain/river_erase"
+
+	// Dressing category clearers (armed from the "removal" tab in ModeDressing).
+	// These arm a brush that emits negative-Amount sculpts for the whole category
+	// (all designs under that Slider), replacing the old Ctrl+Shift hack.
+	BuiltinDressingClearGrasses  = "procedural://dressing/clear_grasses"
+	BuiltinDressingClearPebbles  = "procedural://dressing/clear_pebbles"
+	BuiltinDressingClearFoliage  = "procedural://dressing/clear_foliage"
+	BuiltinDressingClearMineral  = "procedural://dressing/clear_mineral"
 )
 
 // extendSlider tags the explicit "extend the world" mutation an arrow click
@@ -2574,11 +2773,11 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				// only thing allowed to start a real paint/dress/height/river
 				// stroke. This is what prevents clicks inside the 2D
 				// design explorer from leaking into the world.
-				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.riverBrushActive() {
+				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.riverBrushActive() || tile.editor.ClearActive {
 					tile.editor.brushStrokeActive = true
 				}
 				deltaV := Float.X(0)
-				if tile.editor.PaintActive || tile.editor.DressActive {
+				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.ClearActive {
 					deltaV = 2
 				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" {
 					// Explicit terrain brush tool selected: the sign depends on

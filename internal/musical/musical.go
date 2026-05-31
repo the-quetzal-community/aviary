@@ -155,6 +155,7 @@ type Sculpt struct {
 	Timing Timing // timing of the sculpt.
 
 	Orient Angle.Radians
+	Random int64 // entropy
 
 	Commit bool // if false, then this is a preview.
 	Revert bool // revert this sculpt.

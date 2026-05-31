@@ -24,19 +24,23 @@ import (
 	"the.quetzal.community/aviary/internal/musical"
 )
 
-// ModeDressing scatters instanced meshes (grasses, pebbles) across the
-// terrain surface. Each committed stroke is a single musical.Sculpt — its
-// Target/Radius are the record of where and how wide the patch is, its
-// Amount is the density, and its Design is the scattered mesh. The scatter
-// itself is NOT stored per-instance in the musical log: it's regenerated
-// deterministically from the sculpt's (Author, Target, Radius), so every
-// client that replays the same sculpt produces identical grass while the
-// format stays tiny and fully backwards compatible.
+// ModeDressing scatters instanced meshes (grasses, pebbles, foliage,
+// boulders/mineral) across the terrain surface. Each committed stroke is a
+// single musical.Sculpt — its Target/Radius are the record of where and how
+// wide the patch is, its Amount is the density, and its Design is the
+// scattered mesh. The scatter itself is NOT stored per-instance in the
+// musical log: it's regenerated deterministically from the sculpt's
+// (Author, Target, Radius), so every client that replays the same sculpt
+// produces identical placement while the format stays tiny and fully
+// backwards compatible. Foliage and boulder brushes reuse the same meshes
+// and scatter logic as the grasses brush, with category-specific variance
+// and no grass-specific Z-up correction.
 
 type grassPatch struct {
-	design musical.Design
-	target Vector3.XYZ
-	radius Float.X
+	design   musical.Design
+	target   Vector3.XYZ
+	radius   Float.X
+	category string // dressing tab (grasses/foliage/mineral/...) for params + transform rules
 
 	mm     MultiMesh.Instance
 	mmNode MultiMeshInstance3D.Instance
@@ -59,12 +63,36 @@ type grassAsset struct {
 	xform Transform3D.BasisOrigin
 }
 
-const (
-	grassScaleMin     Float.X = 0.7
-	grassScaleMax     Float.X = 1.2
-	grassPerArea              = 6.0  // instances per world unit² at density 1
-	grassMaxInstances         = 3000 // safety cap per stroke
-)
+// dressingParams configures the scatter behaviour per dressing category
+// (tab). This lets foliage and boulder brushes use much lower densities
+// and wider scale variance than the fine grasses/pebbles while sharing
+// all the deterministic RNG, history, reprojection and MultiMesh logic.
+type dressingParams struct {
+	perArea float64
+	maxInst int
+	// baseScale is the fixed factor the mesh's authored size is multiplied by
+	// BEFORE the per-instance random spread. For the scenery-library categories
+	// (foliage/mineral/boulders/rocks) this is sceneryLibraryScale (0.1) so a
+	// scattered prop matches the size that the scenery editor places the same
+	// .glb at; grass/pebble packs are authored at world size already (baseScale 1).
+	baseScale Float.X
+	// scaleMin..scaleMax is the per-instance random spread applied on top of
+	// baseScale — a modest variation around 1.0 for natural variety, so a patch
+	// doesn't mix wildly different sizes.
+	scaleMin  Float.X
+	scaleMax  Float.X
+	needsZToY bool // only the legacy grass packs need the Z-up correction
+	useWind   bool // wrap imported material in the grass_wind shader
+}
+
+var dressingDefaults = map[string]dressingParams{
+	"grasses":  {perArea: 6.0, maxInst: 3000, baseScale: 1.0, scaleMin: 0.7, scaleMax: 1.2, needsZToY: true, useWind: true},
+	"pebbles":  {perArea: 4.0, maxInst: 2000, baseScale: 1.0, scaleMin: 0.5, scaleMax: 1.4, needsZToY: false, useWind: false},
+	"foliage":  {perArea: 1.5, maxInst: 400, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, useWind: false},
+	"mineral":  {perArea: 1.5, maxInst: 600, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, useWind: false},
+	"boulders": {perArea: 0.8, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, useWind: false},
+	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, useWind: false},
+}
 
 // populateGrassMM rebuilds the MultiMesh for a grassPatch so that it only
 // contains the instances whose terrain tile is currently revealed. The
@@ -89,7 +117,7 @@ func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
 	n := len(visible)
 	patch.mm.SetInstanceCount(n)
 	for k, i := range visible {
-		patch.mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], asset.xform))
+		patch.mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], asset.xform, patch.category))
 	}
 }
 
@@ -141,7 +169,7 @@ func (vr *TerrainEditor) recomputeGrass() {
 // log before the .glb has loaded), it's parked in pendingGrass and retried
 // from Process once the resource is available.
 func (vr *TerrainEditor) scatterGrass(brush musical.Sculpt) {
-	asset, ok := vr.grassMeshFor(brush.Design)
+	asset, ok := vr.grassMeshFor(brush.Design, brush.Slider)
 	if !ok {
 		vr.pendingGrass = append(vr.pendingGrass, brush)
 		return
@@ -157,7 +185,7 @@ func (vr *TerrainEditor) retryPendingGrass() {
 	}
 	remaining := vr.pendingGrass[:0]
 	for _, brush := range vr.pendingGrass {
-		asset, ok := vr.grassMeshFor(brush.Design)
+		asset, ok := vr.grassMeshFor(brush.Design, brush.Slider)
 		if !ok {
 			remaining = append(remaining, brush)
 			continue
@@ -167,40 +195,61 @@ func (vr *TerrainEditor) retryPendingGrass() {
 	vr.pendingGrass = remaining
 }
 
-// buildGrassPatch scatters count instances of mesh within the brush disc
-// and registers a grassPatch so the placement can be re-projected later.
-// All count positions are generated (RNG advances for the full set for
-// cross-client determinism) but only those whose tile is revealed are
-// added to the MultiMesh instancing.
-func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset) {
-	count := grassCount(brush.Radius, brush.Amount)
+// fillPatch (re)samples the deterministic scatter for `brush` into `patch`,
+// overwriting its bases/yaws/scales and identity fields. Shared by the committed
+// builder and the hover preview so both produce IDENTICAL layouts for the same
+// brush. The seed is taken from brush.Random (the predetermined scatter seed),
+// falling back to the derived grassSeed for legacy sculpts that predate the
+// field (Random == 0). All `count` positions are generated regardless of which
+// tiles are revealed, so the RNG advances identically on every client. Returns
+// false when the stroke scatters nothing.
+func (vr *TerrainEditor) fillPatch(patch *grassPatch, brush musical.Sculpt, asset grassAsset) bool {
+	prms := vr.paramsFor(brush.Slider)
+	count := dressingCount(prms, brush.Radius, brush.Amount)
 	if count <= 0 {
-		return
+		return false
 	}
-	rng := &grassRNG{state: grassSeed(brush.Author, brush.Target, brush.Radius)}
-	patch := &grassPatch{
-		design: brush.Design,
-		target: brush.Target,
-		radius: brush.Radius,
-		bases:  make([]Vector3.XYZ, count),
-		yaws:   make([]Angle.Radians, count),
-		scales: make([]Float.X, count),
+	seed := uint64(brush.Random)
+	if seed == 0 {
+		seed = grassSeed(brush.Author, brush.Target, brush.Radius)
 	}
-	// Sample the full set first (must consume RNG identically on all clients
-	// regardless of which tiles are hidden at this moment).
+	rng := &grassRNG{state: seed}
+	patch.design = brush.Design
+	patch.target = brush.Target
+	patch.radius = brush.Radius
+	patch.category = brush.Slider
+	patch.bases = make([]Vector3.XYZ, count)
+	patch.yaws = make([]Angle.Radians, count)
+	patch.scales = make([]Float.X, count)
 	for i := 0; i < count; i++ {
 		// Uniform disc sampling: sqrt keeps density even out to the rim.
 		rad := float64(brush.Radius) * math.Sqrt(rng.float())
 		theta := rng.float() * 2 * math.Pi
-		base := Vector3.XYZ{
+		patch.bases[i] = Vector3.XYZ{
 			X: brush.Target.X + Float.X(rad*math.Cos(theta)),
 			Z: brush.Target.Z + Float.X(rad*math.Sin(theta)),
 		}
-		yaw := Angle.Radians(rng.float() * 2 * math.Pi)
-		scale := grassScaleMin + Float.X(rng.float())*(grassScaleMax-grassScaleMin)
-		patch.bases[i] = base
-		patch.yaws[i] = yaw
-		patch.scales[i] = scale
+		patch.yaws[i] = Angle.Radians(rng.float() * 2 * math.Pi)
+		// Scale the mesh's authored size by the category's library factor (so the
+		// dressed prop matches the size the scenery editor would place it at) times
+		// a small random spread for variety.
+		base := prms.baseScale
+		if base == 0 {
+			base = 1
+		}
+		patch.scales[i] = base * (prms.scaleMin + Float.X(rng.float())*(prms.scaleMax-prms.scaleMin))
+	}
+	return true
+}
+
+// makeGrassPatch builds (but does not register) a scatter patch plus its
+// MultiMesh node for one dressing stroke, populated for the currently revealed
+// tiles. buildGrassPatch registers it as committed scenery; the hover preview
+// holds it transiently instead. Returns nil when the stroke scatters nothing.
+func (vr *TerrainEditor) makeGrassPatch(brush musical.Sculpt, asset grassAsset) *grassPatch {
+	patch := &grassPatch{}
+	if !vr.fillPatch(patch, brush, asset) {
+		return nil
 	}
 	mm := MultiMesh.New()
 	mm.SetTransformFormat(MultiMesh.Transform3d)
@@ -212,8 +261,103 @@ func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset)
 	vr.AsNode().AddChild(mmi.AsNode())
 	patch.mm = mm
 	patch.mmNode = mmi
-	vr.grassPatches = append(vr.grassPatches, patch)
 	vr.populateGrassMM(patch)
+	return patch
+}
+
+// buildGrassPatch scatters one committed dressing stroke and registers the
+// resulting grassPatch so the placement can be re-projected later.
+func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset) {
+	if patch := vr.makeGrassPatch(brush, asset); patch != nil {
+		vr.grassPatches = append(vr.grassPatches, patch)
+	}
+}
+
+// dressKey is the quantised brush state a hover preview was built for. Quantising
+// to the millimetre matches grassSeed's own rounding, so a stationary hover keeps
+// the same key (no rebuild) and a click lands on the same key the preview showed
+// (so the committed scatter is byte-identical to the preview).
+type dressKey struct {
+	design       musical.Design
+	tab          string
+	tx, tz       int64
+	radius, dens int64
+	seed         uint64
+}
+
+func qmm(f Float.X) int64 { return int64(math.Round(float64(f) * 1000)) }
+
+// updateDressPreview keeps the transient hover scatter in sync with the dressing
+// brush. It renders the EXACT instances a click would commit (the dressing
+// analogue of the height/paint shader previews) whenever a dressing tool is armed
+// and the user is NOT mid-stroke; otherwise it tears the preview down. Called
+// once per frame from Process.
+func (vr *TerrainEditor) updateDressPreview() {
+	if vr.client == nil || vr.client.ui.mode != ModeDressing ||
+		(!vr.DressActive && !vr.ClearActive) ||
+		(vr.DressActive && vr.DressDesign == "") ||
+		vr.brushStrokeActive ||
+		(vr.DressActive && vr.dressDesignID == (musical.Design{})) ||
+		vr.ClearActive {
+		// Mid-stroke the real (committed) scatter is what shows; off-tool there is
+		// nothing to preview; a removal tool never shows an "add" preview; and
+		// the old Ctrl+Shift erase modifier path is being removed.
+		vr.clearDressPreview()
+		return
+	}
+	design := vr.dressDesignID
+	key := dressKey{
+		design: design, tab: vr.DressTab,
+		tx: qmm(vr.BrushTarget.X), tz: qmm(vr.BrushTarget.Z),
+		radius: qmm(vr.BrushRadius), dens: qmm(vr.BrushDensity),
+		seed: vr.dressSeed,
+	}
+	if vr.dressPreview != nil && vr.dressPreviewKey == key {
+		return // unchanged hover — keep the standing preview
+	}
+	asset, ok := vr.grassMeshFor(design, vr.DressTab)
+	if !ok {
+		// Mesh still importing; drop any stale preview and retry next frame.
+		vr.clearDressPreview()
+		return
+	}
+	// Seed the preview from the SAME fixed dressSeed the next commit will store in
+	// Random, so what is shown here is exactly what PaintDressing lands — and so
+	// the arrangement only translates with the brush (no per-move reshuffle).
+	brush := musical.Sculpt{
+		Author: vr.client.id,
+		Editor: "terrain",
+		Slider: vr.DressTab,
+		Target: vr.BrushTarget,
+		Radius: vr.BrushRadius,
+		Amount: vr.BrushDensity,
+		Design: design,
+		Random: int64(vr.dressSeed),
+	}
+	if vr.dressPreview == nil {
+		vr.dressPreview = vr.makeGrassPatch(brush, asset)
+	} else if !vr.fillPatch(vr.dressPreview, brush, asset) {
+		vr.clearDressPreview()
+		return
+	} else {
+		// Reuse the existing node (no per-move node churn): swap the mesh in case
+		// the design changed and repopulate the revealed-tile subset.
+		vr.dressPreview.mm.SetMesh(asset.mesh)
+		vr.populateGrassMM(vr.dressPreview)
+	}
+	vr.dressPreviewKey = key
+}
+
+// clearDressPreview removes the transient hover scatter, if any.
+func (vr *TerrainEditor) clearDressPreview() {
+	if vr.dressPreview == nil {
+		return
+	}
+	if vr.dressPreview.mmNode != MultiMeshInstance3D.Nil {
+		vr.dressPreview.mmNode.AsNode().QueueFree()
+	}
+	vr.dressPreview = nil
+	vr.dressPreviewKey = dressKey{}
 }
 
 // reprojectGrass re-plants the instances of every patch overlapping the
@@ -237,19 +381,32 @@ func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
 // immediately visible and is reproduced identically on every client that
 // replays the (negative-Amount) sculpt.
 func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
-	if _, ok := vr.grassMeshes[brush.Design]; !ok {
-		// The mesh for this design hasn't arrived yet; we can't safely
-		// rebuild the MultiMesh transforms. Skip — the erase will have
-		// no visual effect until the asset is present (extremely rare
-		// in normal play).
-		return
+	// For a normal (per-Design) erase we need the mesh loaded so we can
+	// safely repopulate the MultiMesh after filtering instances.
+	// Category-clear strokes (Design zero, Slider = category) do not need
+	// any single mesh; they operate on patches by category only.
+	if brush.Design != (musical.Design{}) {
+		if _, ok := vr.grassMeshes[brush.Design]; !ok {
+			// The mesh for this design hasn't arrived yet; we can't safely
+			// rebuild the MultiMesh transforms. Skip — the erase will have
+			// no visual effect until the asset is present (extremely rare
+			// in normal play).
+			return
+		}
 	}
 	center := brush.Target
 	r2 := float64(brush.Radius) * float64(brush.Radius)
 
 	for i := len(vr.grassPatches) - 1; i >= 0; i-- {
 		p := vr.grassPatches[i]
-		if p.design != brush.Design {
+		// Match either the exact design (ordinary erase) or, for a
+		// category-clear tool (Design==zero), any patch whose Slider
+		// (stored in .category) matches the sculpt's Slider.
+		if brush.Design != (musical.Design{}) {
+			if p.design != brush.Design {
+				continue
+			}
+		} else if p.category != brush.Slider {
 			continue
 		}
 
@@ -291,31 +448,44 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 	}
 }
 
-// grassTransform builds the instance transform for a blade: yaw about the
-// world up, uniform scale, planted at the terrain height under base's X/Z.
-// The optional source xform from the authoring .glb (and a fixed Z-up to
-// Y-up correction for vegetation packs like yughues/grasses whose meshes
-// author their vertical along +Z) are composed so the blades stand upright.
-func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, scale Float.X, source Transform3D.BasisOrigin) Transform3D.BasisOrigin {
+// grassTransform builds the instance transform for a dressing instance:
+// yaw about world up, uniform scale, planted at terrain height under the
+// base X/Z. For legacy grasses it applies the Z-to-Y correction so that
+// yughues-style packs stand upright; for foliage/mineral/boulders the
+// source mesh is assumed to be authored Y-up (matching scenery placement)
+// and only the random yaw+scale is applied on top.
+func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, scale Float.X, source Transform3D.BasisOrigin, category string) Transform3D.BasisOrigin {
 	yawB := Basis.FromEuler(Euler.Radians{Y: yaw}, Angle.OrderYXZ)
 	scaledYaw := Basis.Scaled(yawB, Vector3.New(scale, scale, scale))
 
-	// Fixed correction that maps a model's local +Z direction to world +Y
-	// (after the source glb's own node transforms have been applied).
-	// The yughues grasses export blades primarily along Z (with a 180° Y
-	// node flip that does not change the up axis); the sign here is chosen
-	// so that after the source basis the tips point +Y.
-	zToY := Basis.FromEuler(Euler.Radians{X: -Angle.Pi / 2}, Angle.OrderYXZ)
+	p := vr.paramsFor(category)
+	if p.needsZToY {
+		// Fixed correction that maps a model's local +Z direction to world +Y
+		// (after the source glb's own node transforms have been applied).
+		// The yughues grasses export blades primarily along Z (with a 180° Y
+		// node flip that does not change the up axis); the sign here is chosen
+		// so that after the source basis the tips point +Y.
+		zToY := Basis.FromEuler(Euler.Radians{X: -Angle.Pi / 2}, Angle.OrderYXZ)
 
-	// Compose order: source (authored node xform) first, then the Z-to-Y
-	// stand-up, then the per-instance yaw+scale. This makes authored
-	// adjustments and the category correction both take effect before the
-	// random yaw spins the now-vertical blade.
-	corrected := Basis.Mul(scaledYaw, Basis.Mul(zToY, source.Basis))
+		// Compose order: source (authored node xform) first, then the Z-to-Y
+		// stand-up, then the per-instance yaw+scale. This makes authored
+		// adjustments and the category correction both take effect before the
+		// random yaw spins the now-vertical blade.
+		corrected := Basis.Mul(scaledYaw, Basis.Mul(zToY, source.Basis))
 
-	// The source origin (pivot offset inside the glb) rotated into the final
-	// oriented frame, then added to the terrain planting point.
-	rotatedOrigin := Basis.Transform(source.Origin, Basis.Mul(scaledYaw, zToY))
+		// The source origin (pivot offset inside the glb) rotated into the final
+		// oriented frame, then added to the terrain planting point.
+		rotatedOrigin := Basis.Transform(source.Origin, Basis.Mul(scaledYaw, zToY))
+		ground := Vector3.XYZ{X: base.X, Y: vr.HeightAt(base), Z: base.Z}
+		finalOrigin := Vector3.Add(ground, Vector3.XYZ(rotatedOrigin))
+
+		return Transform3D.BasisOrigin{Basis: corrected, Origin: finalOrigin}
+	}
+
+	// Foliage, boulders, pebbles etc: preserve the authored orientation from
+	// the glb (Y-up for scenery-placed props) and only add the random yaw.
+	corrected := Basis.Mul(scaledYaw, source.Basis)
+	rotatedOrigin := Basis.Transform(source.Origin, scaledYaw)
 	ground := Vector3.XYZ{X: base.X, Y: vr.HeightAt(base), Z: base.Z}
 	finalOrigin := Vector3.Add(ground, Vector3.XYZ(rotatedOrigin))
 
@@ -324,8 +494,10 @@ func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, sca
 
 // grassMeshFor resolves (and caches) the Mesh (plus its source-scene
 // transform) to instance for a dressing Design. Returns ok=false until
-// the Design's .glb has been imported.
-func (vr *TerrainEditor) grassMeshFor(design musical.Design) (grassAsset, bool) {
+// the Design's .glb has been imported. The category determines whether
+// we force the grass wind wrapper (only for grasses) or leave the mesh's
+// own materials (foliage/mineral reuse their authored shaders).
+func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (grassAsset, bool) {
 	if a, ok := vr.grassMeshes[design]; ok {
 		return a, a.mesh != Mesh.Nil
 	}
@@ -344,19 +516,33 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design) (grassAsset, bool) 
 		return grassAsset{}, false
 	}
 	mesh := Object.Leak(mi.Mesh())
-	// Promote each surface's material onto the shared Mesh — the MultiMesh has
-	// no per-instance MeshInstance3D to carry overrides — and wrap it in the
-	// wind-sway shader so the blades animate. The override (if any) wins over
-	// the mesh's own material, matching how the source scene would have drawn.
-	for i := 0; i < mesh.GetSurfaceCount(); i++ {
-		src := mi.GetSurfaceOverrideMaterial(i)
-		if src == Material.Nil {
-			src = mesh.SurfaceGetMaterial(i)
+	// For grasses we promote+wrap in the wind shader (MultiMesh cannot carry
+	// per-instance material overrides). For foliage and boulder categories
+	// we leave the imported materials exactly as authored so the scattered
+	// instances match the look of the same meshes when placed as scenery.
+	if vr.useWindFor(category) {
+		for i := 0; i < mesh.GetSurfaceCount(); i++ {
+			src := mi.GetSurfaceOverrideMaterial(i)
+			if src == Material.Nil {
+				src = mesh.SurfaceGetMaterial(i)
+			}
+			if src == Material.Nil {
+				continue
+			}
+			mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
 		}
-		if src == Material.Nil {
-			continue
+	} else {
+		// Preserve original materials (may be foliage_wind, triplanar mineral,
+		// or any custom authored in the library glb).
+		for i := 0; i < mesh.GetSurfaceCount(); i++ {
+			src := mi.GetSurfaceOverrideMaterial(i)
+			if src == Material.Nil {
+				src = mesh.SurfaceGetMaterial(i)
+			}
+			if src != Material.Nil {
+				mesh.SurfaceSetMaterial(i, src)
+			}
 		}
-		mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
 	}
 	root.AsNode().QueueFree()
 	asset := grassAsset{mesh: mesh, xform: sourceXform}
@@ -435,17 +621,6 @@ func firstMeshRecursive(n Node.Instance, parentXform Transform3D.BasisOrigin) (M
 	return MeshInstance3D.Nil, Transform3D.BasisOrigin{}, false
 }
 
-// grassCount derives the instance count for a stroke from its disc area
-// and density, capped so a huge brush at full density can't stall a frame.
-func grassCount(radius, density Float.X) int {
-	area := math.Pi * float64(radius) * float64(radius)
-	c := int(area * float64(density) * grassPerArea)
-	if c > grassMaxInstances {
-		c = grassMaxInstances
-	}
-	return c
-}
-
 // grassSeed derives a deterministic 64-bit seed from the sculpt's identity
 // so the scatter is identical on every client. Coordinates are quantised
 // to the millimetre so float round-tripping through the musical log can't
@@ -482,3 +657,49 @@ func (r *grassRNG) next() uint64 {
 // float returns a value in [0, 1). 9007199254740992 == 2^53 is the largest
 // exactly representable power of two in a float64 mantissa.
 func (r *grassRNG) float() float64 { return float64(r.next()>>11) / 9007199254740992.0 }
+
+// nextSeed advances a scatter seed to a new, well-distributed value (one
+// splitmix64 step). Used to roll the dressing brush's seed forward when a tool
+// is armed and after each committed segment, so successive patches differ.
+func nextSeed(s uint64) uint64 { return (&grassRNG{state: s}).next() }
+
+// paramsFor returns the scatter tuning for the given dressing tab (category).
+// Unknown categories fall back to the grasses defaults so old sculpts and
+// any future tabs continue to work without special cases everywhere.
+func (vr *TerrainEditor) paramsFor(category string) dressingParams {
+	if p, ok := dressingDefaults[category]; ok {
+		return p
+	}
+	return dressingDefaults["grasses"]
+}
+
+// useWindFor reports whether meshes for this category should have their
+// materials wrapped in the grass wind shader (only the fine-grass blades).
+func (vr *TerrainEditor) useWindFor(category string) bool {
+	return vr.paramsFor(category).useWind
+}
+
+// isDressingCategory reports whether the string is one of the known dressing
+// Slider values used for both normal dressing strokes and the category-clear
+// tools in the "removal" tab.
+func isDressingCategory(s string) bool {
+	_, ok := dressingDefaults[s]
+	return ok
+}
+
+// dressingCount derives instance count from disc area × density × perArea
+// (category specific) with the category's safety cap.
+func dressingCount(prms dressingParams, radius, density Float.X) int {
+	area := math.Pi * float64(radius) * float64(radius)
+	c := int(area * float64(density) * prms.perArea)
+	// Guarantee at least one instance for any positive-density stroke so
+	// foliage/boulder brushes (very low perArea) still produce visible
+	// results on a normal click instead of requiring a huge brush first.
+	if c == 0 && density > 0 && radius > 0.01 {
+		c = 1
+	}
+	if c > prms.maxInst {
+		c = prms.maxInst
+	}
+	return c
+}

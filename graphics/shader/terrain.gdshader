@@ -26,6 +26,11 @@ uniform bool paint_active;
 // the bed up toward it (see vertex()), so the eraser shows the terrain rising
 // back to ground before the stroke commits.
 uniform float river_fill = 0.0;
+// >0 while the river ("carve") brush is hovering: its value is the channel depth.
+// The carve uses PAINT-OVER (replace) semantics matching the commit, not the
+// additive `height` bump — so an overlapping drag segment (or re-painting an
+// existing river) overwrites the channel instead of digging additively deeper.
+uniform float river_carve = 0.0;
 
 uniform vec3 selection;
 uniform bool selection_active;
@@ -43,9 +48,22 @@ void vertex() {
 
     float dx = (VERTEX.x - uplift.x);
     float dy = (VERTEX.z - uplift.z);
-    // uplift the terrain, if within radius
-    if (dx*dx+dy*dy < radius*radius) {
-        VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
+    float br2 = dx*dx + dy*dy;
+    if (br2 < radius*radius) {
+        float w = 1.0 - br2/(radius*radius);
+        if (river_carve > 0.0) {
+            // River carve preview: PAINT-OVER (replace) the channel depth, matching
+            // the commit (editor_terrain.go: riverDepth += (target − riverDepth)*w).
+            // riverDepth here is original ground (CUSTOM2.r) − current bed (VERTEX.y),
+            // so re-carving an existing channel (or an overlapping drag segment)
+            // overwrites it to `river_carve` deep instead of stacking another carve.
+            float old_depth = CUSTOM2.r - VERTEX.y;
+            float new_depth = old_depth + (river_carve - old_depth) * w;
+            VERTEX.y = CUSTOM2.r - new_depth;
+        } else {
+            // Raise/lower: additive, accumulating into the ground.
+            VERTEX.y += height * w;
+        }
     }
     // River-erase ("no water") preview: fill the carved channel back toward the
     // original ground (CUSTOM2.r) inside the brush disc, matching what one erase

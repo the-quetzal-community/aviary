@@ -125,7 +125,12 @@ void vertex() {
 	v_floor = CUSTOM0.r;
 	v_flow = CUSTOM0.gb;
 	v_slope = CUSTOM0.a;
-	float ground_ref = CUSTOM0.r; // original ground here, before the carve below
+	// CUSTOM0.r is the (pre-stroke) terrain floor here. On dry land / the leading
+	// edge of a fresh river it equals the original ground, which is the reference
+	// the river surface sits a lip below; the river_preview fill below clamps UP
+	// from the existing surface, so re-painting an already-carved channel (where
+	// the floor sits below ground) never lowers the standing water.
+	float ground_ref = CUSTOM0.r;
 
 	// Terrain-sculpt preview: lift/sink the water with the previewed terrain
 	// using the SAME world-space falloff as terrain.gdshader, so the water and
@@ -141,25 +146,38 @@ void vertex() {
 		if (bd2 < radius * radius) {
 			float disp = height * (1.0 - bd2 / (radius * radius));
 			v_floor = max(v_floor + disp, -2.0);
-			if (length(v_flow) > 0.001) {
+			// The raise/lower brush moves the ground, so a river riding it follows.
+			// The river CARVE brush also drives `height` (to deepen the bed/column
+			// preview) but does NOT move groundHeights, so its surface must stay put
+			// — the river_preview block below sets it. Skip the ride when carving
+			// (river_preview > 0), else re-painting a channel would sink its water.
+			if (length(v_flow) > 0.001 && river_preview <= 0.0) {
 				world_pos.y += disp; // river surface rides the ground
 			}
 		}
 	}
 
-	// River-tool preview: lift the (otherwise hidden) still-water plane to just
-	// below the original ground inside the brush disc so the channel's water
-	// shows before the stroke commits. The bed itself is carved by the negative
-	// `height` block above; here we ONLY raise the surface, never lower it, so a
-	// pre-existing higher lake is preserved. Fades to the hidden level at the rim.
+	// River-tool preview: lift the (otherwise hidden) still-water plane so the
+	// channel's water shows before the stroke commits, matching the committed
+	// surface (reloadWater's waterAt) rather than a brush-shaped puddle:
+	//   * FLAT fill (not a falloff cone): the surface sits a fixed lip below the
+	//     local ground across the whole footprint, the way a real river laps its
+	//     banks at one level — the old `mix(..., weight)` domed it up at the
+	//     cursor and pinched it back to nothing at the rim.
+	//   * reaches ONE cell past the brush radius — the bank collar (riverBankCollar
+	//     = 1) the commit extends the water onto so it tucks under the bank instead
+	//     of ending in a vertical edge.
+	//   * clamped UP only (max): never lowers a pre-existing lake/river, and on dry
+	//     land away from the disc the surface stays at the hidden global level.
 	if (river_preview > 0.0 && radius > 0.0) {
 		float rdx = world_pos.x - uplift.x;
 		float rdz = world_pos.z - uplift.z;
 		float rd2 = rdx * rdx + rdz * rdz;
-		if (rd2 < radius * radius) {
-			float weight = 1.0 - rd2 / (radius * radius);
+		float reach = radius + 1.0; // +1 world unit == the one-cell bank collar
+		if (rd2 < reach * reach) {
 			float target = ground_ref - 0.2; // 0.2 == waterSurfaceDrop (editor_terrain_water.go)
-			world_pos.y = max(world_pos.y, mix(world_pos.y, target, weight));
+			target = max(target, water_level); // never below the global lake level
+			world_pos.y = max(world_pos.y, target);
 		}
 	}
 	v_surface = world_pos.y;
