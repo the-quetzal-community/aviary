@@ -111,8 +111,9 @@ type CloudControl struct {
 	sizeSliderReady bool
 
 	// densitySlider is the terrain dressing-density slider, shown only
-	// while the terrain editor is in ModeDressing. It's pinned just below
-	// the size slider and feeds the "dressing/density" slider channel.
+	// while the terrain editor is in ModeDressing. It's pinned next to the
+	// GizmoPower button (density being the dressing brush's "power") and
+	// feeds the "dressing/density" slider channel.
 	densitySlider      HSlider.Instance
 	densitySliderReady bool
 
@@ -364,7 +365,8 @@ func (ui *CloudControl) buildSizeSlider() {
 
 // buildDensitySlider creates the terrain dressing-density slider. Like the
 // size slider it's created hidden and pinned in the toolbar; it's only
-// revealed while the terrain editor is in ModeDressing.
+// revealed while the terrain editor is in ModeDressing, next to the GizmoPower
+// button.
 func (ui *CloudControl) buildDensitySlider() {
 	ui.densitySlider = ui.newToolbarSlider(0, 1, 0.01, 0.5, func(value Float.X) {
 		if ui.client == nil {
@@ -499,31 +501,32 @@ func (ui *CloudControl) positionSizeSlider() {
 	ui.sizeSlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
 }
 
-// positionDensitySlider pins the dressing-density slider just below the
-// brush-size slider's slot (both sit to the right of the Shift button), so
-// the two stack vertically in the toolbar. It uses gizmoControl for lookup.
+// positionDensitySlider pins the dressing-density slider just to the right of
+// the GizmoPower button each frame while it's visible. Density is the dressing
+// brush's "power", so it shares the GizmoPower slot the same way the sculpt
+// power slider does — the two never show at once (density in Dressing, sculpt
+// power in Geometry).
 func (ui *CloudControl) positionDensitySlider() {
 	if !ui.densitySliderReady || !ui.densitySlider.AsCanvasItem().Visible() {
 		return
 	}
-	// Stacks under the size slider, anchored to the same terrain brush button.
-	shift := ui.gizmoControl(GizmoBrush)
-	if shift == Control.Nil {
+	power := ui.gizmoControl(GizmoPower)
+	if power == Control.Nil {
 		return
 	}
 	types := ui.GizmoTypes.AsControl()
+	// Right-edge vertical-centre of the GizmoPower button in CloudControl space.
 	edge := Vector2.Add(
 		types.Position(),
 		Vector2.Mul(
-			Vector2.Add(shift.Position(), Vector2.New(shift.Size().X, shift.Size().Y*0.5)),
+			Vector2.Add(power.Position(), Vector2.New(power.Size().X, power.Size().Y*0.5)),
 			types.Scale(),
 		),
 	)
 	const gap = 12
-	const stack = 56 // vertical offset below the size slider's centre line
 	size := ui.densitySlider.AsControl().Size()
 	assertMainThread("positionDensitySlider")
-	ui.densitySlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5+stack))
+	ui.densitySlider.AsControl().SetPosition(Vector2.New(edge.X+gap, edge.Y-size.Y*0.5))
 }
 
 // positionPowerSlider pins the height-sculpt power slider just to the right

@@ -56,3 +56,36 @@ void fragment() {
     vec3 albedo = tex_x + tex_y + tex_z;
     ALBEDO = albedo;
 }
+
+// Custom lighting that ignores shadow attenuation. ATTENUATION for the
+// primary DirectionalLight includes the shadow map term; by not using it
+// the terrain side walls neither cast nor receive shadows. We still get
+// proper directional response (sun-facing sides brighter) and a touch of
+// specular so the rock doesn't look completely flat.
+void light() {
+    vec3 L = LIGHT;
+    vec3 N = NORMAL;
+    // Note: we use -LIGHT because the side wall normals (generated via
+    // Cross product in reloadSides) end up producing inverted shading
+    // with the raw LIGHT vector in view space for this particular
+    // geometry. Negating gives the expected "sun-facing side brighter".
+    float NdotL = max(0.0, dot(N, -L));
+
+    // Simple Lambert diffuse (good enough for the rough mineral texture;
+    // the default Burley path is bypassed once a light() function exists).
+    DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * NdotL;
+
+    // The scene's environment ambient (Environment ambient light + sky) is added
+    // on top of DIFFUSE_LIGHT automatically by the engine, even with a custom
+    // light() function — and AMBIENT_LIGHT isn't a light() built-in anyway — so
+    // the side walls get the same base illumination as the top terrain surface
+    // without adding it by hand here.
+
+    // Subtle specular so the rock walls catch a little light; keep it low
+    // to preserve the matte buried-rock appearance.
+    vec3 V = VIEW;
+    vec3 H = normalize(-L + V);   // consistent with the -L used for diffuse
+    float NdotH = max(0.0, dot(N, H));
+    float spec = pow(NdotH, 24.0);
+    SPECULAR_LIGHT += LIGHT_COLOR * spec * 0.08;
+}

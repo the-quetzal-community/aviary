@@ -4,6 +4,7 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/variant/Euler"
+	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/internal/musical"
@@ -186,4 +187,78 @@ func findDesignInMap(m map[musical.Design][]Node3D.ID, id Node3D.ID) (musical.De
 		}
 	}
 	return musical.Design{}, false
+}
+
+// clearSceneryInDisc is used by the bomb tool (the "*" / ClearAllDressingCategory
+// removal action). It removes every individually placed library prop (the kind
+// you drop with the Scenery editor) whose center lies inside the brush disc.
+//
+// Each removal is sent as a normal musical.Change so the deletion is observable
+// by all clients and replays correctly. We also call RecordChange with the
+// inverse Create so undo brings the props back (one undo per prop, which is
+// honest for a bulk "nuke" action).
+func (c *Client) clearSceneryInDisc(center Vector3.XYZ, radius Float.X) {
+	if c == nil || c.space == nil || radius <= 0.01 {
+		return
+	}
+	r2 := float64(radius) * float64(radius)
+
+	type snap struct {
+		entity musical.Entity
+		design musical.Design
+		pos    Vector3.XYZ
+		rot    Euler.Radians
+	}
+	var victims []snap
+
+	for ent, nid := range c.entity_to_object {
+		node, ok := nid.Instance()
+		if !ok {
+			continue
+		}
+		p := node.AsNode3D().Position()
+		dx := float64(p.X - center.X)
+		dz := float64(p.Z - center.Z)
+		if dx*dx+dz*dz > r2 {
+			continue
+		}
+
+		design, canRecord := c.findDesignForObject(nid)
+		if !canRecord {
+			// This is not a top-level library prop (e.g. it's a part of a
+			// shelter, vehicle, critter, coaster, etc.). Leave it alone.
+			continue
+		}
+
+		victims = append(victims, snap{
+			entity: ent,
+			design: design,
+			pos:    p,
+			rot:    node.AsNode3D().Rotation(),
+		})
+	}
+
+	for _, v := range victims {
+		ch := musical.Change{
+			Author: c.id,
+			Entity: v.entity,
+			Remove: true,
+			Commit: true,
+		}
+
+		if err := c.space.Change(ch); err != nil {
+			Engine.Raise(err)
+			continue
+		}
+
+		// Record the inverse so the user can undo the removal of this specific prop.
+		c.RecordChange(ch, musical.Change{
+			Author: c.id,
+			Entity: v.entity,
+			Design: v.design,
+			Offset: v.pos,
+			Angles: v.rot,
+			Commit: true,
+		})
+	}
 }

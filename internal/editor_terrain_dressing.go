@@ -82,16 +82,20 @@ type dressingParams struct {
 	scaleMin  Float.X
 	scaleMax  Float.X
 	needsZToY bool // only the legacy grass packs need the Z-up correction
-	useWind   bool // wrap imported material in the grass_wind shader
+	// windKind selects how the scattered mesh sways: "grass" wraps the material
+	// in grass_wind (every vertex leans by height — blades), "foliage" wraps it
+	// in foliage_wind_mm (trunk planted, canopy flutters), "" leaves the imported
+	// material as authored (no sway).
+	windKind string
 }
 
 var dressingDefaults = map[string]dressingParams{
-	"grasses":  {perArea: 6.0, maxInst: 3000, baseScale: 1.0, scaleMin: 0.7, scaleMax: 1.2, needsZToY: true, useWind: true},
-	"pebbles":  {perArea: 4.0, maxInst: 2000, baseScale: 1.0, scaleMin: 0.5, scaleMax: 1.4, needsZToY: false, useWind: false},
-	"foliage":  {perArea: 1.5, maxInst: 400, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, useWind: false},
-	"mineral":  {perArea: 1.5, maxInst: 600, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, useWind: false},
-	"boulders": {perArea: 0.8, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, useWind: false},
-	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, useWind: false},
+	"grasses":  {perArea: 6.0, maxInst: 3000, baseScale: 1.0, scaleMin: 0.7, scaleMax: 1.2, needsZToY: true, windKind: "grass"},
+	"pebbles":  {perArea: 4.0, maxInst: 2000, baseScale: 1.0, scaleMin: 0.5, scaleMax: 1.4, needsZToY: false, windKind: ""},
+	"foliage":  {perArea: 1.5, maxInst: 400, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, windKind: "foliage"},
+	"mineral":  {perArea: 1.5, maxInst: 600, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, windKind: ""},
+	"boulders": {perArea: 0.8, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, windKind: ""},
+	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, windKind: ""},
 }
 
 // populateGrassMM rebuilds the MultiMesh for a grassPatch so that it only
@@ -399,13 +403,17 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 
 	for i := len(vr.grassPatches) - 1; i >= 0; i-- {
 		p := vr.grassPatches[i]
-		// Match either the exact design (ordinary erase) or, for a
-		// category-clear tool (Design==zero), any patch whose Slider
-		// (stored in .category) matches the sculpt's Slider.
+		// Match rules:
+		// - Exact Design (normal per-design erase while a dressing brush is armed)
+		// - Design==zero + real Slider → category clear (scythe, axe, etc.)
+		// - Design==zero + ClearAllDressingCategory ("*") → bomb: every category
 		if brush.Design != (musical.Design{}) {
 			if p.design != brush.Design {
 				continue
 			}
+		} else if brush.Slider == ClearAllDressingCategory {
+			// Bomb: delete from every dressing patch that overlaps the disc.
+			// No category filter.
 		} else if p.category != brush.Slider {
 			continue
 		}
@@ -516,32 +524,28 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 		return grassAsset{}, false
 	}
 	mesh := Object.Leak(mi.Mesh())
-	// For grasses we promote+wrap in the wind shader (MultiMesh cannot carry
-	// per-instance material overrides). For foliage and boulder categories
-	// we leave the imported materials exactly as authored so the scattered
-	// instances match the look of the same meshes when placed as scenery.
-	if vr.useWindFor(category) {
-		for i := 0; i < mesh.GetSurfaceCount(); i++ {
-			src := mi.GetSurfaceOverrideMaterial(i)
-			if src == Material.Nil {
-				src = mesh.SurfaceGetMaterial(i)
-			}
-			if src == Material.Nil {
-				continue
-			}
-			mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
+	// MultiMesh cannot carry per-instance material overrides, so any sway has to
+	// live in the one surface material. Grasses wrap in grass_wind (every vertex
+	// leans by height), foliage wraps in foliage_wind_mm (trunk planted, canopy
+	// flutters); everything else (boulders, mineral, pebbles) keeps the imported
+	// material exactly as authored so scattered instances match the same mesh
+	// placed as scenery.
+	kind := vr.windKindFor(category)
+	for i := 0; i < mesh.GetSurfaceCount(); i++ {
+		src := mi.GetSurfaceOverrideMaterial(i)
+		if src == Material.Nil {
+			src = mesh.SurfaceGetMaterial(i)
 		}
-	} else {
-		// Preserve original materials (may be foliage_wind, triplanar mineral,
-		// or any custom authored in the library glb).
-		for i := 0; i < mesh.GetSurfaceCount(); i++ {
-			src := mi.GetSurfaceOverrideMaterial(i)
-			if src == Material.Nil {
-				src = mesh.SurfaceGetMaterial(i)
-			}
-			if src != Material.Nil {
-				mesh.SurfaceSetMaterial(i, src)
-			}
+		if src == Material.Nil {
+			continue
+		}
+		switch kind {
+		case "grass":
+			mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
+		case "foliage":
+			mesh.SurfaceSetMaterial(i, vr.foliageWindMaterial(src))
+		default:
+			mesh.SurfaceSetMaterial(i, src)
 		}
 	}
 	root.AsNode().QueueFree()
@@ -580,6 +584,41 @@ func (vr *TerrainEditor) grassWindMaterial(src Material.Instance) Material.Insta
 	// (the source grass materials are normal-mapped; without this they look
 	// flat). has_normal_texture gates sampling so an unset sampler — which
 	// Godot fills with white — never tilts the normal.
+	if base.NormalEnabled() {
+		if nrm := base.NormalTexture(); nrm != Texture2D.Nil {
+			mat.SetShaderParameter("normal_texture", nrm)
+			mat.SetShaderParameter("normal_scale", base.NormalScale())
+			mat.SetShaderParameter("has_normal_texture", true)
+		}
+	}
+	return mat.AsMaterial()
+}
+
+// foliageWindMaterial is the foliage counterpart of grassWindMaterial: it wraps
+// a scattered foliage surface's imported material in foliage_wind_mm so the
+// MultiMesh instances sway (trunk planted, canopy fluttering) while keeping the
+// authored albedo/normal/roughness/metallic look. Wind is global (see
+// updateWeatherIntensity), shared with the grass. Surfaces that aren't a
+// textured BaseMaterial3D (e.g. an untextured trunk) are returned unchanged so
+// they still render — just static, which is what a rigid stem wants anyway.
+func (vr *TerrainEditor) foliageWindMaterial(src Material.Instance) Material.Instance {
+	if vr.foliageWindShader == Shader.Nil {
+		return src
+	}
+	base, ok := Object.As[BaseMaterial3D.Instance](src)
+	if !ok {
+		return src
+	}
+	tex := base.AlbedoTexture()
+	if tex == Texture2D.Nil {
+		return src
+	}
+	mat := ShaderMaterial.New().
+		SetShader(vr.foliageWindShader).
+		SetShaderParameter("albedo_texture", tex).
+		SetShaderParameter("albedo", base.AlbedoColor()).
+		SetShaderParameter("roughness", base.Roughness()).
+		SetShaderParameter("metallic", base.Metallic())
 	if base.NormalEnabled() {
 		if nrm := base.NormalTexture(); nrm != Texture2D.Nil {
 			mat.SetShaderParameter("normal_texture", nrm)
@@ -673,10 +712,10 @@ func (vr *TerrainEditor) paramsFor(category string) dressingParams {
 	return dressingDefaults["grasses"]
 }
 
-// useWindFor reports whether meshes for this category should have their
-// materials wrapped in the grass wind shader (only the fine-grass blades).
-func (vr *TerrainEditor) useWindFor(category string) bool {
-	return vr.paramsFor(category).useWind
+// windKindFor reports how meshes for this category should sway: "grass" (blade
+// lean), "foliage" (planted trunk, fluttering canopy) or "" (no wind wrap).
+func (vr *TerrainEditor) windKindFor(category string) string {
+	return vr.paramsFor(category).windKind
 }
 
 // isDressingCategory reports whether the string is one of the known dressing

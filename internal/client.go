@@ -22,6 +22,7 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/FogVolume"
 	"graphics.gd/classdb/GPUParticles3D"
 	"graphics.gd/classdb/GeometryInstance3D"
 	"graphics.gd/classdb/Input"
@@ -139,6 +140,13 @@ type Client struct {
 	// sky is the ShaderMaterial backing the Environment's procedural sky. The
 	// Clouds slider drives its "coverage" parameter via applyCloudDensity.
 	sky ShaderMaterial.Instance
+
+	// cloudVolume is the world-space FogVolume drawing real, fly-through clouds
+	// at the Highest tier; cloudFog is its fog ShaderMaterial. The Clouds/Wind
+	// sliders drive its uniforms alongside the sky; applyCloudQuality toggles
+	// whether it renders (via the Environment's volumetric fog) per quality tier.
+	cloudVolume FogVolume.Instance
+	cloudFog    ShaderMaterial.Instance
 
 	// weatherAnchor is a node positioned under the camera each frame so that
 	// rain and snow particles are always emitted in a volume around the viewer.
@@ -380,6 +388,20 @@ var UserState struct {
 	Device string // public device name
 	Secret string // secret to be linked with a Quetzal Community Account.
 	WorkID musical.WorkID
+
+	// GraphicsQuality persists the user's choice from the Settings slider.
+	// GraphicsQualitySet distinguishes an explicit choice (including Toaster/0)
+	// from the zero-value on first run or after upgrading from an older save.
+	GraphicsQuality    GraphicsQuality
+	GraphicsQualitySet bool
+
+	// AuthorPreferences is a ranked list of preferred library authors
+	// (highest preference first). When the design explorer resets (e.g. on
+	// editor or mode switch, which call Refresh with author=""), the first
+	// author in this list that has content for the active editor+mode is
+	// chosen. Explicitly clicking an author button bumps it to the front
+	// and persists the new ranking.
+	AuthorPreferences []string
 }
 
 func NewClientJoining() *Client {
@@ -399,7 +421,7 @@ func NewClientLoading(record musical.WorkID) *Client {
 }
 
 func (world *Client) saveUserState() {
-	userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Write)
+	userfile := FileAccess.Open(OS.GetConfigDir()+"/user.json", FileAccess.Write)
 	buf, err := json.Marshal(UserState)
 	if err != nil {
 		Engine.Raise(fmt.Errorf("failed to marshal user state: %w", err))
@@ -410,15 +432,18 @@ func (world *Client) saveUserState() {
 }
 
 func (world *Client) loadUserState() {
-	userfile := FileAccess.Open(OS.GetUserDataDir()+"/user.json", FileAccess.Read)
+	userfile := FileAccess.Open(OS.GetConfigDir()+"/user.json", FileAccess.Read)
 	if userfile != FileAccess.Nil {
-		buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetUserDataDir() + "/user.json"))
+		buf := userfile.GetBuffer(FileAccess.GetSize(OS.GetConfigDir() + "/user.json"))
 		if err := json.Unmarshal(buf, &UserState); err != nil {
 			Engine.Raise(fmt.Errorf("failed to unmarshal user state: %w", err))
 		}
 	}
 	if UserState.Editor == (Subject{}) {
 		UserState.Editor = Editing.Scenery
+	}
+	if !UserState.GraphicsQualitySet {
+		UserState.GraphicsQuality = defaultGraphicsQuality
 	}
 }
 
@@ -548,6 +573,10 @@ func (world *Client) Ready() {
 		SetShadowNormalBias(0).
 		SetShadowBlur(2.0)
 	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
+	// Drive the volumetric cloud layer harder than the default 1.0 so the sunlit
+	// faces read as bright white instead of flat grey. Only affects volumetric fog
+	// (the Highest-tier clouds); ordinary surface lighting is unchanged.
+	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamVolumetricFogEnergy, 3.0)
 
 	// Procedural sky with drifting clouds. The shader reacts to the directional
 	// light (LIGHT0); only the cloud coverage is pushed in, by the Clouds slider.
@@ -573,11 +602,62 @@ func (world *Client) Ready() {
 	world.Environment = env
 	world.WorldEnvironment = worldenv
 
-	// Seed SSAO on/off from the launch quality tier. The UI's launch-time
-	// Apply ran during editor.Setup above, before this Environment existed,
-	// so the per-Environment ambient-occlusion flag has to be applied here;
-	// the slider re-applies it on every move (see buildSettingsMenu).
-	defaultGraphicsQuality.ApplyAmbientOcclusion(env)
+	// Volumetric cloud layer for the Highest tier. A box-shaped FogVolume sitting
+	// at the cloud altitude geometrically confines the fog to its bounds, so it
+	// can never fog the terrain below it — that confinement is the box, not the
+	// shader (the boundless "world" shape gave no reliable per-froxel world Y, so
+	// a shader height-band leaked fog everywhere). The box is thin in Y (the cloud
+	// layer) and wide in XZ, and follows the camera horizontally in Process so the
+	// layer feels endless; the shader's UVW.y gives the soft top/bottom fade and
+	// world-space noise keeps the puffs anchored as the box slides. Base volumetric
+	// density stays 0 so these clouds are the only fog; anisotropy gives a forward
+	// silver lining and a little ambient inject keeps undersides off pure black.
+	// applyCloudQuality toggles VolumetricFogEnabled per tier (off unless Highest).
+	env.SetVolumetricFogDensity(0)
+	// Keep the region small: the froxel buffer is spread across this length, so a
+	// shorter reach packs the froxels denser = sharper clouds. The trade-off is the
+	// clouds form a contained layer around the camera and fade out at this radius
+	// rather than stretching (blurrily) to the horizon — by design here. The
+	// shader's horizon_fade default (≈ length/span) tapers density to nothing just
+	// inside this so the fog-length cut-off isn't visible.
+	env.SetVolumetricFogLength(80)
+	// Strong forward scattering (like real clouds) so the sun-facing side glows /
+	// gets a bright silver lining instead of reading as uniform grey.
+	env.SetVolumetricFogAnisotropy(0.5)
+	// Lift the shadowed bases with sky ambient so they're bright cumulus-grey, not
+	// dark grey — the single-scatter fog has no multiple-scattering brightening, so
+	// this stands in for it. Too high would flatten them, too low leaves them dim.
+	env.SetVolumetricFogAmbientInject(0.9)
+	env.SetVolumetricFogGiInject(0.0)
+	// Enlarge the volumetric-fog froxel buffer (default 64×64×64) so the clouds
+	// aren't a low-res blur: more width/height sharpens them across the screen,
+	// more depth sharpens them into the distance. The small cloud region (short fog
+	// length) means each froxel covers little space, so a dense grid is affordable.
+	// Global RenderingServer state, only paid when volumetric fog is on (Highest
+	// tier); dial back toward 128 if the froxel pass costs too much.
+	RenderingServer.EnvironmentSetVolumetricFogVolumeSize(256, 256)
+	cloudFog := ShaderMaterial.New()
+	cloudFog.SetShader(LoadSync[Shader.Instance]("res://shader/clouds_fog.gdshader"))
+	cloudFog.SetShaderParameter("coverage", 0.0)
+	world.cloudFog = cloudFog
+	cloudVolume := FogVolume.New()
+	cloudVolume.SetShape(RenderingServer.FogVolumeShapeBox)
+	// Full box size: a thin Y slab (the cloud layer + soft-edge margin) over a
+	// wide XZ footprint. Centred at cloudLayerY, so it spans Y ∈ [cloudLayerY±7].
+	cloudVolume.SetSize(Vector3.New(cloudLayerSpanXZ, cloudLayerThickness, cloudLayerSpanXZ))
+	cloudVolume.SetMaterial(cloudFog.AsMaterial())
+	cloudVolume.AsNode().SetName("CloudLayer")
+	cloudVolume.AsNode3D().SetPosition(Vector3.New(0, cloudLayerY, 0))
+	world.AsNode().AddChild(cloudVolume.AsNode())
+	world.cloudVolume = cloudVolume
+
+	// Seed cloud + SSAO state from the launch quality tier (persisted or default).
+	// The UI's launch-time Apply ran during editor.Setup above, before this
+	// Environment/sky/FogVolume existed, so these per-resource flags have to be
+	// applied here; the settings slider re-applies them on every move (see
+	// buildSettingsMenu).
+	UserState.GraphicsQuality.ApplyAmbientOcclusion(env)
+	world.applyCloudQuality(UserState.GraphicsQuality)
 
 	// Start the world in daytime. Driving the initial look through the same
 	// friendly path the rolldown uses keeps lightingMenuState authoritative,
@@ -635,6 +715,24 @@ const speed = 8
 // surface (water is not terrain), so a small clearance keeps it just clear.
 const cameraTerrainClearance Float.X = 0.5
 
+// Cloud layer geometry for the Highest-tier volumetric FogVolume. The box must
+// be TALL (centred at cloudLayerY, cloudLayerThickness tall) so the camera is
+// always inside it: a thin box sitting above the camera gets frustum-culled the
+// moment you pitch down to look away from it, popping the whole cloud layer in/out
+// as you rotate. With the camera inside, the volume is never culled and the layer
+// renders smoothly at every view angle. The clouds' actual altitude is NOT the
+// box — it's confined to a world-Y band in the shader (cloud_base/cloud_top), so
+// the box can be tall without fog reaching the ground. The box follows the camera
+// in XZ each frame (see Process) so the cloudLayerSpanXZ footprint feels endless.
+const (
+	cloudLayerY         Float.X = 16
+	cloudLayerThickness Float.X = 120
+	// Wider than 2× the fog length so the layer's footprint always outruns the
+	// volumetric-fog reach — the clouds fade out smoothly (via the shader's radial
+	// horizon_fade) well inside the box, never at a hard box edge.
+	cloudLayerSpanXZ Float.X = 200
+)
+
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
 
@@ -691,6 +789,17 @@ func (world *Client) Process(dt Float.X) {
 			rot.X = 0
 			rot.Z = 0
 			anchor.SetGlobalRotation(rot)
+		}
+	}
+
+	// Slide the cloud-layer FogVolume to stay centred on the camera in XZ (Y is
+	// pinned to the layer altitude), so the finite box feels like an endless layer
+	// as the player pans. The clouds themselves are sampled in world space, so
+	// they stay put in the world while the box slides beneath them.
+	if world.cloudVolume != FogVolume.Nil {
+		if cam := Viewport.Get(world.AsNode()).GetCamera3d(); cam != Camera3D.Nil {
+			cp := cam.AsNode3D().GlobalPosition()
+			world.cloudVolume.AsNode3D().SetGlobalPosition(Vector3.New(cp.X, cloudLayerY, cp.Z))
 		}
 	}
 
@@ -1417,10 +1526,31 @@ func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds, ra
 }
 
 // applyCloudDensity pushes the cloud coverage (0 = clear, 1 = overcast) into
-// the procedural sky shader. Safe to call before the sky exists.
+// both cloud systems — the procedural sky shader and the world-space cloud
+// FogVolume — so the Clouds slider drives whichever one the active quality tier
+// is showing. Safe to call before either material exists.
 func (world *Client) applyCloudDensity(clouds Float.X) {
 	if world.sky != (ShaderMaterial.Instance{}) {
 		world.sky.SetShaderParameter("coverage", clouds)
+	}
+	if world.cloudFog != (ShaderMaterial.Instance{}) {
+		world.cloudFog.SetShaderParameter("coverage", clouds)
+	}
+}
+
+// applyCloudQuality switches the cloud system to match the graphics-quality
+// tier: it pushes the sky shader's cloud_steps (cheap flat / sky-march / off)
+// and toggles the Environment's volumetric fog, which is what makes the
+// world-space fly-through FogVolume clouds render (Highest tier only). Kept on
+// the Client because it spans the sky material and the Environment, both created
+// here after the UI's launch-time GraphicsQuality.Apply has already run. Safe
+// before those exist (each branch guards its resource).
+func (world *Client) applyCloudQuality(q GraphicsQuality) {
+	if world.sky != (ShaderMaterial.Instance{}) {
+		world.sky.SetShaderParameter("cloud_steps", q.cloudSteps())
+	}
+	if world.Environment != Environment.Nil {
+		world.Environment.SetVolumetricFogEnabled(q.volumetricClouds())
 	}
 }
 
@@ -1620,6 +1750,17 @@ func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
 		base := Vector2.New(0.045, 0.014)
 		w := Float.X(wind)
 		world.sky.SetShaderParameter("cloud_wind", Vector2.New(
+			float64(base.X*(1+1.8*w)),
+			float64(base.Y*(1+1.8*w)),
+		))
+	}
+
+	// The world-space cloud FogVolume drifts with the same wind (its noise space
+	// is in world units, so the base speed is much smaller than the sky's).
+	if world.cloudFog != (ShaderMaterial.Instance{}) {
+		base := Vector2.New(0.03, 0.01)
+		w := Float.X(wind)
+		world.cloudFog.SetShaderParameter("cloud_wind", Vector2.New(
 			float64(base.X*(1+1.8*w)),
 			float64(base.Y*(1+1.8*w)),
 		))

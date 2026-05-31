@@ -210,12 +210,12 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -1.236041
-offset_top = -473.33337
-offset_right = 103.11157
-offset_bottom = -113.333374
+offset_top = -1440.0
+offset_right = -769.2361
+offset_bottom = -1080.0
 grow_horizontal = 2
 grow_vertical = 0
-scale = Vector2(0.93703705, 0.93703705)
+scale = Vector2(0.5, 0.5)
 theme = ExtResource("1_hi2iw")
 theme_override_constants/separation = 0
 
@@ -260,7 +260,7 @@ offset_top = -42.0
 offset_right = 210.0
 grow_horizontal = 2
 grow_vertical = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(210, 42)
 mouse_filter = 1
 theme_override_colors/font_color = Color(0, 0, 0, 1)
@@ -295,11 +295,11 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -72.0
-offset_right = -32.0
+offset_left = -1152.0
+offset_right = -1112.0
 offset_bottom = 40.0
 grow_horizontal = 2
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(20, 0.09)
 
 [node name="Pointer" type="TextureRect" parent="ViewSelector" unique_id=1142122943]
@@ -326,7 +326,7 @@ offset_left = 8.9975
 offset_top = 4.00561
 offset_right = 400.997
 offset_bottom = 135.006
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 mouse_filter = 2
 
 [node name="ModeTriangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
@@ -667,7 +667,7 @@ offset_left = -503.05518
 offset_top = -856.8934
 offset_right = 11.31665
 grow_horizontal = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(514.3718, 0)
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
@@ -723,7 +723,7 @@ anchor_right = 1.0
 offset_left = -400.0
 offset_top = -920.0
 grow_horizontal = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(400, 0)
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")
@@ -752,7 +752,7 @@ offset_right = 383.3125
 offset_bottom = 505.84955
 grow_horizontal = 0
 rotation = 1.5707964
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 mouse_filter = 2
 
 [node name="Settings" type="TextureButton" parent="Toolbar" unique_id=1700003001]
@@ -821,7 +821,7 @@ anchor_right = 1.0
 offset_left = -200.0
 offset_bottom = 200.0
 grow_horizontal = 0
-scale = Vector2(0.9625, 0.9625)
+scale = Vector2(0.5, 0.5)
 pivot_offset = Vector2(208.68042, -3.5928783)
 mouse_filter = 2
 

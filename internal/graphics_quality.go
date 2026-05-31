@@ -37,9 +37,9 @@ const (
 // slider; the HSlider is configured 0..graphicsQualitySteps-1.
 const graphicsQualitySteps = QualityHighest + 1
 
-// defaultGraphicsQuality is the level applied on launch and the slider's
-// initial position. QualityHigh (2× MSAA) gives a smooth look without
-// forcing the most expensive tier on first run.
+// defaultGraphicsQuality is the fallback applied on first launch (or when
+// no persisted choice exists in UserState). QualityRefined (2× MSAA) gives
+// a smooth look without forcing the most expensive tier on first run.
 const defaultGraphicsQuality = QualityRefined
 
 // directionalShadowAtlasSize maps each quality level to the directional
@@ -78,6 +78,32 @@ func (q GraphicsQuality) ssaoQuality() RenderingServer.EnvironmentSSAOQuality {
 	default:
 		return RenderingServer.EnvSsaoQualityVeryLow
 	}
+}
+
+// cloudSteps is the cloud_steps uniform pushed into the procedural sky shader at
+// this tier (see Client.applyCloudQuality, which owns the wiring). 0 selects the
+// shader's cheap flat 2D projection (lower tiers); a positive count switches on
+// the sky-shader volumetric march at QualityRefined; a negative value disables
+// the painted sky clouds at QualityHighest, where the world-space FogVolume
+// clouds (volumetricClouds) are the only clouds.
+func (q GraphicsQuality) cloudSteps() int {
+	switch q {
+	case QualityHighest:
+		return -1 // sky clouds off; the FogVolume draws fly-through clouds.
+	case QualityRefined:
+		// The best the sky-shader path offers without the FogVolume on top.
+		return 48
+	default: // QualityToaster / QualityAverage: flat clouds, no march.
+		return 0
+	}
+}
+
+// volumetricClouds reports whether the world-space FogVolume cloud layer (the
+// fly-through clouds) should be active at this tier. Reserved for QualityHighest:
+// volumetric fog is a per-frame froxel pass, the most expensive cloud option, so
+// the lower tiers use the cheaper painted sky clouds instead.
+func (q GraphicsQuality) volumetricClouds() bool {
+	return q == QualityHighest
 }
 
 // Apply pushes this quality level into the live renderer. The Viewport

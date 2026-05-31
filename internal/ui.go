@@ -207,24 +207,30 @@ func (ui *UI) buildSettingsMenu() {
 		}
 	}
 
-	// Pin the handle to the launch level (keeping it in lockstep with the
-	// renderer regardless of the value baked into the scene), then react to
-	// every move. Set the value before connecting so this seed doesn't fire
-	// the handler — the explicit Apply below covers the initial render.
-	slider.AsRange().SetValue(Float.X(defaultGraphicsQuality))
+	// Pin the handle to the persisted (or default) launch level, then react to
+	// every move. Set the value before connecting so this seed doesn't fire the
+	// handler — the explicit Apply below covers the initial render.
+	launchQ := UserState.GraphicsQuality
+	slider.AsRange().SetValue(Float.X(launchQ))
 	Range.Instance(slider.AsRange()).OnValueChanged(func(value Float.X) {
 		q := GraphicsQuality(int(value))
 		q.Apply(ui.AsNode())
-		// SSAO's on/off flag lives on the world Environment, not the
-		// viewport/global state Apply touches; toggle it alongside.
+		// SSAO's on/off flag lives on the world Environment, and the cloud
+		// state spans the sky material + the volumetric-fog FogVolume — none of
+		// which Apply's viewport/global state reaches, so apply them alongside.
 		if ui.client != nil {
 			q.ApplyAmbientOcclusion(ui.client.Environment)
+			ui.client.applyCloudQuality(q)
+			// Persist the choice so it survives across runs.
+			UserState.GraphicsQuality = q
+			UserState.GraphicsQualitySet = true
+			ui.client.saveUserState()
 		}
 	})
 
-	// Apply the launch default so the renderer matches the slider's
-	// initial position before the user ever opens the menu.
-	defaultGraphicsQuality.Apply(ui.AsNode())
+	// Apply the launch quality (persisted or default) so the renderer matches
+	// the slider's initial position before the user ever opens the menu.
+	launchQ.Apply(ui.AsNode())
 }
 
 // environmentTopSpacer is the height (in EnvironmentMenu-local units) of the

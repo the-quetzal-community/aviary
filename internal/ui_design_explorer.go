@@ -139,6 +139,36 @@ type sliderState struct {
 	val  float64
 }
 
+// preferredAuthor returns the highest-ranked author from prefs that is
+// present in available. If none match, it falls back to the
+// lexicographically first key in available (preserving the prior reset
+// behaviour), or "" if available is empty.
+func preferredAuthor(available map[string]struct{}, prefs []string) string {
+	for _, p := range prefs {
+		if _, ok := available[p]; ok {
+			return p
+		}
+	}
+	if len(available) == 0 {
+		return ""
+	}
+	return slices.Sorted(maps.Keys(available))[0]
+}
+
+// bumpAuthorPreference moves name to the front of the global ranked
+// preference list (creating it if necessary) and drops any duplicate.
+func bumpAuthorPreference(name string) {
+	prefs := UserState.AuthorPreferences
+	newPrefs := make([]string, 0, len(prefs)+1)
+	newPrefs = append(newPrefs, name)
+	for _, p := range prefs {
+		if p != name {
+			newPrefs = append(newPrefs, p)
+		}
+	}
+	UserState.AuthorPreferences = newPrefs
+}
+
 // Ready implements [Node.Interface.Ready].
 func (de *DesignExplorer) Ready() {
 	de.slider = make(map[string]map[string]HSlider.ID)
@@ -180,6 +210,13 @@ func (de *DesignExplorer) Ready() {
 				de.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + name + "/icon.png"))
 				button, _ := de.themes[name].Instance()
 				button.AsCanvasItem().SetVisible(false)
+				// Record explicit user choice as the new top-ranked preference
+				// and persist so the design explorer remembers across runs and
+				// editor switches.
+				if de.client != nil {
+					bumpAuthorPreference(name)
+					de.client.saveUserState()
+				}
 			})
 			de.themes[name] = button.ID()
 			de.Panel.Themes.AsNode().AddChild(button.AsNode())
@@ -436,14 +473,18 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			Mode:   mode,
 		}] = themes_available
 	}
-	for _, theme := range slices.Sorted(maps.Keys(themes_available)) {
-		if author == "" {
-			author = theme
+	if author == "" {
+		author = preferredAuthor(themes_available, UserState.AuthorPreferences)
+		if author != "" {
 			ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png"))
-		} else {
-			button, _ := ui.themes[theme].Instance()
-			button.AsCanvasItem().SetVisible(true)
 		}
+	}
+	for _, theme := range slices.Sorted(maps.Keys(themes_available)) {
+		if theme == author {
+			continue // chosen author is shown in the heading; hide its button
+		}
+		button, _ := ui.themes[theme].Instance()
+		button.AsCanvasItem().SetVisible(true)
 	}
 	preview_path := "res://preview/" + author
 	library_path := "res://library/" + author

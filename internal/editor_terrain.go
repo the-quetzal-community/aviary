@@ -12,11 +12,17 @@ import (
 	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/GeometryInstance3D"
+	"graphics.gd/classdb/GPUParticles3D"
 	"graphics.gd/classdb/HeightMapShape3D"
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
+	"graphics.gd/classdb/ParticleProcessMaterial"
+	"graphics.gd/classdb/QuadMesh"
+	"graphics.gd/variant/AABB"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseButton"
+	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
@@ -205,6 +211,11 @@ type TerrainEditor struct {
 	// grass material's albedo texture is copied onto a per-design instance.
 	grassWindShader Shader.Instance
 
+	// foliageWindShader is the sibling sway shader for scattered foliage (see
+	// foliageWindMaterial): trunk stays planted, canopy flutters. Driven by the
+	// same global wind uniforms as grassWindShader.
+	foliageWindShader Shader.Instance
+
 	// Undo/redo histories for the editor-level mutations (those not held per
 	// tile): dressing scatter/erase, water level, and tile extend/hide. Each
 	// committed stroke is appended; a Revert sculpt toggles the matching entry's
@@ -376,8 +387,14 @@ func (fe *TerrainEditor) brushGizmosForCurrentMode() []Gizmo {
 	if fe.PaintActive {
 		return []Gizmo{GizmoBrush}
 	}
-	// Dressing: only the size control (density slider is separate).
+	// Dressing (add): the brush radius/size control plus the density control,
+	// which the GizmoPower button hosts (density is the dressing brush's "power").
 	if fe.DressActive {
+		return []Gizmo{GizmoBrush, GizmoPower}
+	}
+	// Removal tools (category clears + bomb): just the brush radius/size; there
+	// is no density to tune when erasing.
+	if fe.ClearActive {
 		return []Gizmo{GizmoBrush}
 	}
 	// A height brush may still be "parked" (see SelectDesign comment about
@@ -425,8 +442,9 @@ func (fe *TerrainEditor) syncBrushSliders() {
 	// Dress is relevant in ModeDressing once a design has been selected.
 	hasPaint := fe.PaintActive
 	hasDress := (mode == ModeDressing) && fe.DressActive
+	hasClear := (mode == ModeDressing) && fe.ClearActive
 	hasGeomBrush := (mode == ModeGeometry) && (fe.TerrainBrush != "")
-	hasBrushForMode := hasPaint || hasDress || hasGeomBrush
+	hasBrushForMode := hasPaint || hasDress || hasClear || hasGeomBrush
 	cc.setSizeSliderVisible(editing && hasBrushForMode)
 	cc.setDensitySliderVisible(editing && mode == ModeDressing && hasDress)
 	cc.setPowerSliderVisible(editing && mode == ModeGeometry && hasGeomBrush)
@@ -462,6 +480,8 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.BrushActive = false
 	fe.PaintActive = false
 	fe.DressActive = false
+	fe.ClearActive = false
+	fe.ClearCategory = ""
 	fe.TerrainBrush = ""
 	fe.brushStrokeActive = false
 	fe.setArrowsVisible(false)
@@ -582,10 +602,14 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 			},
 		}
 	case "removal":
-		// Category-wide erasers for ModeDressing. These replace the old
-		// Ctrl+Shift + armed-design gesture. Each tool clears *all* instances
-		// of the matching dressing category (Slider) inside the brush disc.
+		// Category-wide erasers for ModeDressing (plus the bomb that clears
+		// everything). These replace the old Ctrl+Shift + armed-design gesture.
 		return []BuiltinDesign{
+			{
+				Resource: BuiltinDressingClearAll,
+				Icon:     "res://ui/bomb.svg",
+				Label:    "Bomb — clear ALL dressing",
+			},
 			{
 				Resource: BuiltinDressingClearGrasses,
 				Icon:     "res://ui/scythe.svg",
@@ -615,8 +639,11 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	if mode == ModeDressing {
 		// Clear-sentinel tools from the "removal" tab — arm a category-wide
-		// eraser instead of a normal placement brush.
+		// eraser (or the bomb for everything) instead of a normal placement brush.
 		switch design {
+		case BuiltinDressingClearAll:
+			fe.ArmClearBrush(ClearAllDressingCategory)
+			return
 		case BuiltinDressingClearGrasses:
 			fe.ArmClearBrush("grasses")
 			return
@@ -888,6 +915,7 @@ func (tr *TerrainEditor) Ready() {
 	tr.BrushRiverDepth = riverDefaultDepth
 
 	tr.grassWindShader = LoadSync[Shader.Instance]("res://shader/grass_wind.gdshader")
+	tr.foliageWindShader = LoadSync[Shader.Instance]("res://shader/foliage_wind_mm.gdshader")
 	// Make sure the grass wind global shader parameters exist before any grass
 	// blade (and thus the shader) can render; updateWeatherIntensity writes
 	// their live values from the environment Wind slider.
@@ -1151,10 +1179,13 @@ func (tr *TerrainEditor) EraseDressing() {
 }
 
 // EraseDressingCategory is the category-wide analogue of EraseDressing.
-// It is driven by the "removal" tab tools (scythe, axe, etc.). It emits
-// a negative-Amount sculpt with Design==zero; the Sculpt handler +
-// eraseGrass treat this as "erase everything whose patch.category matches
-// the Slider, regardless of the concrete scattered Design".
+// It is driven by the "removal" tab tools (scythe, axe, bomb, etc.).
+// It emits a negative-Amount sculpt; the Sculpt handler + eraseGrass
+// perform the deletion.
+//
+// For normal categories the Slider carries the category name and Design==zero.
+// For the bomb (ClearAllDressingCategory) the Slider is the special all-marker
+// and eraseGrass removes patches from every dressing category inside the disc.
 func (tr *TerrainEditor) EraseDressingCategory(category string) {
 	if !tr.ClearActive || category == "" {
 		return
@@ -1169,16 +1200,25 @@ func (tr *TerrainEditor) EraseDressingCategory(category string) {
 	}
 	tr.dressLast = tr.BrushTarget
 	tr.dressLastSet = true
+
 	tr.client.commitSculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Editor: "terrain",
-		Slider: category,
+		Slider: category,           // either a real category or ClearAllDressingCategory ("*")
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
-		Amount: -0.5, // negative signals erase; magnitude is ignored for category clears
-		Design: musical.Design{}, // zero → category-wide in eraseGrass
+		Amount: -0.5,               // negative signals erase
+		Design: musical.Design{},   // zero + special Slider → all categories (bomb)
 		Commit: true,
 	})
+
+	// The bomb ("*") also nukes individually placed scenery props inside the
+	// same disc. We do the sweep only on the authoring client (here); the
+	// resulting Remove Changes are normal musical messages so everyone sees
+	// the props disappear, and RecordChange gives proper per-prop undo.
+	if category == ClearAllDressingCategory && tr.client != nil {
+		tr.client.clearSceneryInDisc(tr.BrushTarget, tr.BrushRadius)
+	}
 }
 
 // ArmClearBrush is called from SelectDesign when one of the four
@@ -1209,6 +1249,95 @@ func (tr *TerrainEditor) CancelClearBrush() {
 	if tr.client != nil && tr.client.ui != nil && tr.client.ui.CloudControl != nil {
 		tr.client.ui.CloudControl.setSizeSliderVisible(false)
 	}
+}
+
+// triggerBombExplosion spawns a short-lived GPU particle burst at the given
+// world position (snapped to terrain) with radius-based scale. It is the
+// visual "kaboom" for the bomb removal tool. The effect is purely local
+// eye-candy; the actual dressing removal is already handled by the musical
+// Sculpt and is fully undo/redo/replication safe.
+func (vr *TerrainEditor) triggerBombExplosion(target Vector3.XYZ, radius Float.X) {
+	if radius < 0.1 {
+		radius = 3.0
+	}
+	// Ground the explosion slightly above the surface.
+	y := vr.HeightAt(target) + 0.6
+	pos := Vector3.XYZ{X: target.X, Y: y, Z: target.Z}
+
+	// Scale factor: bigger brush = bigger, more particles, faster boom.
+	scale := Float.X(1.0 + (float64(radius)-3.0)*0.12)
+	if scale < 0.6 {
+		scale = 0.6
+	}
+	if scale > 3.5 {
+		scale = 3.5
+	}
+
+	particles := GPUParticles3D.New()
+	particles.AsNode().SetName("BombExplosion")
+	particles.SetAmount(int(90 + radius*18)) // more debris for bigger radius
+	particles.SetLifetime(1.15)
+	particles.SetOneShot(true)
+	particles.SetPreprocess(0.0)
+	particles.SetDrawOrder(GPUParticles3D.DrawOrderViewDepth)
+	particles.SetLocalCoords(false)
+	particles.AsGeometryInstance3D().SetCastShadow(GeometryInstance3D.ShadowCastingSettingOff)
+
+	// Small quad billboard for each "debris" particle.
+	debris := QuadMesh.New().AsPlaneMesh().SetSize(Vector2.New(0.28*float32(scale), 0.28*float32(scale))).AsMesh()
+	particles.SetDrawPass1(debris)
+
+	// Generous visibility box so the burst isn't culled early.
+	particles.SetVisibilityAabb(AABB.PositionSize{
+		Position: Vector3.New(-80, -40, -80),
+		Size:     Vector3.New(160, 90, 160),
+	})
+
+	mat := ParticleProcessMaterial.New()
+
+	// Explosion: outward + upward burst from a sphere.
+	mat.SetEmissionShape(ParticleProcessMaterial.EmissionShapeSphere)
+	mat.SetEmissionSphereRadius(float32(radius) * 0.55)
+
+	// Strong chaotic initial velocity.
+	mat.SetDirection(Vector3.New(0, 0.6, 0))
+	mat.SetSpread(115)
+	mat.SetInitialVelocityMin(28 * float32(scale))
+	mat.SetInitialVelocityMax(62 * float32(scale))
+	mat.SetRadialVelocityMin(18 * float32(scale))
+	mat.SetRadialVelocityMax(45 * float32(scale))
+
+	// Gravity pulls debris back down realistically.
+	mat.SetGravity(Vector3.New(0, -26, 0))
+	mat.SetDampingMin(1.8)
+	mat.SetDampingMax(3.2)
+
+	// Nice explosive color progression (bright flash -> fire -> dust).
+	mat.SetColor(Color.RGBA{R: 1.0, G: 0.92, B: 0.55, A: 0.95})
+	mat.SetHueVariationMin(-0.08)
+	mat.SetHueVariationMax(0.12)
+
+	// Size over life: start decent, grow a little as it "expands", then fade.
+	mat.SetScaleMin(0.7 * float32(scale))
+	mat.SetScaleMax(1.45 * float32(scale))
+
+	particles.SetProcessMaterial(mat.AsMaterial())
+
+	vr.AsNode().AddChild(particles.AsNode())
+	particles.AsNode3D().SetGlobalPosition(pos)
+	particles.SetEmitting(true)
+
+	// Fire-and-forget self-cleanup (one-shot particles). Safe across Go + Godot
+	// binding because we marshal the QueueFree back to the main thread via Defer.
+	life := particles.Lifetime()
+	go func(p GPUParticles3D.Instance, seconds float32) {
+		time.Sleep(time.Duration(seconds*1.7*1000) * time.Millisecond)
+		Callable.Defer(Callable.New(func() {
+			if p != GPUParticles3D.Nil {
+				p.AsNode().QueueFree()
+			}
+		}))
+	}(particles, life)
 }
 
 // HeightAt looks up the terrain height at the given world position
@@ -1415,15 +1544,29 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// (foliage, mineral) reuse the same deterministic scatter path and
 	// history as grasses/pebbles.
 	//
-	// Category-clear tools (the "removal" tab) emit with Design==zero and
-	// a negative Amount; they are still valid dressing sculpts and must be
-	// routed to eraseGrass (which then matches on Slider/category only).
+	// Category-clear tools (the "removal" tab) and the bomb emit with
+	// Design==zero + negative Amount (Slider is either a real category or
+	// the special ClearAllDressingCategory marker). They must route to
+	// eraseGrass.
 	isDressing := brush.Slider != "" &&
 		(brush.Design != (musical.Design{}) ||
-			(brush.Amount <= 0 && isDressingCategory(brush.Slider)))
+			(brush.Amount <= 0 && (isDressingCategory(brush.Slider) || brush.Slider == ClearAllDressingCategory)))
 	if isDressing {
 		if brush.Amount <= 0 {
 			vr.eraseGrass(brush)
+			if brush.Slider == ClearAllDressingCategory && brush.Commit && !brush.Revert &&
+				(vr.client == nil || !vr.client.joining) {
+				// Live bomb usage (by self or remote peers) triggers the visual explosion.
+				// We deliberately skip it:
+				// - on Revert (undo/redo)
+				// - while the client is still replaying history during initial scene load/join
+				//   (joining == true). This prevents old bombs from the log from exploding
+				//   every time someone loads the world.
+				t, r := brush.Target, brush.Radius
+				Callable.Defer(Callable.New(func() {
+					vr.triggerBombExplosion(t, r)
+				}))
+			}
 		} else {
 			vr.scatterGrass(brush)
 		}
@@ -1654,7 +1797,8 @@ func (vr *TerrainEditor) revertSculpt(brush musical.Sculpt) {
 		if revertEdit(vr.revealHistory, brush.Author, brush.Timing) {
 			vr.recomputeReveal()
 		}
-	case brush.Slider != "" && brush.Design != (musical.Design{}):
+	case brush.Slider != "" && (brush.Design != (musical.Design{}) ||
+		isDressingCategory(brush.Slider) || brush.Slider == ClearAllDressingCategory):
 		if revertEdit(vr.grassHistory, brush.Author, brush.Timing) {
 			vr.recomputeGrass()
 		}
@@ -1801,7 +1945,16 @@ const (
 	BuiltinDressingClearPebbles  = "procedural://dressing/clear_pebbles"
 	BuiltinDressingClearFoliage  = "procedural://dressing/clear_foliage"
 	BuiltinDressingClearMineral  = "procedural://dressing/clear_mineral"
+
+	// BuiltinDressingClearAll (the "bomb") clears every dressing category at once.
+	BuiltinDressingClearAll = "procedural://dressing/clear_all"
 )
+
+// ClearAllDressingCategory is the special Slider value carried by bomb sculpts.
+// When a negative-Amount sculpt arrives with this Slider and Design==zero,
+// eraseGrass removes instances from *all* categories inside the brush disc.
+const ClearAllDressingCategory = "*"
+
 
 // extendSlider tags the explicit "extend the world" mutation an arrow click
 // emits. Target carries the new chunk's world-space center; TerrainEditor.Sculpt
@@ -1850,7 +2003,12 @@ type TerrainTile struct {
 	// Water carries the water plane (surface 0) and the water-body
 	// cross-section sides (surface 1); kept separate from Mesh so the
 	// water and terrain geometry are never confused.
-	Water       MeshInstance3D.Instance
+	Water MeshInstance3D.Instance
+	// Sides holds the vertical rock skirt (terrain side walls) on exposed
+	// cardinal edges. It lives on its own MeshInstance3D so it can disable
+	// both shadow casting and shadow receiving independently of the top
+	// terrain surface (which must continue to cast and receive normally).
+	Sides       MeshInstance3D.Instance
 	shader      ShaderMaterial.Instance
 	side_shader ShaderMaterial.Instance
 
@@ -2105,6 +2263,27 @@ func (tile *TerrainTile) generateBase() {
 		tile.AsNode().AddChild(tile.Water.AsNode())
 	}
 	tile.Water.AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
+	// Dedicated sides MeshInstance child for the rock skirt. Positioned
+	// identically so local coordinates match the terrain top and water.
+	// We immediately disable shadow casting; the buried shader will also
+	// suppress shadow *receiving* via a custom light() function.
+	if tile.Sides == (MeshInstance3D.Instance{}) {
+		tile.Sides = MeshInstance3D.New()
+		tile.Sides.AsNode().SetName("Sides")
+		tile.AsNode().AddChild(tile.Sides.AsNode())
+	}
+	tile.Sides.AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
+	tile.Sides.AsGeometryInstance3D().SetCastShadow(GeometryInstance3D.ShadowCastingSettingOff)
+
+	// Set the material override early (safe even with no mesh yet).
+	// We deliberately avoid SetSurfaceOverrideMaterial here because the
+	// internal surface_override_materials array is still size 0 and would
+	// produce "Index p_surface = 0 is out of bounds" errors.
+	if tile.side_shader != (ShaderMaterial.Instance{}) {
+		mat := tile.side_shader.AsMaterial()
+		tile.Sides.AsGeometryInstance3D().SetMaterialOverride(mat)
+	}
+
 	// Texture arrays are owned by the editor (shared across tiles).
 	tile.reloadSides()
 	tile.reloadWater()
@@ -2494,6 +2673,9 @@ func (tile *TerrainTile) applyRevealState() {
 	if tile.Water != (MeshInstance3D.Instance{}) {
 		tile.Water.AsNode3D().SetVisible(tile.revealed && tile.editor != nil && tile.editor.waterVisible)
 	}
+	if tile.Sides != (MeshInstance3D.Instance{}) {
+		tile.Sides.AsNode3D().SetVisible(tile.revealed)
+	}
 }
 
 // sideParam describes one of a tile's four cardinal edges for side-wall
@@ -2537,40 +2719,37 @@ func (tile *TerrainTile) exposedSides() []sideParam {
 // reloadSides updates the side meshes to match the current terrain heights.
 // Only the outer-most (exposed) sides are emitted; sides that have a
 // neighbour tile are omitted so that internal walls are never drawn.
+//
+// The skirt lives on its own MeshInstance3D (tile.Sides) so it can have
+// shadow casting and receiving independently disabled from the top terrain.
+//
+// NOTE: This can be called before generateBase has created the Sides child
+// (e.g. from reveal() when first touching a tile, or from neighbour updates).
+// We guard on the node existing, exactly like reloadWater does for its child.
 func (tile *TerrainTile) reloadSides() {
+	if tile.Sides == (MeshInstance3D.Instance{}) {
+		// Not created yet (generateBase will create it and call us again).
+		return
+	}
+
 	tile_size := float32(1.0) // Adjust for texture tiling scale
 	n := tile.size
 	hm := n + 1
 
-	// Remove any previous side surface(s) (index 1+) so we can append
-	// a fresh one (or none at all). This makes reloadSides safe to call
-	// at any time, including when a neighbour is added later.
-	mesh := tile.Mesh.Mesh()
-	am := ArrayMesh.Nil
-	if mesh != Mesh.Nil {
-		am = Object.To[ArrayMesh.Instance](mesh)
-		for mesh.GetSurfaceCount() > 1 {
-			am.SurfaceRemove(mesh.GetSurfaceCount() - 1)
-		}
-		// Force the MeshInstance3D to observe the removal so its
-		// internal surface_override_materials array shrinks to match.
-		// Without this, later SetSurfaceOverrideMaterial can fail.
-		mi := tile.Mesh
-		m := mi.Mesh()
-		mi.SetMesh(Mesh.Nil)
-		mi.SetMesh(m)
-	}
-
-	// Sides mesh data
-	index_base := 0
-
 	active := tile.exposedSides()
-
 	sideVertCount := len(active) * n * 6
+
 	if sideVertCount == 0 {
-		// Completely surrounded tile: nothing to do (no side surface).
+		// Fully surrounded tile: clear any previous skirt mesh and material.
+		if tile.Sides != (MeshInstance3D.Instance{}) {
+			// Clear per-surface override while the mesh is still attached (safe).
+			tile.Sides.SetSurfaceOverrideMaterial(0, Material.Nil)
+			tile.Sides.SetMesh(Mesh.Nil)
+			tile.Sides.AsGeometryInstance3D().SetMaterialOverride(Material.Nil)
+		}
 		return
 	}
+
 	if cap(tile.verticesSide) < sideVertCount {
 		tile.verticesSide = make([]Vector3.XYZ, sideVertCount)
 		tile.normalsSide = make([]Vector3.XYZ, sideVertCount)
@@ -2583,6 +2762,8 @@ func (tile *TerrainTile) reloadSides() {
 	vertices_side := tile.verticesSide
 	normals_side := tile.normalsSide
 	uvs_side := tile.uvsSide
+
+	index_base := 0
 	for _, sp := range active {
 		for i := 0; i < n; i++ {
 			coord := i
@@ -2621,73 +2802,75 @@ func (tile *TerrainTile) reloadSides() {
 				v1 = Vector3.Sub(tl, bl)
 				v2 = Vector3.Sub(tr, bl)
 			}
-			n := Vector3.Normalized(Vector3.Cross(v1, v2))
+			norm := Vector3.Normalized(Vector3.Cross(v1, v2))
 			// Triangle 1
 			vertices_side[index_base+0] = bl
-			normals_side[index_base+0] = n
+			normals_side[index_base+0] = norm
 			uvs_side[index_base+0] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
 			if sp.flippedWinding {
 				vertices_side[index_base+1] = tr
-				normals_side[index_base+1] = n
+				normals_side[index_base+1] = norm
 				uvs_side[index_base+1] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
 				vertices_side[index_base+2] = tl
-				normals_side[index_base+2] = n
+				normals_side[index_base+2] = norm
 				uvs_side[index_base+2] = Vector2.XY{float32(i) / tile_size, h_near / tile_size}
 			} else {
 				vertices_side[index_base+1] = tl
-				normals_side[index_base+1] = n
+				normals_side[index_base+1] = norm
 				uvs_side[index_base+1] = Vector2.XY{float32(i) / tile_size, h_near / tile_size}
 				vertices_side[index_base+2] = tr
-				normals_side[index_base+2] = n
+				normals_side[index_base+2] = norm
 				uvs_side[index_base+2] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
 			}
 			// Triangle 2
 			vertices_side[index_base+3] = bl
-			normals_side[index_base+3] = n
+			normals_side[index_base+3] = norm
 			uvs_side[index_base+3] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
 			if sp.flippedWinding {
 				vertices_side[index_base+4] = br
-				normals_side[index_base+4] = n
+				normals_side[index_base+4] = norm
 				uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
 				vertices_side[index_base+5] = tr
-				normals_side[index_base+5] = n
+				normals_side[index_base+5] = norm
 				uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
 			} else {
 				vertices_side[index_base+4] = tr
-				normals_side[index_base+4] = n
+				normals_side[index_base+4] = norm
 				uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, h_far / tile_size}
 				vertices_side[index_base+5] = br
-				normals_side[index_base+5] = n
+				normals_side[index_base+5] = norm
 				uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
 			}
 			index_base += 6
 		}
 	}
-	// Prepare mesh arrays for side surface
+
+	// Build a dedicated mesh for the skirt (never attached to the main
+	// terrain MeshInstance, which keeps exactly one surface).
+	sideMesh := ArrayMesh.New()
 	arrays_side := [Mesh.ArrayMax]any{
 		Mesh.ArrayVertex: vertices_side,
 		Mesh.ArrayNormal: normals_side,
 		Mesh.ArrayTexUv:  uvs_side,
 	}
-	am.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
+	sideMesh.MoreArgs().AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays_side[:], nil, nil,
 		Mesh.ArrayFormatVertex|Mesh.ArrayFormatNormal|Mesh.ArrayFormatTexUv,
 	)
 
-	// Force the MeshInstance3D to rebind the mesh so its
-	// surface_override_materials array grows to match the new
-	// surface count on the resource (we just added surface 1).
-	// Without this, SetSurfaceOverrideMaterial can fail with
-	// "index out of bounds".
-	mi := tile.Mesh
-	m := mi.Mesh()
-	mi.SetMesh(Mesh.Nil)
-	mi.SetMesh(m)
+	// Assign the freshly built side mesh, then the material overrides.
+	// This mirrors exactly how reloadWater assigns to the Water MeshInstance3D
+	// (which works reliably). We create a new ArrayMesh each time (like Water),
+	// so a direct SetMesh is sufficient; no Nil dance needed (the dance was
+	// only required when mutating the *same* ArrayMesh resource's surface count).
+	tile.Sides.SetMesh(sideMesh.AsMesh())
 
-	if mi.GetSurfaceOverrideMaterialCount() > 0 {
-		mi.SetSurfaceOverrideMaterial(0, tile.shader.AsMaterial())
-	}
-	if mi.GetSurfaceOverrideMaterialCount() > 1 {
-		mi.SetSurfaceOverrideMaterial(1, tile.side_shader.AsMaterial())
+	if tile.side_shader != (ShaderMaterial.Instance{}) {
+		mat := tile.side_shader.AsMaterial()
+		// Both the global override (widely used in the project) and the
+		// per-surface override. Water does the per-surface version successfully
+		// right after SetMesh.
+		tile.Sides.AsGeometryInstance3D().SetMaterialOverride(mat)
+		tile.Sides.SetSurfaceOverrideMaterial(0, mat)
 	}
 }
 
