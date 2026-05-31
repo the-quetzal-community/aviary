@@ -181,8 +181,8 @@ func (world musicalImpl) Change(con musical.Change) error {
 			// scale gizmo or restored from the musical log), use it
 			// as the absolute scale. Otherwise leave whatever
 			// scale the instance currently has — the creation path
-			// applied the conventional 0.1 factor, and translate/
-			// twist edits must not stomp it.
+			// applied the (editor default * design-intrinsic) scale,
+			// and translate/twist edits must not stomp it.
 			if con.Bounds != Vector3.Zero {
 				exists.SetScale(con.Bounds)
 			}
@@ -216,10 +216,22 @@ func (world musicalImpl) Change(con musical.Change) error {
 		if con.Bounds != Vector3.Zero {
 			node.SetScale(con.Bounds)
 		} else {
+			// For editors that don't supply Bounds on creation (shelter,
+			// vehicle, coaster props), multiply the post-instantiate
+			// root scale. This automatically includes any "preset scale"
+			// authored into the design's root (Kenney .scn assets).
 			node.SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.1, 0.1, 0.1)))
 		}
 		registerEntity(world.design_to_entity, world.entity_to_object, world.object_to_entity, con.Design, con.Entity, node)
 		container.AddChild(node.AsNode())
+		// A placement that streams in (history replay at load, or a remote
+		// peer) while we're terrain editing must also be non-pickable, so it
+		// doesn't block the terrain brush raycast until the next editor
+		// switch. StartEditing's sweep handles everything already present and
+		// flips it all back to pickable on leaving terrain mode.
+		if world.Editing == Editing.Terrain {
+			setPickableExceptTerrain(node.AsNode(), false)
+		}
 		// Bump this design to the front of the design explorer's recency
 		// ordering so the most recently placed designs surface first.
 		// Fires for every creation — local, remote, or replayed from the

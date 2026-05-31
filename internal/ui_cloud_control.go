@@ -834,11 +834,17 @@ func (ui *CloudControl) SetGizmos(gizmos []Gizmo) {
 	// set, pick the first non-action gizmo from the supplied order
 	// (respecting the editor's preferred default by list position).
 	if !ui.isGizmoAllowed(ui.Gizmo) {
+		picked := false
 		for _, g := range gizmos {
 			if g != GizmoSpace && g != GizmoClone && g != GizmoTrash && ui.isGizmoAllowed(g) {
 				ui.set_gizmo(g)
+				picked = true
 				break
 			}
+		}
+		if !picked {
+			// No selectable gizmo remains; hide the active-gizmo border.
+			ui.GizmoIndicator.AsCanvasItem().SetVisible(false)
 		}
 	}
 }

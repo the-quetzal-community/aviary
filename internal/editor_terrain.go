@@ -9,6 +9,7 @@ import (
 	"graphics.gd/classdb/BoxShape3D"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/CollisionShape3D"
+	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/HeightMapShape3D"
@@ -18,6 +19,7 @@ import (
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
@@ -25,6 +27,7 @@ import (
 	"graphics.gd/classdb/StaticBody3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
+	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Color"
@@ -310,18 +313,93 @@ func (tr *TerrainEditor) tileRevealedAt(pos Vector3.XYZ) bool {
 
 func (fe *TerrainEditor) Name() string { return "terrain" }
 
+// brushGizmosForCurrentMode returns the set of gizmo buttons that should be
+// present in the toolbar for the terrain editor, based on which brush tool
+// (if any) is currently armed and the active mode. Texture painting and
+// dressing only expose the brush-size gizmo; terrain/river height tools
+// also expose the power gizmo.
+func (fe *TerrainEditor) brushGizmosForCurrentMode() []Gizmo {
+	if fe.client == nil || fe.client.ui == nil {
+		return nil
+	}
+	mode := fe.client.ui.mode
+
+	// Height/river sculpt tools (only relevant while in Geometry mode).
+	if mode == ModeGeometry && fe.TerrainBrush != "" {
+		return []Gizmo{GizmoBrush, GizmoPower}
+	}
+	// Texture painting: only the size control.
+	if fe.PaintActive {
+		return []Gizmo{GizmoBrush}
+	}
+	// Dressing: only the size control (density slider is separate).
+	if fe.DressActive {
+		return []Gizmo{GizmoBrush}
+	}
+	// A height brush may still be "parked" (see SelectDesign comment about
+	// not disarming it on texture pick). While not in Geometry it does not
+	// need the power gizmo; just expose size if anything brush-like is armed.
+	if fe.TerrainBrush != "" {
+		return []Gizmo{GizmoBrush}
+	}
+	return nil
+}
+
 func (fe *TerrainEditor) EnableEditor() {
-	// Terrain is a brush editor: it sculpts/paints the ground rather than
-	// selecting & transforming placed entities, so it offers only the brush
-	// tools. Declaring it here also makes the brush the active gizmo (the
-	// neutral Point tool is not in the set, so SetGizmos switches off it) —
-	// the brush-size slider anchors to GizmoBrush and the height-sculpt
-	// power slider anchors to GizmoPower.
-	fe.client.SetGizmos([]Gizmo{GizmoBrush, GizmoPower})
-	fe.shader.SetShaderParameter("brush_active", true)
-	fe.shader_buried.SetShaderParameter("brush_active", true)
 	fe.setArrowsVisible(true)
 	fe.lighting.apply(fe.client)
+	// Only show the terrain brush highlight overlay (ring) and the appropriate
+	// brush gizmo(s) when an actual brush tool has been selected. Texture
+	// painting and dressing only need the size (Brush) gizmo; height/river
+	// sculpt tools also get the power gizmo.
+	gizmos := fe.brushGizmosForCurrentMode()
+	if len(gizmos) > 0 {
+		fe.client.SetGizmos(gizmos)
+		fe.shader.SetShaderParameter("brush_active", true)
+		fe.shader_buried.SetShaderParameter("brush_active", true)
+	} else {
+		fe.client.SetGizmos(nil)
+	}
+	fe.syncBrushSliders()
+}
+
+// syncBrushSliders shows or hides the brush-related toolbar sliders
+// (size, density, power) according to the current brush state and mode.
+// It also toggles the terrain brush ring highlight (brush_active) so the
+// overlay only appears when a brush tool is selected for the active mode.
+func (fe *TerrainEditor) syncBrushSliders() {
+	if fe.client == nil || fe.client.ui == nil || fe.client.ui.CloudControl == nil {
+		return
+	}
+	ui := fe.client.ui
+	cc := ui.CloudControl
+	editing := fe.client.Editing == Editing.Terrain
+	mode := ui.mode
+	// A brush tool is "active for the current task" only when its mode matches.
+	// TerrainBrush (height/river) is only relevant in ModeGeometry.
+	// Paint is relevant in ModeMaterial once a texture has been selected (PaintActive).
+	// Dress is relevant in ModeDressing once a design has been selected.
+	hasPaint := fe.PaintActive
+	hasDress := (mode == ModeDressing) && fe.DressActive
+	hasGeomBrush := (mode == ModeGeometry) && (fe.TerrainBrush != "")
+	hasBrushForMode := hasPaint || hasDress || hasGeomBrush
+	cc.setSizeSliderVisible(editing && hasBrushForMode)
+	cc.setDensitySliderVisible(editing && mode == ModeDressing && hasDress)
+	cc.setPowerSliderVisible(editing && mode == ModeGeometry && hasGeomBrush)
+	// Keep the shader brush ring in sync with the current mode's brush state.
+	if editing && fe.shader != ShaderMaterial.Nil && fe.shader_buried != ShaderMaterial.Nil {
+		fe.shader.SetShaderParameter("brush_active", hasBrushForMode)
+		fe.shader_buried.SetShaderParameter("brush_active", hasBrushForMode)
+	}
+	// Keep the brush-related gizmo buttons (Brush size, and Power for height
+	// tools) correct for the current mode + armed brush. This makes tabbing
+	// between Geometry/Material/Dressing while a brush is armed show/hide the
+	// power button at the right times (e.g. no power button while painting
+	// textures, but it appears when you switch back to Geometry with a height
+	// brush selected).
+	if editing && fe.client.ui.CloudControl != nil {
+		fe.client.SetGizmos(fe.brushGizmosForCurrentMode())
+	}
 }
 
 func (fe *TerrainEditor) ChangeEditor() {
@@ -341,6 +419,13 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.TerrainBrush = ""
 	fe.brushStrokeActive = false
 	fe.setArrowsVisible(false)
+
+	// Make sure the toolbar gizmos + sliders reflect the cleared brush state.
+	// (CancelPaint has explicit teardown; ChangeEditor must also keep the UI
+	// chrome consistent when the editor itself is resetting brush state.)
+	if fe.client != nil && fe.client.Editing == Editing.Terrain {
+		fe.syncBrushSliders()
+	}
 }
 
 // setArrowsVisible toggles every existing chunk's extend + hide arrows and
@@ -495,6 +580,10 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	}
 	select {
 	case fe.texture <- Path.ToResource(String.New(design)):
+		// Mark paint as armed so EnableEditor shows the brush ring and
+		// brush/power gizmos immediately (the actual texture loads async
+		// in Process and sets the paint_active shader + BrushDesign).
+		fe.PaintActive = true
 		fe.EnableEditor()
 	default:
 	}
@@ -610,7 +699,8 @@ func (fe *TerrainEditor) refreshGizmoPowerSlider() {
 	if fe.client == nil || fe.client.ui == nil || fe.client.ui.CloudControl == nil {
 		return
 	}
-	if fe.client.Editing != Editing.Terrain || fe.client.ui.mode != ModeGeometry {
+	if fe.client.Editing != Editing.Terrain || fe.client.ui.mode != ModeGeometry || fe.TerrainBrush == "" {
+		fe.client.ui.CloudControl.setPowerSliderVisible(false)
 		return
 	}
 	fe.client.ui.CloudControl.setPowerSliderVisible(true)
@@ -747,6 +837,9 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 }
 
 func (tr *TerrainEditor) Paint() {
+	if tr.BrushDesign == "" {
+		return
+	}
 	tr.client.commitSculpt(musical.Sculpt{
 		Author: tr.client.id,
 		Target: tr.BrushTarget,
@@ -767,7 +860,54 @@ func (tr *TerrainEditor) CancelPaint() bool {
 	if tr.PaintActive {
 		tr.shader.SetShaderParameter("paint_active", false)
 		tr.PaintActive = false
+		tr.brushStrokeActive = false
 		active = true
+		// Drain any in-flight texture selection. If the user right-clicks to
+		// cancel texturing before the async load in Process completes, a
+		// late receive would otherwise re-arm PaintActive (and the paint
+		// preview) after the cancel, causing the brush ring/gizmo to reappear.
+		select {
+		case <-tr.texture:
+		default:
+		}
+		// Also clear the design so no stale reference remains.
+		tr.BrushDesign = ""
+		// Immediately tear down the brush gizmo button and size slider for
+		// the painting case. This guarantees the toolbar button disappears
+		// on right-click cancel even if later sync/force logic has ordering
+		// subtleties with parked brushes or UI refresh.
+		if tr.client != nil && tr.client.ui != nil && tr.client.ui.CloudControl != nil {
+			cc := tr.client.ui.CloudControl
+			cc.setSizeSliderVisible(false)
+			tr.client.SetGizmos(nil)
+			if cc.GizmoIndicator != TextureRect.Nil {
+				cc.GizmoIndicator.AsCanvasItem().SetVisible(false)
+			}
+			// Extra-targeted removal for the exact brush button.
+			if btn, ok := cc.gizmoButtons[GizmoBrush]; ok && btn != Control.Nil {
+				btn.AsCanvasItem().SetVisible(false)
+				if p := btn.AsNode().GetParent(); p != Node.Nil {
+					p.RemoveChild(btn.AsNode())
+				}
+				delete(cc.gizmoButtons, GizmoBrush)
+			}
+			// Sweep for any leftover "brush" named nodes.
+			vbox := cc.GizmoTypes.AsNode()
+			if vbox != Node.Nil {
+				for i := vbox.GetChildCount() - 1; i >= 0; i-- {
+					child := vbox.GetChild(i)
+					n := strings.ToLower(child.Name())
+					if strings.Contains(n, "brush") {
+						vbox.RemoveChild(child)
+						child.QueueFree()
+					}
+				}
+			}
+		}
+		// Also make sure the ring is off on the water shader for painting.
+		if tr.water_shader != ShaderMaterial.Nil {
+			tr.water_shader.SetShaderParameter("brush_active", false)
+		}
 	}
 	if tr.DressActive {
 		tr.DressActive = false
@@ -791,6 +931,32 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		// The active brush drove the GizmoPower slider; with none selected it
 		// falls back to the sculpt-power parameter.
 		tr.refreshGizmoPowerSlider()
+	}
+	if active {
+		tr.syncBrushSliders()
+	}
+	// When the user explicitly cancels the current brush task (right-click)
+	// while in the terrain editor, remove any brush-related gizmos and the
+	// active-gizmo indicator. This ensures that after right-clicking to cancel
+	// a just-selected terrain texture (or dressing/height brush), the overlay
+	// and buttons go away even if another brush type remains "parked" in the
+	// background state.
+	if active && tr.client != nil && tr.client.Editing == Editing.Terrain {
+		if tr.client.ui != nil && tr.client.ui.CloudControl != nil {
+			cc := tr.client.ui.CloudControl
+			tr.client.SetGizmos(nil)
+			if cc.GizmoIndicator != TextureRect.Nil {
+				cc.GizmoIndicator.AsCanvasItem().SetVisible(false)
+			}
+			// Targeted removal of the brush button in the general cancel path too.
+			if btn, ok := cc.gizmoButtons[GizmoBrush]; ok && btn != Control.Nil {
+				btn.AsCanvasItem().SetVisible(false)
+				if p := btn.AsNode().GetParent(); p != Node.Nil {
+					p.RemoveChild(btn.AsNode())
+				}
+				delete(cc.gizmoButtons, GizmoBrush)
+			}
+		}
 	}
 	return active
 }
@@ -1058,20 +1224,89 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 	}
+	// A height sculpt (no Design, nonzero Amount — raise/lower or a river carve)
+	// reshapes the ground, so anything sitting on the affected area must follow.
+	// Snapshot each placed object's height-above-terrain against the CURRENT
+	// surface before the tiles reload, so the deferred reprojection can re-seat
+	// them on the new surface (see reprojectObjects).
+	isHeight := brush.Design == (musical.Design{}) && brush.Amount != 0
+	var objectCaps []objectHeightCapture
+	if isHeight {
+		objectCaps = vr.captureObjectHeights(brush.Target, brush.Radius)
+	}
 	for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
 		tile.Sculpt(brush)
 	}
-	// A height sculpt (no Design) reshapes the ground, so any grass already
-	// scattered over the affected area must be re-planted on the new
-	// surface. Defer it so the tiles' deferred Reload has refreshed their
-	// heights before we re-sample HeightAt/NormalAt.
-	if brush.Design == (musical.Design{}) && brush.Amount != 0 && len(vr.grassPatches) > 0 {
+	// Grass + placed objects that were sitting on the old surface must be
+	// re-planted on the new one. Defer both so the tiles' deferred Reload has
+	// refreshed their heights before we re-sample HeightAt/NormalAt.
+	if isHeight && len(vr.grassPatches) > 0 {
 		target, radius := brush.Target, brush.Radius
 		Callable.Defer(Callable.New(func() {
 			vr.reprojectGrass(target, radius)
 		}))
 	}
+	if len(objectCaps) > 0 {
+		Callable.Defer(Callable.New(func() {
+			vr.reprojectObjects(objectCaps)
+		}))
+	}
 	return nil
+}
+
+// objectHeightCapture records one placed object's height above the terrain at the
+// moment a height sculpt (or its revert) begins. reprojectObjects re-seats the
+// object at terrain + delta once the reshaped heights are in place, so objects
+// ride raise/lower/river edits the same way grass does — keeping their relative
+// offset (sitting flush, embedded, or floating). Like grass, this is a
+// deterministic local consequence of the observable sculpt, applied identically
+// on every client, so it needs no separate musical mutation.
+type objectHeightCapture struct {
+	id    Node3D.ID
+	delta Float.X
+}
+
+// captureObjectHeights snapshots the height-above-terrain of every placed object
+// whose XZ lies within the brush disc, sampled against the CURRENT (pre-sculpt)
+// terrain. Call it before the tiles reload, then pair it with a deferred
+// reprojectObjects so the new surface is in place when the offsets are
+// re-applied. Objects at exactly the rim see no terrain change (the brush falloff
+// is 0 there), so including them is harmless.
+func (vr *TerrainEditor) captureObjectHeights(target Vector3.XYZ, radius Float.X) []objectHeightCapture {
+	if vr.client == nil || radius <= 0 {
+		return nil
+	}
+	r2 := float64(radius) * float64(radius)
+	var caps []objectHeightCapture
+	for _, id := range vr.client.entity_to_object {
+		node, ok := id.Instance()
+		if !ok {
+			continue
+		}
+		pos := node.Position()
+		dx := float64(pos.X - target.X)
+		dz := float64(pos.Z - target.Z)
+		if dx*dx+dz*dz > r2 {
+			continue
+		}
+		caps = append(caps, objectHeightCapture{id: id, delta: pos.Y - vr.HeightAt(pos)})
+	}
+	return caps
+}
+
+// reprojectObjects re-seats each captured object on the freshly reshaped terrain,
+// preserving the height-above-terrain recorded by captureObjectHeights. Only the
+// Y is touched, so an object's X/Z (and any deliberate user lift) are kept exactly.
+func (vr *TerrainEditor) reprojectObjects(caps []objectHeightCapture) {
+	for _, c := range caps {
+		node, ok := c.id.Instance()
+		if !ok {
+			continue
+		}
+		pos := node.Position()
+		pos.Y = vr.HeightAt(pos) + c.delta
+		node.SetPosition(pos)
+	}
 }
 
 // editStroke is one committed editor-level mutation (dressing / water level /
@@ -1117,6 +1352,10 @@ func (vr *TerrainEditor) revertSculpt(brush musical.Sculpt) {
 	default:
 		// Tile op (height / paint / river): toggle the stroke in every tile it
 		// touched and recompute those tiles from their surviving history.
+		// Snapshot object heights against the current surface before the recompute
+		// so a reverted height change re-seats them on the restored surface
+		// (mirrors the forward path in Sculpt; see reprojectObjects).
+		objectCaps := vr.captureObjectHeights(brush.Target, brush.Radius)
 		reverted := false
 		for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
 			if tile.revert(brush.Author, brush.Timing) {
@@ -1124,12 +1363,18 @@ func (vr *TerrainEditor) revertSculpt(brush musical.Sculpt) {
 				reverted = true
 			}
 		}
-		// A height change moves grass; re-plant it after the tiles recompute
-		// (deferred so the new heights are in place), mirroring the forward path.
+		// A height change moves grass + placed objects; re-seat them after the
+		// tiles recompute (deferred so the new heights are in place), mirroring
+		// the forward path.
 		if reverted && len(vr.grassPatches) > 0 {
 			target, radius := brush.Target, brush.Radius
 			Callable.Defer(Callable.New(func() {
 				vr.reprojectGrass(target, radius)
+			}))
+		}
+		if reverted && len(objectCaps) > 0 {
+			Callable.Defer(Callable.New(func() {
+				vr.reprojectObjects(objectCaps)
 			}))
 		}
 	}

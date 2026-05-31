@@ -926,6 +926,16 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
+				// While terrain editing the left button paints the ground
+				// (TerrainTile.InputEvent); don't let it select or gizmo-grab
+				// placed objects. This guard is required even though those
+				// objects are made non-pickable in terrain mode: that only
+				// gates Godot's viewport picking (the brush), whereas the
+				// selection query below is an explicit intersect_ray that
+				// ignores input_ray_pickable and would still hit them.
+				if world.Editing == Editing.Terrain {
+					break
+				}
 				cam := Viewport.Get(world.AsNode()).GetCamera3d()
 				space_state := world.AsNode3D().GetWorld3d().DirectSpaceState()
 				mpos_2d := Viewport.Get(world.AsNode()).GetMousePosition()

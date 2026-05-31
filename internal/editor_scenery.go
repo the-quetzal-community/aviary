@@ -35,7 +35,8 @@ func (*SceneryEditor) Views() []string          { return nil }
 func (*SceneryEditor) SwitchToView(view string) {}
 
 func (editor *SceneryEditor) Ready() {
-	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.1))
+	editor.Preview.defaultScale = Vector3.New(0.1, 0.1, 0.1)
+	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
 }
 
 func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
@@ -82,10 +83,12 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 		Angles: editor.Preview.AsNode3D().Rotation(),
 		// Carry the preview's scale forward so a duplicate-from-
 		// selection preserves the source's user-scaled size. For a
-		// fresh placement Preview.Scale() is the 0.1 default set in
-		// Ready, so the inline branch of musicalImpl.Change still
-		// lands the node at scale 0.1 — same result as the
-		// pre-duplicate behaviour.
+		// fresh placement the value has been adjusted (in
+		// PreviewRenderer.attach) to include both the editor default
+		// (0.1) and any intrinsic root scale from the design (Kenney
+		// "preset scale" models ship .scn with non-1 root scales).
+		// The musical Change path then uses this as the absolute
+		// root scale for the placed entity so it matches the preview.
 		Bounds: editor.Preview.AsNode3D().Scale(),
 		Commit: true,
 	}
@@ -209,6 +212,7 @@ func (editor *SceneryEditor) PreviewOverDropZone() bool {
 func (editor *SceneryEditor) SetPreviewTransform(rot Euler.Radians, scale Vector3.XYZ) {
 	editor.Preview.AsNode3D().SetRotation(rot)
 	editor.Preview.AsNode3D().SetScale(scale)
+	editor.Preview.hasExplicitScale = true
 }
 
 // ClearPreview is the design-explorer drag flow's escape hatch for a

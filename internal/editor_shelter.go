@@ -59,7 +59,8 @@ func (editor *ShelterEditor) Ready() {
 	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
 
 	editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
-	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.2))
+	editor.Preview.defaultScale = Vector3.New(0.2, 0.2, 0.2)
+	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
 }
 
 func (editor *ShelterEditor) Views() []string {
@@ -260,7 +261,8 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			SetRotation(change.Angles)
 		// Apply explicit Bounds if present (scale gizmo); otherwise
 		// leave whatever scale the instance already has so translate/
-		// twist edits don't stomp the creation-time 0.2 factor.
+		// twist edits don't stomp the creation-time 0.2 factor (which
+		// already incorporates any design root "preset scale").
 		if change.Bounds != Vector3.Zero {
 			exists.SetScale(change.Bounds)
 		}

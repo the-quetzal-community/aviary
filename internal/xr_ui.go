@@ -616,6 +616,11 @@ func (world *Client) vrPointerClickPanel(panelView SubViewport.Instance, pixel V
 // Gizmo-drag arming is desktop-only for now; the VR equivalent will
 // land in a follow-up.
 func (world *Client) vrSceneSelectFromController(controller Node3D.Instance) {
+	// Terrain mode never selects placed objects (the trigger sculpts the
+	// ground instead), matching the desktop left-click guard.
+	if world.Editing == Editing.Terrain {
+		return
+	}
 	t := controller.AsNode3D().GlobalTransform()
 	rayFrom := t.Origin
 	// Basis.Z points along the controller's local +Z in world

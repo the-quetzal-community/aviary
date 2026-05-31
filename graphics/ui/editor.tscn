@@ -329,13 +329,14 @@ offset_bottom = 135.006
 scale = Vector2(0.9625, 0.9625)
 mouse_filter = 2
 
-[node name="Triangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
+[node name="ModeTriangle" type="Triangle" parent="CloudControl" unique_id=1081904302]
 color = Color(0.27728483, 0.27728483, 0.27728483, 1)
+unique_name_in_owner = true
 layout_mode = 0
 offset_left = 175.83398
-offset_top = 266.10977
+offset_top = 266.10983
 offset_right = 383.1838
-offset_bottom = 443.20792
+offset_bottom = 443.20798
 scale = Vector2(-0.58189374, -0.58189374)
 
 [node name="ModeGeometry" type="TextureButton" parent="CloudControl" unique_id=683549109]
@@ -721,9 +722,8 @@ anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -400.0
 offset_top = -920.0
-offset_right = 0.0
 grow_horizontal = 0
-scale = Vector2(0.5, 0.5)
+scale = Vector2(0.9625, 0.9625)
 pivot_offset = Vector2(400, 0)
 theme = ExtResource("1_hi2iw")
 theme_override_styles/panel = ExtResource("14_nqww0")

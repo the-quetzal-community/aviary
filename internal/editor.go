@@ -114,11 +114,26 @@ func (world *Client) StartEditing(subject Subject) {
 		// The terrain brush-size slider lives in the gizmo toolbar and is
 		// only relevant while sculpting/painting/dressing terrain. The
 		// density slider is shown only while dressing.
-		world.ui.CloudControl.setSizeSliderVisible(subject == Editing.Terrain)
+		te := world.TerrainEditor
+		hasBrush := subject == Editing.Terrain && (te.PaintActive || te.DressActive || te.TerrainBrush != "")
+		world.ui.CloudControl.setSizeSliderVisible(hasBrush)
 		world.TerrainEditor.SetWaterVisible(subject == Editing.Terrain || subject == Editing.Scenery)
-		world.ui.CloudControl.setDensitySliderVisible(subject == Editing.Terrain && world.ui.mode == ModeDressing)
-		world.ui.CloudControl.setPowerSliderVisible(subject == Editing.Terrain && world.ui.mode == ModeGeometry)
+		world.ui.CloudControl.setDensitySliderVisible(subject == Editing.Terrain && world.ui.mode == ModeDressing && te.DressActive)
+		world.ui.CloudControl.setPowerSliderVisible(subject == Editing.Terrain && world.ui.mode == ModeGeometry && te.TerrainBrush != "")
 	}
+	// In terrain mode placed objects must be transparent to the cursor:
+	// they can't be selected and they must not block the terrain brush
+	// raycast (so the ground can be painted underneath them). Make them
+	// non-pickable here and pickable again in every other mode. Also drop
+	// any carried-over selection so its outline/gizmo don't linger.
+	setPickableExceptTerrain(world.AsNode(), subject != Editing.Terrain)
+	if subject == Editing.Terrain && world.selection != 0 {
+		if node, ok := world.selection.Instance(); ok {
+			Select(node.AsNode(), false)
+		}
+		world.selection = 0
+	}
+
 	UserState.Editor = subject
 	world.saveUserState()
 }

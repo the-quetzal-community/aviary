@@ -14,6 +14,7 @@ import (
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
+	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Label"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
@@ -78,6 +79,7 @@ type UI struct {
 	ModeGeometry TextureButton.Instance `gd:"%ModeGeometry"`
 	ModeMaterial TextureButton.Instance `gd:"%ModeMaterial"`
 	ModeDressing TextureButton.Instance `gd:"%ModeDressing"`
+	ModeTriangle *Triangle              `gd:"%ModeTriangle"`
 
 	CloudControl *CloudControl
 	ViewSelector *ViewSelector
@@ -464,11 +466,22 @@ func (ui *UI) SetMode(mode Mode) {
 	}
 	ui.mode = mode
 	ui.Editor.Refresh(ui.client.Editing, "", ui.mode)
-	if ui.CloudControl != nil {
-		// The dressing-density and height-power sliders are each only relevant
-		// in their own mode; mirror the editor gates used in StartEditing.
-		ui.CloudControl.setDensitySliderVisible(ui.client.Editing == Editing.Terrain && mode == ModeDressing)
-		ui.CloudControl.setPowerSliderVisible(ui.client.Editing == Editing.Terrain && mode == ModeGeometry)
+	if ui.client != nil && ui.client.Editing == Editing.Terrain {
+		ui.client.TerrainEditor.syncBrushSliders()
+	}
+}
+
+// cycleMode advances to the next editing mode (Geometry → Material → Dressing → Geometry),
+// exactly as the Tab key does. Both Tab and clicks on the background of the mode switcher
+// triangle (the ModeTriangle behind the three mode icons) invoke this.
+func (ui *UI) cycleMode() {
+	switch ui.mode {
+	case ModeGeometry:
+		ui.SetMode(ModeMaterial)
+	case ModeMaterial:
+		ui.SetMode(ModeDressing)
+	case ModeDressing:
+		ui.SetMode(ModeGeometry)
 	}
 }
 
@@ -531,14 +544,7 @@ func (ui *UI) Input(event InputEvent.Instance) {
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() {
 			if event.Keycode() == Input.KeyTab {
-				switch ui.mode {
-				case ModeGeometry:
-					ui.SetMode(ModeMaterial)
-				case ModeMaterial:
-					ui.SetMode(ModeDressing)
-				case ModeDressing:
-					ui.SetMode(ModeGeometry)
-				}
+				ui.cycleMode()
 			}
 			// Ctrl+Z = undo, Ctrl+Shift+Z (or Ctrl+Y) = redo. We
 			// intentionally don't gate on focus — there's no text
@@ -559,27 +565,50 @@ func (ui *UI) Input(event InputEvent.Instance) {
 	}
 }
 
-// undo runs the client's undo and spins the Undo button one full turn
-// counter-clockwise (matching the icon's arrow direction). Shared by the
-// toolbar button and the Ctrl+Z keyboard shortcut so both animate.
+// undo attempts the client's undo. If an entry was reversed it spins the
+// Undo button one full counter-clockwise turn (matching the circular arrow
+// icon). If the undo stack was empty, it instead performs a short forward
+// nudge then back animation so the button always reacts to presses while
+// visually signalling that nothing further can be undone. The same handler
+// is used for both the toolbar button and the Ctrl+Z shortcut.
 func (ui *UI) undo() {
-	spinFull(ui.Toolbar.Undo.AsControl(), &ui.undoSpin, -1)
+	did := false
 	if ui.client != nil {
-		ui.client.Undo()
+		did = ui.client.Undo()
+	}
+	if did {
+		spinFull(ui.Toolbar.Undo.AsControl(), &ui.undoSpin, -1)
+	} else {
+		spinNudge(ui.Toolbar.Undo.AsControl(), &ui.undoSpin, -1)
 	}
 }
 
-// redo mirrors [UI.undo], spinning the Redo button one full turn clockwise.
+// redo mirrors [UI.undo] for the opposite direction and Ctrl+Y / Ctrl+Shift+Z.
 func (ui *UI) redo() {
-	spinFull(ui.Toolbar.Redo.AsControl(), &ui.redoSpin, 1)
+	did := false
 	if ui.client != nil {
-		ui.client.Redo()
+		did = ui.client.Redo()
+	}
+	if did {
+		spinFull(ui.Toolbar.Redo.AsControl(), &ui.redoSpin, 1)
+	} else {
+		spinNudge(ui.Toolbar.Redo.AsControl(), &ui.redoSpin, 1)
 	}
 }
 
 // spinDuration is the slide length of one full-turn icon spin, shared by the
 // toolbar buttons and the rollout indicators.
 const spinDuration = 0.4
+
+// nudge* control the "nothing left to undo/redo" affordance: the button
+// rotates a fraction of a turn in the natural direction then returns to
+// rest, over a total of ~0.3s. The angle is large enough to read as an
+// intentional "try" but clearly not a completed action.
+const (
+	nudgeAngle   = 0.75 // radians (~43°)
+	nudgeOutDur  = 0.12
+	nudgeBackDur = 0.18
+)
 
 // spinFull spins ctrl one full turn about its center over spinDuration.
 // screenDir is the desired on-screen direction: +1 clockwise, -1
@@ -588,24 +617,13 @@ func spinFull(ctrl Control.Instance, st *spinState, screenDir Float.X) {
 	spinControl(ctrl, st, screenDir*2*math.Pi, spinDuration)
 }
 
-// spinControl tweens ctrl by screenDelta radians (signed; + = clockwise on
-// screen) about its own center over duration, leaving it at restingTilt +
-// screenDelta.
-//
-// Several of these controls rest at a designed tilt in the scene (e.g. the
-// Redo button at ~-75°), so the resting angle is cached in st on first use
-// and every spin starts from it — a full turn then lands on rest±2π, which
-// is visually identical to rest, instead of snapping the icon upright. The
-// cache also means a spin retriggered mid-animation still resolves to the
-// designed orientation rather than drifting.
-//
-// Pinning the pivot to the center moves an already-rotated/scaled rect, so
-// the position is compensated by the displacement (I - R·S)·Δpivot — R the
-// resting rotation, S the scale — to keep the control visually put (zero
-// for an axis-aligned, unscaled control). A mirrored (negative-determinant)
-// control additionally has its delta flipped so the visible spin still goes
-// the requested way.
-func spinControl(ctrl Control.Instance, st *spinState, screenDelta, duration Float.X) {
+// spinPrepare captures the control's authored rest rotation (if not already
+// known) and re-pivots it about its center while translating to keep the
+// visual position unchanged. All spin animations call this first so that
+// the subsequent rotation tweens orbit the icon's own centre rather than
+// its top-left (or authored pivot). After prepare the control sits at its
+// rest angle, ready for a delta tween.
+func spinPrepare(ctrl Control.Instance, st *spinState) {
 	if ctrl == Control.Nil {
 		return
 	}
@@ -629,6 +647,19 @@ func spinControl(ctrl Control.Instance, st *spinState, screenDelta, duration Flo
 	ctrl.SetPosition(Vector2.Sub(ctrl.Position(), shift))
 	ctrl.SetPivotOffset(center)
 	ctrl.SetRotation(st.rest)
+}
+
+// spinControl tweens ctrl by screenDelta radians (signed; + = clockwise on
+// screen) about its own center over duration, leaving it at rest + delta.
+// See spinPrepare for the pivot math and why we cache rest. A mirrored
+// (negative-determinant) control has its delta flipped so the visible spin
+// still goes the requested way.
+func spinControl(ctrl Control.Instance, st *spinState, screenDelta, duration Float.X) {
+	if ctrl == Control.Nil {
+		return
+	}
+	spinPrepare(ctrl, st)
+	scale := ctrl.Scale()
 	if scale.X*scale.Y < 0 {
 		screenDelta = -screenDelta
 	}
@@ -636,6 +667,28 @@ func spinControl(ctrl Control.Instance, st *spinState, screenDelta, duration Flo
 		ctrl.AsNode().CreateTween(), ctrl.AsObject(),
 		"rotation", st.rest+screenDelta, duration,
 	).SetEase(Tween.EaseOut)
+}
+
+// spinNudge implements the failure affordance for Undo/Redo: the control
+// is nudged a short distance in the requested screenDir then tweened back
+// to its exact rest orientation using two sequential tweens on the same
+// Tween instance. This produces the "tries to spin but spins back" motion
+// without leaving the button rotated.
+func spinNudge(ctrl Control.Instance, st *spinState, screenDir Float.X) {
+	if ctrl == Control.Nil {
+		return
+	}
+	spinPrepare(ctrl, st)
+	scale := ctrl.Scale()
+	if scale.X*scale.Y < 0 {
+		screenDir = -screenDir
+	}
+	nudge := screenDir * nudgeAngle
+	tw := ctrl.AsNode().CreateTween()
+	PropertyTweener.Make(tw, ctrl.AsObject(), "rotation", st.rest+nudge, nudgeOutDur).
+		SetEase(Tween.EaseOut)
+	PropertyTweener.Make(tw, ctrl.AsObject(), "rotation", st.rest, nudgeBackDur).
+		SetEase(Tween.EaseIn)
 }
 
 func (ui *UI) Ready() {
@@ -651,6 +704,19 @@ func (ui *UI) Ready() {
 	ui.ModeDressing.AsBaseButton().OnPressed(func() {
 		ui.SetMode(ModeDressing)
 	})
+
+	if ui.ModeTriangle != nil {
+		ui.ModeTriangle.AsControl().SetMouseFilter(Control.MouseFilterStop)
+		ui.ModeTriangle.AsControl().OnGuiInput(func(event InputEvent.Instance) {
+			if mb, ok := Object.As[InputEventMouseButton.Instance](event); ok {
+				if mb.ButtonIndex() == Input.MouseButtonLeft && mb.AsInputEvent().IsPressed() {
+					ui.cycleMode()
+					ui.ModeTriangle.AsControl().AcceptEvent()
+				}
+			}
+		})
+	}
+
 	Callable.Defer(Callable.New(func() {
 		for _, m := range []Mode{ModeGeometry, ModeMaterial, ModeDressing} {
 			b := ui.modeButton(m)

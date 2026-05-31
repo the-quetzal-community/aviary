@@ -50,8 +50,10 @@ func (editor *VehicleEditor) Ready() {
 	base := LoadSync[PackedScene.Is[Node.Instance]]("res://base.obj")
 	instance := base.Instantiate()
 	editor.AsNode().AddChild(instance)
-	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), 0.3))
-	editor.MirrorPreview.AsNode3D().SetScale(Vector3.MulX(editor.MirrorPreview.AsNode3D().Scale(), 0.3))
+	editor.Preview.defaultScale = Vector3.New(0.3, 0.3, 0.3)
+	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
+	editor.MirrorPreview.defaultScale = Vector3.New(0.3, 0.3, 0.3)
+	editor.MirrorPreview.AsNode3D().SetScale(editor.MirrorPreview.defaultScale)
 	scale := editor.MirrorPreview.AsNode3D().Scale()
 	scale.X = -scale.X
 	editor.MirrorPreview.SetScale(scale)
@@ -242,6 +244,7 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 		// keep the creation-time 0.3 factor (or the mirror's sign-
 		// flipped variant). Mirror parts get their own scale through
 		// remirror(); the scale gizmo only edits the main entity.
+		// The factor path includes any intrinsic root scale from the design.
 		if change.Bounds != Vector3.Zero {
 			exists.SetScale(change.Bounds)
 		}

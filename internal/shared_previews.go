@@ -11,6 +11,7 @@ import (
 	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Transform3D"
+	"graphics.gd/variant/Vector3"
 )
 
 type PreviewRenderer struct {
@@ -22,6 +23,14 @@ type PreviewRenderer struct {
 	// (or cleared the preview) can detect it's stale and drop its result
 	// instead of attaching the wrong mesh.
 	gen int
+
+	// defaultScale is the editor-specific "library placement" factor
+	// (0.1 for scenery, 0.2 for shelter, etc.) captured in Ready.
+	// hasExplicitScale is true after DuplicateSelection copies a
+	// user-modified scale; it prevents re-folding intrinsic scales
+	// from the design and tells SetDesign to preserve the explicit value.
+	defaultScale     Vector3.XYZ
+	hasExplicitScale bool
 }
 
 func (preview *PreviewRenderer) Design() string {
@@ -31,6 +40,10 @@ func (preview *PreviewRenderer) Design() string {
 func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 	preview.design = design
 	preview.gen++
+	preview.hasExplicitScale = false
+	if preview.defaultScale != (Vector3.XYZ{}) {
+		preview.AsNode3D().SetScale(preview.defaultScale)
+	}
 	gen := preview.gen
 	// Clear the previous preview immediately so the old design doesn't
 	// linger while the new one loads.
@@ -82,6 +95,25 @@ func (preview *PreviewRenderer) attach(instance Node3D.Instance, gen int) {
 	}
 	preview.remove_collisions(instance.AsNode())
 	preview.AsNode().AddChild(instance.AsNode())
+
+	// Normalize the freshly instantiated design root to scale 1, folding
+	// any non-1 root scale ("preset scale") that the design (e.g. a
+	// Kenney .scn) carries into the scale tracked on the PreviewRenderer
+	// node itself. This makes the value exposed via .Scale() (and later
+	// passed as Change.Bounds or copied via DuplicateSelection) the
+	// correct absolute scale to apply to a new root on placement, so the
+	// placed model matches the size the user saw in the preview.
+	//
+	// Only for !hasExplicitScale (i.e. fresh picks from the library, not
+	// duplicates of a user-scaled entity) do we multiply the editor's
+	// default factor by the intrinsic. Explicit scales are already final.
+	s := instance.Scale()
+	instance.SetScale(Vector3.New(1, 1, 1))
+	if !preview.hasExplicitScale {
+		if pscale := preview.AsNode3D().Scale(); pscale != Vector3.One && pscale != (Vector3.XYZ{}) {
+			preview.AsNode3D().SetScale(Vector3.Mul(pscale, s))
+		}
+	}
 }
 
 func (preview *PreviewRenderer) Remove() {
@@ -90,6 +122,7 @@ func (preview *PreviewRenderer) Remove() {
 		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
 	}
 	preview.design = ""
+	preview.hasExplicitScale = false
 }
 
 func (preview *PreviewRenderer) AABB() (bounds AABB.PositionSize) {
@@ -114,5 +147,29 @@ func (preview *PreviewRenderer) remove_collisions(node Node.Instance) {
 	}
 	for _, child := range node.GetChildren() {
 		preview.remove_collisions(child)
+	}
+}
+
+// setPickableExceptTerrain walks node and its descendants, toggling
+// input_ray_pickable on every CollisionObject3D. This gates Godot's
+// viewport physics picking, which is what drives TerrainTile.InputEvent
+// (the terrain brush): with placed objects made non-pickable the brush
+// ray passes straight through scenery/shelters/etc. and lands on the
+// ground underneath, so terrain can be painted below placed objects.
+//
+// TerrainTile (and the extend/retract arrows nested under it) are
+// skipped — they are the only nodes that actually consume viewport
+// picking, and must stay pickable so sculpting and world-extension keep
+// working. Selection and preview placement use explicit intersect_ray
+// queries, which ignore input_ray_pickable, so this never affects them.
+func setPickableExceptTerrain(node Node.Instance, pickable bool) {
+	if Object.Is[*TerrainTile](node) || Object.Is[*TerrainTileArrow](node) {
+		return
+	}
+	if body, ok := Object.As[CollisionObject3D.Instance](node); ok {
+		body.SetInputRayPickable(pickable)
+	}
+	for _, child := range node.GetChildren() {
+		setPickableExceptTerrain(child, pickable)
 	}
 }

@@ -62,7 +62,8 @@ func (editor *CoasterEditor) Ready() {
 	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
 	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)
 	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
-	editor.Preview.AsNode3D().SetScale(Vector3.MulX(editor.Preview.AsNode3D().Scale(), coasterPieceScale))
+	editor.Preview.defaultScale = Vector3.New(coasterPieceScale, coasterPieceScale, coasterPieceScale)
+	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
 }
 
 func (*CoasterEditor) Name() string { return "coaster" }

@@ -386,13 +386,16 @@ func (world *Client) updateGizmoDrag() {
 		newPos.Z = Float.Round(newPos.Z)
 	}
 
-	// For scenery objects, gizmoShift moves should follow the terrain surface:
-	// the horizontal (X/Z) translation is computed on the original drag plane
-	// (for consistent mouse feel), then Y is sampled from the terrain height
-	// map at the resulting (X, Z). This makes objects slide up and down hills
-	// instead of staying at a constant world Y.
+	// For scenery objects, gizmoShift moves follow the terrain surface while
+	// preserving whatever lift the object had when the drag started, so a
+	// model raised with GizmoFloat doesn't snap back to the ground when you
+	// slide it sideways. We store Y as a terrain-relative *delta* (Editor
+	// "float") rather than an absolute world Y: the horizontal (X/Z)
+	// translation rides the terrain and the lift is carried on top of it
+	// (and keeps riding later terrain edits, exactly like a pure float).
 	if world.Editing == Editing.Scenery {
-		newPos.Y = world.TerrainEditor.HeightAt(newPos)
+		startTerrainY := world.TerrainEditor.HeightAt(Vector3.New(world.gizmoDrag.startPos.X, 0, world.gizmoDrag.startPos.Z))
+		newPos.Y = world.gizmoDrag.startPos.Y - startTerrainY
 	}
 
 	// Preserve whatever rotation the object currently has.
@@ -404,6 +407,9 @@ func (world *Client) updateGizmoDrag() {
 		Offset: newPos,
 		Angles: rot,
 		Commit: false, // live preview during drag
+	}
+	if world.Editing == Editing.Scenery {
+		ch.Editor = "float" // Offset.Y is a terrain-relative lift delta
 	}
 	world.stampRouting(&ch)
 
@@ -616,21 +622,22 @@ func (world *Client) commitGizmoDrag() {
 	// For a pure float (vertical) drag we just need to make sure the
 	// final lifted Y is stored in the (already stamped + mirrored) musical
 	// Change and let the common send + undo recording path handle it.
-	if world.gizmoDrag.activeGizmo == GizmoFloat {
-		// For scenery, store the lift as a *delta* relative to current
-		// terrain HeightAt so it rides terrain edits. Use Editor="float"
-		// as marker (scenery apply path will interpret Offset.Y as delta).
+	// Scenery objects store their height as a *delta* above the terrain
+	// (Editor="float") so they ride terrain edits. Apply this for a vertical
+	// float *and* a horizontal shift, so moving a lifted model sideways keeps
+	// its lift instead of snapping it to the ground. (Twist and Scale return
+	// earlier, so only Float/Shift reach this point.)
+	if world.Editing == Editing.Scenery &&
+		(world.gizmoDrag.activeGizmo == GizmoFloat || world.gizmoDrag.activeGizmo == GizmoShift) {
 		current := node.AsNode3D().Position()
-		if world.Editing == Editing.Scenery {
-			xz := Vector3.New(current.X, 0, current.Z)
-			terrainY := world.TerrainEditor.HeightAt(xz)
-			delta := current.Y - terrainY
-			ch.Offset.Y = delta
-			ch.Editor = "float"
-		} else {
-			ch.Offset.Y = current.Y
-		}
+		xz := Vector3.New(current.X, 0, current.Z)
+		terrainY := world.TerrainEditor.HeightAt(xz)
+		ch.Offset.Y = current.Y - terrainY
+		ch.Editor = "float"
 		// Fall through for common send + Record.
+	} else if world.gizmoDrag.activeGizmo == GizmoFloat {
+		// Non-scenery float: keep the absolute lifted Y (already in ch.Offset).
+		ch.Offset.Y = node.AsNode3D().Position().Y
 	}
 
 	if err := world.space.Change(ch); err != nil {
