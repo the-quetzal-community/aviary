@@ -596,6 +596,12 @@ func (world *Client) applyCoverDefault() {
 
 const speed = 8
 
+// cameraTerrainClearance is how far above the terrain the camera is held when it
+// would otherwise sink into the ground. The camera-terrain collision keeps the
+// view from burrowing through hills while still letting it drop below the water
+// surface (water is not terrain), so a small clearance keeps it just clear.
+const cameraTerrainClearance Float.X = 0.5
+
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
 
@@ -605,10 +611,34 @@ func (world *Client) Process(dt Float.X) {
 	// where the floor is below the surface; otherwise (lens inside a hill) it
 	// fills with rock, so going below the water plane into the ground reads as
 	// being buried rather than underwater.
-	if world.underwater != (ShaderMaterial.Instance{}) && world.TerrainEditor != nil {
-		camPos := world.FocalPoint.Lens.Camera.AsNode3D().GlobalPosition()
-		world.underwater.SetShaderParameter("water_level", float64(world.TerrainEditor.WaterSurfaceAt(camPos)))
-		world.underwater.SetShaderParameter("terrain_level", float64(world.TerrainEditor.HeightAt(camPos)))
+	if world.TerrainEditor != nil {
+		camNode := world.FocalPoint.Lens.Camera.AsNode3D()
+		camPos := camNode.GlobalPosition()
+		// Camera-terrain collision: stop the camera descending into the ground.
+		// FocalPoint Y is a pure vertical offset on the rig, so we lift it just
+		// enough that the camera rides at/above the terrain floor under it,
+		// recomputed every frame so it settles back down over lower ground.
+		// HeightAt is the terrain (not the water) surface, so the camera can
+		// still drop below the water plane and go underwater. Skipped in XR and
+		// while an editor owns the camera (e.g. the critter control view).
+		if !world.xr && !world.controlLockMovement {
+			fp := world.FocalPoint.AsNode3D()
+			fpPos := fp.Position()
+			camGroundY := camPos.Y - fpPos.Y // camera Y with the rig on the ground
+			lift := world.TerrainEditor.HeightAt(camPos) + cameraTerrainClearance - camGroundY
+			if lift < 0 {
+				lift = 0
+			}
+			if lift != fpPos.Y {
+				fpPos.Y = lift
+				fp.SetPosition(fpPos)
+				camPos = camNode.GlobalPosition()
+			}
+		}
+		if world.underwater != (ShaderMaterial.Instance{}) {
+			world.underwater.SetShaderParameter("water_level", float64(world.TerrainEditor.WaterSurfaceAt(camPos)))
+			world.underwater.SetShaderParameter("terrain_level", float64(world.TerrainEditor.HeightAt(camPos)))
+		}
 	}
 
 	if world.member && time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
