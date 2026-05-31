@@ -872,6 +872,14 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 // are spawned lazily as sculpts land in them.
 const terrainDefaultSize = 16
 
+// worldFloorY is the single Y at which the world bottoms out: the terrain skirt
+// and the water-body walls both stop here, and the terrain top is clamped to it
+// in terrain.gdshader (max(VERTEX.y, -2.0)). A river can carve heights below it,
+// but nothing renders past it — so clamping the skirt + water column to this
+// floor keeps them aligned and stops the water hanging in the void below the
+// terrain where a channel is dug to the minimum.
+const worldFloorY float32 = -2.0
+
 // Builtin terrain brush sentinels for the procedural:// convention used
 // by BuiltinDesignProvider. These are the "builtin-aviary" items that
 // appear in the "terrain" tab under ModeGeometry for the TerrainEditor.
@@ -1502,21 +1510,24 @@ func (tile *TerrainTile) reloadSides() {
 				h_near = tile.heights[sp.fixedIndex+coord*hm]
 				h_far = tile.heights[sp.fixedIndex+(coord+1)*hm]
 			}
-			h_near += 2.2
-			h_far += 2.2
+			// Clamp the skirt top to the world floor so a deeply-carved river bed
+			// (heights can fall below it) can't invert the wall; matches the
+			// terrain top's max(VERTEX.y, worldFloorY) clamp in terrain.gdshader.
+			h_near = max(worldFloorY, h_near) + 2.2
+			h_far = max(worldFloorY, h_far) + 2.2
 			pos_near := float32(i)
 			pos_far := float32(i + 1)
 			var tl, tr, bl, br Vector3.XYZ
 			if sp.isZFixed {
 				tl = Vector3.XYZ{pos_near, h_near, sp.fixed}
 				tr = Vector3.XYZ{pos_far, h_far, sp.fixed}
-				bl = Vector3.XYZ{pos_near, 0, sp.fixed}
-				br = Vector3.XYZ{pos_far, 0, sp.fixed}
+				bl = Vector3.XYZ{pos_near, worldFloorY, sp.fixed}
+				br = Vector3.XYZ{pos_far, worldFloorY, sp.fixed}
 			} else {
 				tl = Vector3.XYZ{sp.fixed, h_near, pos_near}
 				tr = Vector3.XYZ{sp.fixed, h_far, pos_far}
-				bl = Vector3.XYZ{sp.fixed, 0, pos_near}
-				br = Vector3.XYZ{sp.fixed, 0, pos_far}
+				bl = Vector3.XYZ{sp.fixed, worldFloorY, pos_near}
+				br = Vector3.XYZ{sp.fixed, worldFloorY, pos_far}
 			}
 			var v1, v2 Vector3.XYZ
 			if sp.flippedWinding {

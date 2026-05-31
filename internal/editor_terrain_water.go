@@ -429,13 +429,15 @@ func (tile *TerrainTile) reloadWater() {
 					gnx, gnz = sp.fixedIndex, i
 					gfx, gfz = sp.fixedIndex, i+1
 				}
-				// Terrain floor at the two edge grid points. Read exactly like
-				// reloadSides()'s h_near/h_far but WITHOUT the +2.2 buried offset
-				// (water uses raw world heights).
-				var floorNear, floorFar float32 = -2.0, -2.0
+				// Terrain floor at the two edge grid points, clamped to the world
+				// floor (a carved bed can fall below it) so the column bottoms out
+				// where the skirt + rendered terrain top also stop, rather than
+				// hanging in the void below the world. Like reloadSides()'s
+				// h_near/h_far but WITHOUT the +2.2 buried offset (raw world Y).
+				floorNear, floorFar := worldFloorY, worldFloorY
 				if hasHeights {
-					floorNear = tile.heights[gnx+gnz*hm]
-					floorFar = tile.heights[gfx+gfz*hm]
+					floorNear = max(worldFloorY, tile.heights[gnx+gnz*hm])
+					floorFar = max(worldFloorY, tile.heights[gfx+gfz*hm])
 				}
 				// Per-edge water surface (matches the plane edge so the wall
 				// stays connected) and flow, so a river that reaches the tile
@@ -444,11 +446,10 @@ func (tile *TerrainTile) reloadWater() {
 				topFarS, ffx, ffz := waterAt(gfx, gfz)
 				topNear := float32(topNearS)
 				topFar := float32(topFarS)
-				// Sit the wall bottom on the terrain bed at this edge (the lower
-				// of the two edge floors) so the column reaches the bed without
-				// dangling below it. The old -2 skirt floor pushed the ribbon
-				// below the terrain wherever the bed sat above -2 — e.g. a river
-				// carved into raised ground, where nothing occludes the overhang.
+				// Sit the wall bottom on the terrain bed at this edge (the lower of
+				// the two floor-clamped edges): it reaches the bed without dangling
+				// below it for a river in raised ground, and bottoms out at the
+				// world floor for one carved to the minimum (matching the skirt).
 				bottom := min(floorNear, floorFar)
 				// Nudge the wall fractionally inboard of the terrain skirt
 				// (which sits on the exact edge) so the coplanar walls don't
