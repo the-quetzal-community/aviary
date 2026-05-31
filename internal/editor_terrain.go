@@ -1369,7 +1369,11 @@ func (tile *TerrainTile) reveal() {
 	tile.revealed = true
 	tile.applyRevealState()
 	// We now count as a neighbour: drop the shared wall + extend arrow on each
-	// already-revealed neighbour and refresh its sides.
+	// already-revealed neighbour and refresh BOTH its terrain skirt and its
+	// water sides. Both select exposed edges via exposedSides(), so the water
+	// wall on the now-internal edge must be rebuilt too — otherwise it lingers
+	// (the old implicit-creation path hid this because the neighbour was also
+	// sculpted, which triggered a full Reload).
 	for _, dir := range cardinalDirs {
 		neighbour, ok := tile.editor.tiles[tileCoord{tile.coord.X + dir.X, tile.coord.Z + dir.Z}]
 		if !ok || neighbour == tile || !neighbour.revealed {
@@ -1377,10 +1381,12 @@ func (tile *TerrainTile) reveal() {
 		}
 		neighbour.removeArrow(tileCoord{-dir.X, -dir.Z})
 		neighbour.reloadSides()
+		neighbour.reloadWater()
 	}
-	// Recompute our own walls against the revealed neighbours and plant extend
-	// arrows on the sides still facing a hidden/absent neighbour.
+	// Recompute our own terrain + water walls against the revealed neighbours
+	// and plant extend arrows on the sides still facing a hidden/absent one.
 	tile.reloadSides()
+	tile.reloadWater()
 	tile.spawnArrows()
 }
 

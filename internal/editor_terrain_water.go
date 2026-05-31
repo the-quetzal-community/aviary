@@ -51,6 +51,13 @@ const waterSurfaceDrop Float.X = 0.2
 // slider.
 const riverDefaultDepth Float.X = 3.0
 
+// waterSideZFightOffset nudges the water-body side walls fractionally inboard
+// of the terrain skirt (both otherwise sit on the exact tile edge) so the two
+// coplanar walls don't z-fight. Inboard + tiny keeps the wall tucked just under
+// the water plane, so no gap shows at the surface (outboard pulled it away from
+// the plane edge and left a visible seam).
+const waterSideZFightOffset float32 = 0.005
+
 // PaintRiver commits one segment of a river stroke as a SINGLE musical.Sculpt
 // while the river brush is dragged. The stroke carves a channel (negative
 // Amount, applied through the shared height summation) and, because it carries
@@ -437,20 +444,31 @@ func (tile *TerrainTile) reloadWater() {
 				topFarS, ffx, ffz := waterAt(gfx, gfz)
 				topNear := float32(topNearS)
 				topFar := float32(topFarS)
-				// Drop the wall bottom to the channel floor when it is dug below
-				// the skirt bottom so the column always reaches the bed.
-				bottom := min(float32(-2.0), min(floorNear, floorFar))
+				// Sit the wall bottom on the terrain bed at this edge (the lower
+				// of the two edge floors) so the column reaches the bed without
+				// dangling below it. The old -2 skirt floor pushed the ribbon
+				// below the terrain wherever the bed sat above -2 — e.g. a river
+				// carved into raised ground, where nothing occludes the overhang.
+				bottom := min(floorNear, floorFar)
+				// Nudge the wall fractionally inboard of the terrain skirt
+				// (which sits on the exact edge) so the coplanar walls don't
+				// z-fight, while staying under the water plane so no surface gap
+				// shows. fixed is 0 or n; inboard is toward the centre.
+				fixedPos := sp.fixed - waterSideZFightOffset
+				if sp.fixed == 0 {
+					fixedPos = sp.fixed + waterSideZFightOffset
+				}
 				var tl, tr, bl, br Vector3.XYZ
 				if sp.isZFixed {
-					tl = Vector3.XYZ{pos_near, topNear, sp.fixed}
-					tr = Vector3.XYZ{pos_far, topFar, sp.fixed}
-					bl = Vector3.XYZ{pos_near, bottom, sp.fixed}
-					br = Vector3.XYZ{pos_far, bottom, sp.fixed}
+					tl = Vector3.XYZ{pos_near, topNear, fixedPos}
+					tr = Vector3.XYZ{pos_far, topFar, fixedPos}
+					bl = Vector3.XYZ{pos_near, bottom, fixedPos}
+					br = Vector3.XYZ{pos_far, bottom, fixedPos}
 				} else {
-					tl = Vector3.XYZ{sp.fixed, topNear, pos_near}
-					tr = Vector3.XYZ{sp.fixed, topFar, pos_far}
-					bl = Vector3.XYZ{sp.fixed, bottom, pos_near}
-					br = Vector3.XYZ{sp.fixed, bottom, pos_far}
+					tl = Vector3.XYZ{fixedPos, topNear, pos_near}
+					tr = Vector3.XYZ{fixedPos, topFar, pos_far}
+					bl = Vector3.XYZ{fixedPos, bottom, pos_near}
+					br = Vector3.XYZ{fixedPos, bottom, pos_far}
 				}
 				var v1, v2 Vector3.XYZ
 				if sp.flippedWinding {

@@ -83,6 +83,7 @@ varying float v_surface;  // per-vertex base water surface (world Y)
 varying float v_floor;    // per-vertex terrain floor (world Y)
 varying vec2 v_flow;      // per-vertex normalised world-XZ flow
 varying float v_slope;    // per-vertex downhill surface slope along flow (rise/run)
+varying float v_side;     // 1 on the vertical cross-section walls, 0 on the flat surface
 
 // Single Gerstner wave: displaces `pos` and accumulates the analytic tangent /
 // binormal so a surface normal can be derived. The phase is wrapped to [0,2π)
@@ -110,12 +111,21 @@ void vertex() {
 	v_flow = CUSTOM0.gb;
 	v_slope = CUSTOM0.a;
 
+	// The water body's vertical cross-section walls carry a horizontal mesh
+	// normal; the flat surface carries an up normal. Flag the walls so they
+	// render as a clean "cut through" slice (no foam, no ripple, no swell)
+	// rather than running the churning surface treatment up a vertical face.
+	vec3 mesh_normal = NORMAL;
+	float side = (abs(mesh_normal.y) < 0.5) ? 1.0 : 0.0;
+	v_side = side;
+
 	// Swell only on open, still, deep water: off on rivers (flow), faded out in
-	// shallow water near the shore so crests never rise through the terrain.
+	// shallow water near the shore so crests never rise through the terrain, and
+	// off entirely on the cut-through walls (a vertical slab shouldn't heave).
 	float fl = length(v_flow);
 	float column = max(v_surface - v_floor, 0.0);
 	float shallow = (shallow_calm > 0.0001) ? clamp(column / shallow_calm, 0.0, 1.0) : 1.0;
-	float swell = wave_height * (1.0 - clamp(fl * 2.0, 0.0, 1.0)) * shallow;
+	float swell = wave_height * (1.0 - clamp(fl * 2.0, 0.0, 1.0)) * shallow * (1.0 - side);
 
 	vec3 tangent = vec3(1.0, 0.0, 0.0);
 	vec3 binormal = vec3(0.0, 0.0, 1.0);
@@ -130,11 +140,17 @@ void vertex() {
 	}
 	VERTEX = (inverse(MODEL_MATRIX) * vec4(p, 1.0)).xyz;
 
-	// Tangent frame from the swell (identity when flat) so NORMAL_MAP ripples
-	// layer correctly on top of the geometric wave slopes.
-	NORMAL = normalize(cross(binormal, tangent));
-	TANGENT = normalize(tangent);
-	BINORMAL = normalize(binormal);
+	if (side > 0.5) {
+		// Keep the wall's own outward-facing normal so the slice is lit as the
+		// vertical surface it is; its ripple normal map is flattened in fragment.
+		NORMAL = normalize(mesh_normal);
+	} else {
+		// Tangent frame from the swell (identity when flat) so NORMAL_MAP ripples
+		// layer correctly on top of the geometric wave slopes.
+		NORMAL = normalize(cross(binormal, tangent));
+		TANGENT = normalize(tangent);
+		BINORMAL = normalize(binormal);
+	}
 }
 
 // Two-phase flow-map sample with CONTRAST PRESERVATION. `adv` is the per-cycle
@@ -237,11 +253,16 @@ void fragment() {
 	float flow_mask = smoothstep(0.03, 0.15, fl);
 	float flow_foam = flow_mask * wisp * mix(river_foam_amount, 1.0, density);
 
-	float foam = (shore_foam + flow_foam) * calm;
+	// The cut-through walls take no foam: the foam UVs key off world XZ, so on a
+	// vertical face the shoreline band + river streaks smear into flickering
+	// vertical lines. Zero foam there so the wall reads as a clean water slice.
+	float foam = (shore_foam + flow_foam) * calm * (1.0 - v_side);
 	col = mix(col, vec3(1.0), clamp(foam, 0.0, 1.0));
 
-	// Flatten the ripple normal in very shallow water for a still, glassy look.
+	// Flatten the ripple normal in very shallow water for a still, glassy look,
+	// and fully on the cut-through walls (the XZ-keyed ripple smears vertically).
 	nmap = mix(vec3(0.5, 0.5, 1.0), nmap, calm);
+	nmap = mix(nmap, vec3(0.5, 0.5, 1.0), v_side);
 
 	ALBEDO = col;
 	NORMAL_MAP = nmap;
