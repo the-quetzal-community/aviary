@@ -6,7 +6,10 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 
 uniform sampler2DArray texture_albedo : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2DArray texture_normal : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2DArray texture_orm    : filter_linear_mipmap, repeat_enable;
+// Grayscale gloss maps from the terrain pack ("<name>_spec.png"), one layer per
+// painted design, normalised to R8 on the CPU (see editor_terrain.go). Sampled
+// as a roughness source in fragment(); no mipmaps, so plain linear filtering.
+uniform sampler2DArray texture_spec   : filter_linear, repeat_enable;
 
 uniform float point_size : hint_range(0.1, 128.0, 0.1);
 
@@ -31,6 +34,12 @@ uniform float river_fill = 0.0;
 // additive `height` bump — so an overlapping drag segment (or re-painting an
 // existing river) overwrites the channel instead of digging additively deeper.
 uniform float river_carve = 0.0;
+
+// brush_mode: 0=additive (raise/lower), 1=plateau (flat-topped flatten), 2=smooth
+// (soft-cone flatten). For the flatten modes the `height` uniform carries the
+// strength fraction (Amount=0 on the wire for BC); plateau uses a flat-topped
+// falloff (PLATEAU_FLAT_CORE) so it carves a mesa, smooth a 1−d²/r² cone.
+uniform float brush_mode = 0.0;
 
 uniform vec3 selection;
 uniform bool selection_active;
@@ -60,6 +69,21 @@ void vertex() {
             float old_depth = CUSTOM2.r - VERTEX.y;
             float new_depth = old_depth + (river_carve - old_depth) * w;
             VERTEX.y = CUSTOM2.r - new_depth;
+        } else if (brush_mode > 1.5) {
+            // Smooth preview: pull toward the cursor height with a soft 1−d²/r² cone
+            // (the real stroke neighbour-averages; this is the visual cue). `height`
+            // carries the editor-scaled strength fraction.
+            float fac = clamp(height * w, 0.0, 1.0);
+            VERTEX.y = mix(VERTEX.y, uplift.y, fac);
+        } else if (brush_mode > 0.5) {
+            // Plateau preview: flat-topped falloff — dead flat across the core, eased
+            // to 0 over the skirt — so the hover shows the mesa the commit carves
+            // instead of a soft dome. PLATEAU_FLAT_CORE matches plateauFlatCore in
+            // editor_terrain.go; `height` carries the strength fraction.
+            float t = sqrt(br2) / radius;
+            float ff = 1.0 - smoothstep(0.6, 1.0, t);
+            float fac = clamp(height * ff, 0.0, 1.0);
+            VERTEX.y = mix(VERTEX.y, uplift.y, fac);
         } else {
             // Raise/lower: additive, accumulating into the ground.
             VERTEX.y += height * w;
@@ -111,28 +135,32 @@ void fragment() {
 
     vec4 albedo_tex = colorTL * blended.x + colorTR * blended.y + colorBL * blended.z + colorBR * blended.w;
 
-    // Sample normals from the four layers, unpack to [-1,1], interpolate, and renormalize
+    // Sample the four layers, unpack to [-1,1], blend by the visible weights,
+    // and renormalize so the blend stays a unit normal.
     vec3 normalTL = texture(texture_normal, vec3(base_uv, texture.r)).rgb * 2.0 - 1.0;
     vec3 normalTR = texture(texture_normal, vec3(base_uv, texture.g)).rgb * 2.0 - 1.0;
     vec3 normalBL = texture(texture_normal, vec3(base_uv, texture.b)).rgb * 2.0 - 1.0;
     vec3 normalBR = texture(texture_normal, vec3(base_uv, texture.a)).rgb * 2.0 - 1.0;
 
     vec3 normal_tex = normalize(normalTL * blended.x + normalTR * blended.y + normalBL * blended.z + normalBR * blended.w);
-    normal_tex.y = normal_tex.y; // Flip Y for Godot's coordinate system
-    NORMAL_MAP = normal_tex;
+    // NORMAL_MAP expects the RAW [0,1] texture range — Godot unpacks it itself
+    // and applies it in tangent space. Re-pack our blended [-1,1] normal so it
+    // isn't double-unpacked (which previously tilted even a flat normal map).
+    NORMAL_MAP = normal_tex * 0.5 + 0.5;
 
-    // Sample ORM similarly and unpack channels
-    vec4 ormTL = texture(texture_orm, vec3(base_uv, texture.r));
-    vec4 ormTR = texture(texture_orm, vec3(base_uv, texture.g));
-    vec4 ormBL = texture(texture_orm, vec3(base_uv, texture.b));
-    vec4 ormBR = texture(texture_orm, vec3(base_uv, texture.a));
+    // Sample the four corner gloss layers and blend them with the SAME
+    // `blended` weights as albedo/normal (the old code blended ORM with the
+    // raw, un-sharpened `weights`, which never matched the visible texture
+    // split). Brighter gloss = shinier = less rough. Terrain is dielectric,
+    // so metallic stays 0, and the pack carries no AO so AO = 1.
+    float specTL = texture(texture_spec, vec3(base_uv, texture.r)).r;
+    float specTR = texture(texture_spec, vec3(base_uv, texture.g)).r;
+    float specBL = texture(texture_spec, vec3(base_uv, texture.b)).r;
+    float specBR = texture(texture_spec, vec3(base_uv, texture.a)).r;
 
-    vec4 orm_tex = ormTL * weights.x + ormTR * weights.y + ormBL * weights.z + ormBR * weights.w;
+    float gloss = specTL * blended.x + specTR * blended.y + specBL * blended.z + specBR * blended.w;
 
-    AO = orm_tex.r;
-    ROUGHNESS = orm_tex.g;
-    METALLIC = orm_tex.b;
-    ROUGHNESS = 1.0;
+    ROUGHNESS = 1.0 - gloss;
     METALLIC = 0.0;
     AO = 1.0;
 

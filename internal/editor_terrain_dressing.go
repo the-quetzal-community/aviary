@@ -2,6 +2,7 @@ package internal
 
 import (
 	"math"
+	"strings"
 
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Material"
@@ -41,7 +42,7 @@ type grassPatch struct {
 	design   musical.Design
 	target   Vector3.XYZ
 	radius   Float.X
-	category string // dressing tab (grasses/foliage/mineral/...) for params + transform rules
+	category string // dressing tab (grasses/foliage/boulder/...) for params + transform rules
 
 	// One MultiMesh per design sub-mesh (see grassAsset.parts): a library
 	// foliage prop is often several meshes (trunk / canopy / leaf nodes), so a
@@ -90,13 +91,15 @@ type dressingParams struct {
 	// (foliage/mineral/boulders/rocks) this is sceneryLibraryScale (0.1) so a
 	// scattered prop matches the size that the scenery editor places the same
 	// .glb at; grass/pebble packs are authored at world size already (baseScale 1).
+	// The shrooms brush carries the wildfire_games mushroom props (also authored at
+	// scenery-library scale) at baseScale 0.25 — a touch bigger than the 0.1 they'd
+	// get under foliage, and static (windKind "") rather than swaying.
 	baseScale Float.X
 	// scaleMin..scaleMax is the per-instance random spread applied on top of
 	// baseScale — a modest variation around 1.0 for natural variety, so a patch
 	// doesn't mix wildly different sizes.
-	scaleMin  Float.X
-	scaleMax  Float.X
-	needsZToY bool // only the legacy grass packs need the Z-up correction
+	scaleMin Float.X
+	scaleMax Float.X
 	// windKind selects how the scattered mesh sways: "grass" wraps the material
 	// in grass_wind (every vertex leans by height — blades), "foliage" wraps it
 	// in foliage_wind_mm (trunk planted, canopy flutters), "" leaves the imported
@@ -105,12 +108,13 @@ type dressingParams struct {
 }
 
 var dressingDefaults = map[string]dressingParams{
-	"grasses":  {perArea: 6.0, maxInst: 3000, baseScale: 1.0, scaleMin: 0.7, scaleMax: 1.2, needsZToY: true, windKind: "grass"},
-	"pebbles":  {perArea: 4.0, maxInst: 2000, baseScale: 1.0, scaleMin: 0.5, scaleMax: 1.4, needsZToY: false, windKind: ""},
-	"foliage":  {perArea: 1.5, maxInst: 400, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, windKind: "foliage"},
-	"mineral":  {perArea: 1.5, maxInst: 600, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, needsZToY: false, windKind: ""},
-	"boulders": {perArea: 0.8, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, windKind: ""},
-	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, needsZToY: false, windKind: ""},
+	"grasses":  {perArea: 6.0, maxInst: 3000, baseScale: 1.0, scaleMin: 0.7, scaleMax: 1.2, windKind: "grass"},
+	"pebbles":  {perArea: 4.0, maxInst: 2000, baseScale: 1.0, scaleMin: 0.5, scaleMax: 1.4, windKind: ""},
+	"foliage":  {perArea: 1.5, maxInst: 400, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, windKind: "foliage"},
+	"shrooms":  {perArea: 2.0, maxInst: 1000, baseScale: 0.25, scaleMin: 0.7, scaleMax: 1.3, windKind: ""},
+	"boulder":  {perArea: 1.5, maxInst: 600, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, windKind: ""},
+	"boulders": {perArea: 0.8, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
+	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
 }
 
 // populateGrassMM rebuilds the MultiMesh for a grassPatch so that it only
@@ -145,7 +149,7 @@ func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
 		xform := asset.parts[pi].xform
 		mm.SetInstanceCount(n)
 		for k, i := range visible {
-			mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], xform, patch.category))
+			mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], xform))
 		}
 	}
 }
@@ -244,7 +248,7 @@ func (vr *TerrainEditor) fillPatch(patch *grassPatch, brush musical.Sculpt, asse
 	patch.design = brush.Design
 	patch.target = brush.Target
 	patch.radius = brush.Radius
-	patch.category = brush.Slider
+	patch.category = canonicalDressingCategory(brush.Slider)
 	patch.bases = make([]Vector3.XYZ, count)
 	patch.yaws = make([]Angle.Radians, count)
 	patch.scales = make([]Float.X, count)
@@ -464,7 +468,7 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 		} else if brush.Slider == ClearAllDressingCategory {
 			// Bomb: delete from every dressing patch that overlaps the disc.
 			// No category filter.
-		} else if p.category != brush.Slider {
+		} else if p.category != canonicalDressingCategory(brush.Slider) {
 			continue
 		}
 
@@ -506,40 +510,14 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 
 // grassTransform builds the instance transform for a dressing instance:
 // yaw about world up, uniform scale, planted at terrain height under the
-// base X/Z. For legacy grasses it applies the Z-to-Y correction so that
-// yughues-style packs stand upright; for foliage/mineral/boulders the
-// source mesh is assumed to be authored Y-up (matching scenery placement)
-// and only the random yaw+scale is applied on top.
-func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, scale Float.X, source Transform3D.BasisOrigin, category string) Transform3D.BasisOrigin {
+// base X/Z. Every dressing source mesh is authored/imported Y-up (the grass
+// packs are now baked upright at import time — see library/import_yughues.py —
+// matching the foliage/mineral/boulder scenery props), so the authored
+// orientation is preserved and only the random yaw+scale is applied on top.
+func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, scale Float.X, source Transform3D.BasisOrigin) Transform3D.BasisOrigin {
 	yawB := Basis.FromEuler(Euler.Radians{Y: yaw}, Angle.OrderYXZ)
 	scaledYaw := Basis.Scaled(yawB, Vector3.New(scale, scale, scale))
 
-	p := vr.paramsFor(category)
-	if p.needsZToY {
-		// Fixed correction that maps a model's local +Z direction to world +Y
-		// (after the source glb's own node transforms have been applied).
-		// The yughues grasses export blades primarily along Z (with a 180° Y
-		// node flip that does not change the up axis); the sign here is chosen
-		// so that after the source basis the tips point +Y.
-		zToY := Basis.FromEuler(Euler.Radians{X: -Angle.Pi / 2}, Angle.OrderYXZ)
-
-		// Compose order: source (authored node xform) first, then the Z-to-Y
-		// stand-up, then the per-instance yaw+scale. This makes authored
-		// adjustments and the category correction both take effect before the
-		// random yaw spins the now-vertical blade.
-		corrected := Basis.Mul(scaledYaw, Basis.Mul(zToY, source.Basis))
-
-		// The source origin (pivot offset inside the glb) rotated into the final
-		// oriented frame, then added to the terrain planting point.
-		rotatedOrigin := Basis.Transform(source.Origin, Basis.Mul(scaledYaw, zToY))
-		ground := Vector3.XYZ{X: base.X, Y: vr.HeightAt(base), Z: base.Z}
-		finalOrigin := Vector3.Add(ground, Vector3.XYZ(rotatedOrigin))
-
-		return Transform3D.BasisOrigin{Basis: corrected, Origin: finalOrigin}
-	}
-
-	// Foliage, boulders, pebbles etc: preserve the authored orientation from
-	// the glb (Y-up for scenery-placed props) and only add the random yaw.
 	corrected := Basis.Mul(scaledYaw, source.Basis)
 	rotatedOrigin := Basis.Transform(source.Origin, scaledYaw)
 	ground := Vector3.XYZ{X: base.X, Y: vr.HeightAt(base), Z: base.Z}
@@ -628,9 +606,14 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 			case "grass":
 				mesh.SurfaceSetMaterial(i, vr.grassWindMaterial(src))
 			case "foliage":
-				mesh.SurfaceSetMaterial(i, vr.foliageWindMaterial(src))
+				mesh.SurfaceSetMaterial(i, vr.foliageWindMaterial(src, 1.0))
 			default:
-				mesh.SurfaceSetMaterial(i, src)
+				// Rigid scatter (pebbles / shrooms / boulders): no wind sway, but
+				// still wrap in the foliage shader so the instances RIDE the live
+				// height-brush preview (the grass_brush_* block) like grass and
+				// foliage do — otherwise raise/lower/plateau visibly "ignore" them
+				// until the stroke commits. sway 0 keeps them perfectly still.
+				mesh.SurfaceSetMaterial(i, vr.foliageWindMaterial(src, 0.0))
 			}
 		}
 		asset.parts = append(asset.parts, grassMeshPart{mesh: mesh, xform: part.xform})
@@ -722,7 +705,12 @@ func (vr *TerrainEditor) grassWindMaterial(src Material.Instance) Material.Insta
 // updateWeatherIntensity), shared with the grass. Surfaces that aren't a
 // textured BaseMaterial3D (e.g. an untextured trunk) are returned unchanged so
 // they still render — just static, which is what a rigid stem wants anyway.
-func (vr *TerrainEditor) foliageWindMaterial(src Material.Instance) Material.Instance {
+//
+// sway scales ALL wind motion (1.0 for foliage proper). The rigid dressing
+// categories — pebbles, shrooms, boulders — pass sway 0 so they keep the
+// shader's height-brush preview (riding the live raise/lower/flatten ghost) but
+// never wobble, matching the same .glb placed as static scenery.
+func (vr *TerrainEditor) foliageWindMaterial(src Material.Instance, sway Float.X) Material.Instance {
 	if vr.foliageWindShader == Shader.Nil {
 		return src
 	}
@@ -738,6 +726,7 @@ func (vr *TerrainEditor) foliageWindMaterial(src Material.Instance) Material.Ins
 		SetShader(vr.foliageWindShader).
 		SetShaderParameter("albedo_texture", tex).
 		SetShaderParameter("albedo", base.AlbedoColor()).
+		SetShaderParameter("sway_amount", sway).
 		SetShaderParameter("roughness", base.Roughness()).
 		SetShaderParameter("metallic", base.Metallic())
 	if base.NormalEnabled() {
@@ -829,11 +818,37 @@ func (r *grassRNG) float() float64 { return float64(r.next()>>11) / 900719925474
 // is armed and after each committed segment, so successive patches differ.
 func nextSeed(s uint64) uint64 { return (&grassRNG{state: s}).next() }
 
+// canonicalDressingCategory folds legacy dressing category names onto their current
+// spelling so musicals recorded before a rename keep working. The wildfire_games
+// "mineral" category was renamed to "boulder" (its assets moved to the boulder/
+// library dir); pre-rename sculpts carry Slider "mineral", so it maps to "boulder"
+// wherever a category string is consumed — params, wind, patch identity, and the
+// category-clear match. New sculpts already use "boulder".
+func canonicalDressingCategory(s string) string {
+	if s == "mineral" {
+		return "boulder"
+	}
+	return s
+}
+
+// boulderCompatPath redirects a legacy "mineral" resource path to its post-rename
+// "boulder" location. Design paths baked into older musicals still point at
+// .../mineral/...; when the original no longer resolves we retry under boulder/
+// (guarded by ExistsSync so any path that still exists is left untouched).
+func boulderCompatPath(p string) string {
+	if strings.Contains(p, "/mineral/") && !ExistsSync(p) {
+		if alt := strings.Replace(p, "/mineral/", "/boulder/", 1); ExistsSync(alt) {
+			return alt
+		}
+	}
+	return p
+}
+
 // paramsFor returns the scatter tuning for the given dressing tab (category).
 // Unknown categories fall back to the grasses defaults so old sculpts and
 // any future tabs continue to work without special cases everywhere.
 func (vr *TerrainEditor) paramsFor(category string) dressingParams {
-	if p, ok := dressingDefaults[category]; ok {
+	if p, ok := dressingDefaults[canonicalDressingCategory(category)]; ok {
 		return p
 	}
 	return dressingDefaults["grasses"]
@@ -849,7 +864,7 @@ func (vr *TerrainEditor) windKindFor(category string) string {
 // Slider values used for both normal dressing strokes and the category-clear
 // tools in the "removal" tab.
 func isDressingCategory(s string) bool {
-	_, ok := dressingDefaults[s]
+	_, ok := dressingDefaults[canonicalDressingCategory(s)]
 	return ok
 }
 

@@ -4,10 +4,26 @@ shader_type spatial;
 // MultiMesh instance, so MODEL_MATRIX carries that blade's world transform.
 //
 // This shader reproduces the look of the imported yughues grass material —
-// double-sided, alpha-BLENDED (smooth cut-out, not a hard scissor), normal
-// mapped, roughness ~0.5 — while adding the vertex sway. The per-surface
-// look (albedo/normal/roughness/metallic) is copied from the source
-// BaseMaterial3D in Go (see grassWindMaterial); the wind is shared.
+// double-sided, normal mapped, roughness ~0.5 — while adding the vertex sway.
+// The per-surface look (albedo/normal/roughness/metallic) is copied from the
+// source BaseMaterial3D in Go (see grassWindMaterial); the wind is shared.
+//
+// Alpha is an ALPHA-TO-COVERAGE cut-out, NOT a smooth blend: the fragment
+// alpha-tests against alpha_scissor so thousands of blades render in the OPAQUE
+// pass and write depth. A smooth ALPHA + blend_mix would instead drop the grass
+// into the transparency queue, where it is sorted only by per-object distance
+// with no depth write — which made the blades pop in front of / behind the
+// (also transparent) water. Staying opaque keeps it out of that queue so it
+// depth-tests correctly against water and itself.
+//
+// A plain scissor antialiases nothing, so the cut edge looks pixelated. The
+// alpha_to_coverage render_mode fixes that without re-introducing transparency:
+// the hardware turns the alpha edge into MSAA coverage samples, so the cut-out
+// is antialiased by the very MSAA the quality tiers already run (2× at Refined,
+// 4× at Highest — see graphics_quality.go). ALPHA_ANTIALIASING_EDGE +
+// ALPHA_TEXTURE_COORDINATE drive Godot's derivative-based edge sharpening so the
+// soft band stays ~1px and doesn't shrink with mips at distance. On the no-MSAA
+// tiers (Toaster/Average) this degrades gracefully to the hard scissor.
 //
 // world_vertex_coords lets us read and write VERTEX in world space, so the
 // wind blows in a single consistent world direction across the whole field
@@ -16,7 +32,7 @@ shader_type spatial;
 //
 // cull_disabled keeps the flat billboard blades visible from both sides
 // (the source material is doubleSided).
-render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx, world_vertex_coords;
+render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx, world_vertex_coords, alpha_to_coverage;
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
 uniform vec4 albedo : source_color = vec4(1.0);
@@ -25,6 +41,27 @@ uniform bool has_normal_texture = false;
 uniform float normal_scale : hint_range(-16.0, 16.0) = 1.0;
 uniform float roughness : hint_range(0.0, 1.0) = 0.5;
 uniform float metallic : hint_range(0.0, 1.0) = 0.0;
+// Dielectric specular reflectance (Godot's f0; 0.5 is the engine default, ~4%).
+// Defaults to 0 — matte — because this is instanced cut-out foliage: the flat
+// blades are usually seen near edge-on, where Fresnel drives the AMBIENT
+// specular toward white, so under the colour-source day/night ambient any
+// non-zero value lays a bright sheen on the grass that the matte terrain never
+// shows. Overridable per-material if a design ever wants a glint. NOTE:
+// grassWindMaterial copies albedo/roughness/metallic/normal from the source but
+// NOT specular, so this default is the operative value at runtime regardless of
+// the imported material (and Godot's glTF import doesn't reliably carry a
+// specular factor anyway). The source asset is also kept matte at import time.
+uniform float specular : hint_range(0.0, 1.0) = 0.0;
+uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.5;
+// Width of the antialiased coverage band around the cut-out edge (only visible
+// with MSAA on). Larger = softer/fuzzier blade edges; 0 collapses to a hard cut.
+uniform float alpha_aa_edge : hint_range(0.0, 1.0) = 0.3;
+// Distance thinning recovery. As the grass texture mips down, the scissor cutoff
+// is eased toward alpha_scissor * thin_recover_floor so blades stop dropping out
+// (lower floor = blades survive further out, but distant grass fattens). The
+// reduction reaches full strength at mip level thin_recover_lod.
+uniform float thin_recover_floor : hint_range(0.1, 1.0) = 0.35;
+uniform float thin_recover_lod   : hint_range(1.0, 8.0) = 4.0;
 
 // Wind is driven from the environment "Wind" slider via global shader
 // parameters (registered + updated in client.go), so every grass blade in the
@@ -51,6 +88,13 @@ global uniform float grass_wind_bias;
 global uniform vec2  grass_brush_uplift;
 global uniform float grass_brush_height;
 global uniform float grass_brush_radius;
+// Flatten preview (plateau/smooth): when grass_brush_mode > 0.5 the blade is
+// pulled toward grass_brush_target_y by grass_brush_height*(1−d²/r²) instead of
+// lifted additively, mirroring terrain.gdshader's flatten branch so grass rides
+// the previewed plateau/smooth before it commits. grass_brush_height then carries
+// the strength fraction rather than an additive height.
+global uniform float grass_brush_mode;
+global uniform float grass_brush_target_y;
 
 void vertex() {
 	// The instance's plant point in world space. Every vertex of one blade
@@ -107,8 +151,26 @@ void vertex() {
 		vec2 bd = root.xz - grass_brush_uplift;
 		float bd2 = dot(bd, bd);
 		if (bd2 < br2) {
-			float lift = grass_brush_height * (1.0 - bd2 / br2);
-			VERTEX.y += max(root.y + lift, -2.0) - root.y;
+			float w = 1.0 - bd2 / br2;
+			float newy;
+			if (grass_brush_mode > 1.5) {
+				// Smooth: pull toward the target with a soft 1−d²/r² cone. grass_brush_height
+				// is the strength fraction, matching terrain.gdshader's smooth preview.
+				float fac = clamp(grass_brush_height * w, 0.0, 1.0);
+				newy = mix(root.y, grass_brush_target_y, fac);
+			} else if (grass_brush_mode > 0.5) {
+				// Plateau: flat-topped falloff so the blade rides the mesa (dead flat
+				// across the core). PLATEAU_FLAT_CORE matches plateauFlatCore in
+				// editor_terrain.go.
+				float t = sqrt(bd2) / grass_brush_radius;
+				float ff = 1.0 - smoothstep(0.6, 1.0, t);
+				float fac = clamp(grass_brush_height * ff, 0.0, 1.0);
+				newy = mix(root.y, grass_brush_target_y, fac);
+			} else {
+				// Additive lift (raise/lower/river).
+				newy = root.y + grass_brush_height * w;
+			}
+			VERTEX.y += max(newy, -2.0) - root.y;
 		}
 	}
 }
@@ -116,9 +178,34 @@ void vertex() {
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV) * albedo;
 	ALBEDO = tex.rgb;
-	ALPHA = tex.a; // smooth alpha blend, matching the source BLEND material
+
+	// Mip level estimated from how fast the texel-space UV changes per screen
+	// pixel — the same quantity the GPU uses to pick a mip. 0 up close, rising
+	// with distance.
+	vec2  tx  = UV * vec2(textureSize(albedo_texture, 0));
+	float lod = max(0.0, 0.5 * log2(max(dot(dFdx(tx), dFdx(tx)), dot(dFdy(tx), dFdy(tx)))));
+
+	// Ease the alpha-test cutoff down with mip level. Box-averaged mips sink a
+	// thin blade's peak alpha below a fixed threshold, so whole blades vanish and
+	// the field goes patchy at distance; lowering the cutoff as it mips keeps the
+	// blades alive (cheap in-shader stand-in for coverage-preserving mips). Close
+	// up (lod≈0) the cutoff is the full alpha_scissor, so the crisp look is kept.
+	float cutoff = alpha_scissor * mix(1.0, thin_recover_floor, clamp(lod / thin_recover_lod, 0.0, 1.0));
+
+	ALPHA = tex.a;
+	ALPHA_SCISSOR_THRESHOLD = cutoff; // opaque pass + depth write (no transparency sort vs water)
+	// Antialias the cut edge via MSAA coverage (see alpha_to_coverage above).
+	// ALPHA_TEXTURE_COORDINATE in texel units lets Godot size the soft band by
+	// the alpha texture's own derivatives, so it stays crisp at any distance.
+	ALPHA_ANTIALIASING_EDGE = alpha_aa_edge;
+	ALPHA_TEXTURE_COORDINATE = tx;
 	ROUGHNESS = roughness;
 	METALLIC = metallic;
+	// Matte by default (see the `specular` uniform). f0 == 0 removes the direct
+	// AND the ambient specular (the ambient term is f0-gated), so the blades
+	// respond to ambient through diffuse only — like the terrain. Diffuse ambient
+	// is specular-independent, so the lit look is unchanged.
+	SPECULAR = specular;
 	if (has_normal_texture) {
 		NORMAL_MAP = texture(normal_texture, UV).rgb;
 		NORMAL_MAP_DEPTH = normal_scale;

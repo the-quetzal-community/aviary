@@ -203,3 +203,14 @@ ui/coaster.svg - Andy Horvath
 ui/trash.svg - Julynn B.
 ui/liquids.svg - Amazona Adorada
 ui/mounted.svg - businessicons13
+
+ui/terrain/editing/uplift.svg - Andrejs Kirma
+ui/terrain/editing/canyon.svg - Andrejs Kirma
+ui/terrain/editing/plateau.svg - Andrejs Kirma & Quentin Quaadgras (flattened top)
+ui/terrain/editing/smooths.svg - Andrejs Kirma & Quentin Quaadgras (removed dent)
+
+MIT https://opensource.org/license/mit
+
+addons/SunshineClouds2/ - SunshineClouds2 by Bonkahe (https://github.com/Bonkahe/SunshineClouds2)
+    volumetric cloud system, vendored at commit e4ecc2da53f0b675f5998a08eb7225fb83712054
+    full licence text in addons/SunshineClouds2/LICENSE

@@ -58,6 +58,16 @@ const riverDefaultDepth Float.X = 3.0
 // the plane edge and left a visible seam).
 const waterSideZFightOffset float32 = 0.005
 
+// waterRiseRate is the exponential ease rate (1/s) for the displayed water level
+// gliding to a changed WaterLevel, and waterRiseEps the gap (world units) at
+// which it snaps. At rate 8 roughly 95% of the change is covered in ~0.4s — fast
+// enough to feel responsive, slow enough to read as a rise/fall rather than a
+// jump. Frame-rate independent (see processWaterRise).
+const (
+	waterRiseRate Float.X = 8.0
+	waterRiseEps  Float.X = 0.002
+)
+
 // PaintRiver commits one segment of a river stroke as a SINGLE musical.Sculpt
 // while the river brush is dragged. The stroke carves a channel (negative
 // Amount, applied through the shared height summation) and, because it carries
@@ -118,12 +128,14 @@ func (tr *TerrainEditor) riverBrushActive() bool {
 // WaterSurfaceAt returns the world-Y of the water surface at a world position:
 // the local river surface where one has been carved, otherwise the global lake
 // level. The underwater post-process samples this under the camera so the
-// waterline tracks rivers (not just the flat global plane). Falls back to the
-// global level where no tile is loaded.
+// waterline tracks rivers (not just the flat global plane). Uses the currently
+// DISPLAYED level (waterDisplayed) so the waterline glides with the rendered
+// surface during a level change rather than snapping ahead of it. Falls back to
+// the displayed level where no tile is loaded.
 func (tr *TerrainEditor) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
 	tile := tr.tileForWorld(pos)
 	if tile == nil {
-		return tr.WaterLevel
+		return tr.waterDisplayed
 	}
 	return tile.WaterSurfaceAt(pos)
 }
@@ -238,7 +250,9 @@ func (tile *TerrainTile) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
 	hm := n + 1
 	level := Float.X(0)
 	if tile.editor != nil {
-		level = tile.editor.WaterLevel
+		// Displayed (rendered) level, not the committed target, so the waterline
+		// glides with the surface during a level change (see WaterSurfaceAt doc).
+		level = tile.editor.waterDisplayed
 	}
 	if len(tile.groundHeights) < hm*hm || len(tile.riverDepth) < hm*hm {
 		return level
@@ -304,9 +318,52 @@ func (vr *TerrainEditor) applyWaterLevel(level Float.X) {
 	if vr.water_shader != (ShaderMaterial.Instance{}) {
 		vr.water_shader.SetShaderParameter("water_level", float64(level))
 	}
+	// Leave the DISPLAYED level where it is so processWaterRise eases it up/down
+	// to the new level — the change glides instead of teleporting through the
+	// slider's discrete steps. During the join replay there are no frames to ease
+	// over and a glide would just read as a load-time animation (cf. the bomb
+	// explosion guard), so snap the displayed level to match instead.
+	if vr.client != nil && vr.client.joining {
+		vr.waterDisplayed = level
+	}
+	// Rebuild the mesh at the NEW level, then push the residual offset so the
+	// freshly-rebuilt surface still renders at the displayed (old) height — no
+	// pop — and decays to 0 over the next frames.
 	for _, tile := range vr.tiles {
 		tile.reloadWater()
 	}
+	vr.pushWaterRise()
+}
+
+// pushWaterRise feeds the current displayed-vs-committed gap to the shared water
+// shader (water_rise in water.gdshader). One push covers every tile because they
+// all share vr.water_shader.
+func (vr *TerrainEditor) pushWaterRise() {
+	if vr.water_shader != (ShaderMaterial.Instance{}) {
+		vr.water_shader.SetShaderParameter("water_rise", float64(vr.waterDisplayed-vr.WaterLevel))
+	}
+}
+
+// processWaterRise eases the displayed water level toward the committed
+// WaterLevel each frame so a level change glides rather than stepping. Driven
+// from Client.Process (which ticks every frame regardless of which editor is
+// active, unlike TerrainEditor.Process), so a remote/undo level change animates
+// even when this client isn't in the terrain editor. Purely cosmetic and
+// client-local: the displayed level always converges to the observed WaterLevel.
+func (vr *TerrainEditor) processWaterRise(dt Float.X) {
+	if vr.waterDisplayed == vr.WaterLevel {
+		return
+	}
+	diff := vr.WaterLevel - vr.waterDisplayed
+	if Float.Abs(diff) <= waterRiseEps {
+		vr.waterDisplayed = vr.WaterLevel
+	} else {
+		// Frame-rate-independent exponential approach: the fraction of the
+		// remaining gap closed this frame is 1-e^(-rate*dt), so the glide takes
+		// the same wall-clock time at any framerate.
+		vr.waterDisplayed += diff * (1 - Float.Exp(-waterRiseRate*dt))
+	}
+	vr.pushWaterRise()
 }
 
 // SetWaterVisible toggles the per-tile water meshes and remembers the state so
@@ -652,30 +709,35 @@ func (tile *TerrainTile) reloadWater() {
 					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
 				}
 				// CUSTOM0 per emitted vertex, matching the vertex order above.
-				// .r = terrain floor; .g/.b = flow X/Z. bl is always slot 0/3
-				// (near). The winding swaps which of tl(near)/tr(far)/br(far)
-				// fill slots 1,2,4,5.
-				setSideCustom := func(slot int, floor, fx, fz float32) {
+				// .r = terrain floor; .g/.b = flow X/Z; .a = heave weight (1 on the
+				// TOP row tl/tr so it follows the swell and welds to the plane,
+				// 0 on the BED row bl/br so it stays pinned to the terrain — the
+				// shader keys the wall's swell off this instead of the water depth,
+				// so a shallow-shore top vertex still heaves in lockstep with the
+				// coincident plane edge). bl is always slot 0/3 (near); the winding
+				// swaps which of tl(near)/tr(far)/br(far) fill slots 1,2,4,5.
+				setSideCustom := func(slot int, floor, fx, fz, up float32) {
 					floors_side[slot*4+0] = floor
 					floors_side[slot*4+1] = fx
 					floors_side[slot*4+2] = fz
+					floors_side[slot*4+3] = up
 				}
 				if sp.flippedWinding {
 					// [bl, tr, tl, bl, br, tr]
-					setSideCustom(index_base+0, floorNear, fnx, fnz) // bl
-					setSideCustom(index_base+1, floorFar, ffx, ffz)  // tr
-					setSideCustom(index_base+2, floorNear, fnx, fnz) // tl
-					setSideCustom(index_base+3, floorNear, fnx, fnz) // bl
-					setSideCustom(index_base+4, floorFar, ffx, ffz)  // br
-					setSideCustom(index_base+5, floorFar, ffx, ffz)  // tr
+					setSideCustom(index_base+0, floorNear, fnx, fnz, 0) // bl
+					setSideCustom(index_base+1, floorFar, ffx, ffz, 1)  // tr
+					setSideCustom(index_base+2, floorNear, fnx, fnz, 1) // tl
+					setSideCustom(index_base+3, floorNear, fnx, fnz, 0) // bl
+					setSideCustom(index_base+4, floorFar, ffx, ffz, 0)  // br
+					setSideCustom(index_base+5, floorFar, ffx, ffz, 1)  // tr
 				} else {
 					// [bl, tl, tr, bl, tr, br]
-					setSideCustom(index_base+0, floorNear, fnx, fnz) // bl
-					setSideCustom(index_base+1, floorNear, fnx, fnz) // tl
-					setSideCustom(index_base+2, floorFar, ffx, ffz)  // tr
-					setSideCustom(index_base+3, floorNear, fnx, fnz) // bl
-					setSideCustom(index_base+4, floorFar, ffx, ffz)  // tr
-					setSideCustom(index_base+5, floorFar, ffx, ffz)  // br
+					setSideCustom(index_base+0, floorNear, fnx, fnz, 0) // bl
+					setSideCustom(index_base+1, floorNear, fnx, fnz, 1) // tl
+					setSideCustom(index_base+2, floorFar, ffx, ffz, 1)  // tr
+					setSideCustom(index_base+3, floorNear, fnx, fnz, 0) // bl
+					setSideCustom(index_base+4, floorFar, ffx, ffz, 1)  // tr
+					setSideCustom(index_base+5, floorFar, ffx, ffz, 0)  // br
 				}
 				index_base += 6
 			}

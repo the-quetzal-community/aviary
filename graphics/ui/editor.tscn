@@ -31,7 +31,7 @@
 [ext_resource type="Texture2D" uid="uid://bynlkojambmd3" path="res://ui/quality.svg" id="26_hvudo"]
 [ext_resource type="Texture2D" uid="uid://dwodcy8axfahv" path="res://ui/gizmo/shift.svg" id="26_nmgcu"]
 [ext_resource type="Texture2D" uid="uid://ba27w1ohk0wrl" path="res://ui/gizmo/twist.svg" id="27_nterg"]
-[ext_resource type="Texture2D" uid="uid://bme16r67ciq1p" path="res://ui/scales.svg" id="28_nterg"]
+[ext_resource type="Texture2D" uid="uid://bme16r67ciq1p" path="res://ui/gizmo/scale.svg" id="28_nterg"]
 [ext_resource type="Texture2D" uid="uid://bbuujrcrjflt8" path="res://ui/citizen.svg" id="29_hwdbu"]
 [ext_resource type="Texture2D" uid="uid://ckhyr2lsi0att" path="res://ui/critter.svg" id="30_6p2ph"]
 [ext_resource type="Texture2D" uid="uid://bc0aster1ed1t" path="res://ui/coaster.svg" id="31_coast"]

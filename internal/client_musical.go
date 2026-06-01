@@ -104,7 +104,7 @@ func (world musicalImpl) Import(uri musical.Import) error {
 		// the console; skip the load for those — we still want the
 		// URI→Design mapping registered for later lookup.
 		if !isKeepImporterPath(uri.Import) {
-			res := Object.Leak(LoadSync[Resource.Instance](uri.Import))
+			res := Object.Leak(LoadSync[Resource.Instance](boulderCompatPath(uri.Import)))
 			switch {
 			case Object.Is[PackedScene.Instance](res):
 				world.packed_scenes[uri.Design] = Object.To[PackedScene.Instance](res).ID()

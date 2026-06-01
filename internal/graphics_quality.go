@@ -82,28 +82,54 @@ func (q GraphicsQuality) ssaoQuality() RenderingServer.EnvironmentSSAOQuality {
 
 // cloudSteps is the cloud_steps uniform pushed into the procedural sky shader at
 // this tier (see Client.applyCloudQuality, which owns the wiring). 0 selects the
-// shader's cheap flat 2D projection (lower tiers); a positive count switches on
-// the sky-shader volumetric march at QualityRefined; a negative value disables
-// the painted sky clouds at QualityHighest, where the world-space FogVolume
-// clouds (volumetricClouds) are the only clouds.
+// shader's cheap flat 2D projection (QualityToaster); a positive count switches on
+// the sky-shader volumetric march (QualityAverage); a negative value disables the
+// painted sky clouds at the top two tiers, where the FogVolume (QualityRefined,
+// fogVolumeClouds) and SunshineClouds2 (QualityHighest, sunshineClouds) draw the
+// clouds instead.
 func (q GraphicsQuality) cloudSteps() int {
 	switch q {
 	case QualityHighest:
-		return -1 // sky clouds off; the FogVolume draws fly-through clouds.
+		return -1 // sky clouds off; SunshineClouds2 draws fly-through clouds.
 	case QualityRefined:
-		// The best the sky-shader path offers without the FogVolume on top.
-		return 48
-	default: // QualityToaster / QualityAverage: flat clouds, no march.
+		return -1 // sky clouds off; the world-space FogVolume draws the clouds.
+	case QualityAverage:
+		// Sky-shader volumetric march (demoted from QualityRefined); fewer steps
+		// than the old Refined value since this is now the mid tier.
+		return 40
+	default: // QualityToaster: flat clouds, no march.
 		return 0
 	}
 }
 
-// volumetricClouds reports whether the world-space FogVolume cloud layer (the
-// fly-through clouds) should be active at this tier. Reserved for QualityHighest:
-// volumetric fog is a per-frame froxel pass, the most expensive cloud option, so
-// the lower tiers use the cheaper painted sky clouds instead.
-func (q GraphicsQuality) volumetricClouds() bool {
+// fogVolumeClouds reports whether the world-space FogVolume cloud layer (the
+// clouds_fog.gdshader fly-through clouds) should be active at this tier. Reserved
+// for QualityRefined: it is the second-most-expensive cloud option (a per-frame
+// volumetric-fog froxel pass), sitting just below the SunshineClouds2 compositor
+// clouds at QualityHighest.
+func (q GraphicsQuality) fogVolumeClouds() bool {
+	return q == QualityRefined
+}
+
+// sunshineClouds reports whether the SunshineClouds2 compositor cloud system (the
+// vendored addon, the most expensive / highest-fidelity option) should be active.
+// Reserved for QualityHighest.
+func (q GraphicsQuality) sunshineClouds() bool {
 	return q == QualityHighest
+}
+
+// reflectionStrength is the screen-space-reflection intensity pushed into the
+// water shader's reflection_strength uniform (see Client.applyWaterQuality).
+// The water is transparent, so Godot's Environment SSR can't reach it and the
+// shader ray-marches its own reflections — a per-water-pixel loop of depth
+// fetches, the priciest water effect. Reserved for QualityHighest: 1 turns the
+// march fully on; every cheaper tier returns 0, which makes the shader skip the
+// loop entirely.
+func (q GraphicsQuality) reflectionStrength() float64 {
+	if q == QualityHighest {
+		return 1.0
+	}
+	return 0.0
 }
 
 // Apply pushes this quality level into the live renderer. The Viewport

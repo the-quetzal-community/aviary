@@ -240,6 +240,7 @@ type lighting struct {
 	rain      Float.X
 	snow      Float.X
 	wind      Float.X
+	moon      Float.X
 
 	// seeded is used so that the first time an editor becomes active it can
 	// inherit the current world look instead of snapping to zero values
@@ -265,6 +266,8 @@ func (l *lighting) handleEnvironmentSlider(slider string, v Float.X) bool {
 		l.snow = v
 	case "environment/wind":
 		l.wind = v
+	case "environment/moon":
+		l.moon = v
 	default:
 		return false
 	}
@@ -277,7 +280,7 @@ func (l *lighting) apply(c *Client) {
 		return
 	}
 	l.ensureSeeded(c)
-	c.ApplyLightingMenuState(l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind)
+	c.ApplyLightingMenuState(l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind, l.moon)
 }
 
 // ensureSeeded copies the current world lighting state into this lighting the
@@ -287,7 +290,7 @@ func (l *lighting) ensureSeeded(c *Client) {
 	if l.seeded || c == nil {
 		return
 	}
-	l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind = c.GetLightingMenuState()
+	l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind, l.moon = c.GetLightingMenuState()
 	l.seeded = true
 }
 

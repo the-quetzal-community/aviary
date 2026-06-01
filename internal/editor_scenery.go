@@ -164,7 +164,7 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 		return []string{
 			// natural
 			"foliage",
-			"mineral",
+			"boulder",
 
 			// village
 			"housing",

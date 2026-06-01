@@ -73,13 +73,15 @@ type TerrainEditor struct {
 	// clickable from the coaster or scenery editors.
 	arrowsVisible bool
 
-	// mapper, albedos, normal_maps are shared across all tiles so the
-	// shader's Texture2DArray layer index for a given paint Design is
-	// consistent everywhere it gets painted. Mutated in Sculpt's
-	// upload step; tiles read mapper[Design] when sampling textures.
+	// mapper, albedos, normal_maps, spec_maps are shared across all tiles so
+	// the shader's Texture2DArray layer index for a given paint Design is
+	// consistent everywhere it gets painted. Mutated in Sculpt's upload step;
+	// tiles read mapper[Design] when sampling textures. The three image slices
+	// stay index-aligned: layer i holds a design's albedo / normal / gloss.
 	mapper      map[musical.Design]int
 	albedos     []Image.Instance
 	normal_maps []Image.Instance
+	spec_maps   []Image.Instance
 
 	shader        ShaderMaterial.Instance
 	shader_buried ShaderMaterial.Instance
@@ -93,8 +95,16 @@ type TerrainEditor struct {
 	// WaterLevel is the world-space Y of the water surface. The default of
 	// -2 matches the bottom of the terrain skirt, so by default the water
 	// sits hidden under flat terrain (i.e. there is no visible water until
-	// the level is raised).
+	// the level is raised). This is the committed/observed value every client
+	// converges to.
 	WaterLevel Float.X
+
+	// waterDisplayed is the currently-RENDERED water level, eased toward
+	// WaterLevel each frame by processWaterRise so a level change glides instead
+	// of teleporting (the mesh is rebuilt at WaterLevel and the shader offsets the
+	// still water by waterDisplayed-WaterLevel; see water.gdshader's water_rise).
+	// Purely cosmetic and client-local — it always settles back to WaterLevel.
+	waterDisplayed Float.X
 
 	// waterVisible toggles the per-tile water meshes; water is only shown
 	// in the terrain and scenery editors.
@@ -142,7 +152,7 @@ type TerrainEditor struct {
 	//
 	DressActive  bool   // a dressing design is selected and the brush is armed
 	DressDesign  string // selected mesh resource (res://...glb), local only
-	DressTab     string // dressing category ("grasses"/"pebbles"/"foliage"/"mineral")
+	DressTab     string // dressing category ("grasses"/"pebbles"/"foliage"/"shrooms"/"boulder")
 	BrushDensity Float.X
 	// dressDesignID is the musical.Design for DressDesign, resolved ONCE in
 	// SelectDesign. MusicalDesign reserves an id + emits an Import the first time
@@ -165,7 +175,7 @@ type TerrainEditor struct {
 	// disc, regardless of Design. This replaces the legacy Ctrl+Shift gesture.
 	//
 	ClearActive   bool   // a removal tool is armed
-	ClearCategory string // "grasses", "pebbles", "foliage", or "mineral"
+	ClearCategory string // "grasses", "pebbles", "foliage", "shrooms", or "boulder"
 
 	// BrushRiverDepth is how far below the original ground the river brush
 	// carves its channel (the water then fills back to the original ground).
@@ -178,6 +188,16 @@ type TerrainEditor struct {
 	// stroke is only emitted once the brush has moved ~half a radius.
 	dressLast    Vector3.XYZ
 	dressLastSet bool
+
+	// Plateau/smooth are drag-paint brushes (PaintTerrainSculpt): while held they
+	// emit one Sculpt per spaced segment. sculptStroke marks a stroke in progress,
+	// sculptLast spaces the segments, and sculptLockY is the plateau target height
+	// captured at the stroke's start — every segment flattens to THIS level (what
+	// the preview showed) instead of re-sampling the shifting terrain under the
+	// cursor, so a drag carves one continuous flat terrace. Reset on stroke end.
+	sculptStroke bool
+	sculptLast   Vector3.XYZ
+	sculptLockY  Float.X
 
 	// brushStrokeActive is true only while the user is actively holding the
 	// left mouse button over actual terrain geometry after a press that
@@ -479,14 +499,17 @@ func (fe *TerrainEditor) ChangeEditor() {
 		SetShaderParameter("height", 0.0).
 		SetShaderParameter("river_fill", 0.0).
 		SetShaderParameter("river_carve", 0.0).
+		SetShaderParameter("brush_mode", 0.0).
 		SetShaderParameter("brush_active", false).
 		SetShaderParameter("paint_active", false)
 	fe.shader_buried.
 		SetShaderParameter("height", 0.0).
+		SetShaderParameter("brush_mode", 0.0).
 		SetShaderParameter("brush_active", false)
 	fe.water_shader.
 		SetShaderParameter("height", 0.0).
-		SetShaderParameter("river_preview", 0.0)
+		SetShaderParameter("river_preview", 0.0).
+		SetShaderParameter("brush_mode", 0.0)
 	fe.BrushActive = false
 	fe.PaintActive = false
 	fe.DressActive = false
@@ -494,6 +517,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.ClearCategory = ""
 	fe.TerrainBrush = ""
 	fe.brushStrokeActive = false
+	fe.sculptStroke = false
 	fe.setArrowsVisible(false)
 	// Settle any objects/grass left displaced by a hover preview — Process (which
 	// otherwise resets the preview each frame) won't run for this editor anymore.
@@ -568,7 +592,8 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 			"grasses",
 			"pebbles",
 			"foliage",
-			"mineral",
+			"shrooms",
+			"boulder",
 			"removal",
 		}
 	default:
@@ -602,13 +627,23 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 		return []BuiltinDesign{
 			{
 				Resource: BuiltinTerrainRaise,
-				Icon:     "res://ui/terrain.svg",
+				Icon:     "res://ui/terrain/editing/uplift.svg",
 				Label:    "Raise terrain",
 			},
 			{
 				Resource: BuiltinTerrainLower,
-				Icon:     "res://ui/canyons.svg",
+				Icon:     "res://ui/terrain/editing/canyon.svg",
 				Label:    "Lower terrain",
+			},
+			{
+				Resource: BuiltinTerrainPlateau,
+				Icon:     "res://ui/terrain/editing/plateau.svg",
+				Label:    "Plateau",
+			},
+			{
+				Resource: BuiltinTerrainSmooth,
+				Icon:     "res://ui/terrain/editing/smooths.svg",
+				Label:    "Smooth",
 			},
 		}
 	case "removal":
@@ -626,19 +661,19 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 				Label:    "Scythe — clear grasses",
 			},
 			{
-				Resource: BuiltinDressingClearPebbles,
-				Icon:     "res://ui/rake.svg",
-				Label:    "Rake — clear pebbles",
-			},
-			{
 				Resource: BuiltinDressingClearFoliage,
 				Icon:     "res://ui/axe.svg",
 				Label:    "Axe — clear foliage",
 			},
 			{
-				Resource: BuiltinDressingClearMineral,
+				Resource: BuiltinDressingClearShrooms,
+				Icon:     "res://ui/rake.svg",
+				Label:    "Rake — clear shrooms",
+			},
+			{
+				Resource: BuiltinDressingClearBoulder,
 				Icon:     "res://ui/pickaxe.svg",
-				Label:    "Pickaxe — clear mineral / boulders",
+				Label:    "Pickaxe — clear boulder",
 			},
 		}
 	default:
@@ -657,14 +692,14 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 		case BuiltinDressingClearGrasses:
 			fe.ArmClearBrush("grasses")
 			return
-		case BuiltinDressingClearPebbles:
-			fe.ArmClearBrush("pebbles")
-			return
 		case BuiltinDressingClearFoliage:
 			fe.ArmClearBrush("foliage")
 			return
-		case BuiltinDressingClearMineral:
-			fe.ArmClearBrush("mineral")
+		case BuiltinDressingClearShrooms:
+			fe.ArmClearBrush("shrooms")
+			return
+		case BuiltinDressingClearBoulder:
+			fe.ArmClearBrush("boulder")
 			return
 		}
 
@@ -694,7 +729,7 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 	// Terrain brush builtins (raise/lower) in ModeGeometry: arm the
 	// explicit height sculpt brush. This replaces the previous implicit
 	// "any click in geometry mode sculpts height" behaviour.
-	if mode == ModeGeometry && (design == BuiltinTerrainRaise || design == BuiltinTerrainLower || design == BuiltinTerrainRiver || design == BuiltinTerrainRiverErase) {
+	if mode == ModeGeometry && (design == BuiltinTerrainRaise || design == BuiltinTerrainLower || design == BuiltinTerrainPlateau || design == BuiltinTerrainSmooth || design == BuiltinTerrainRiver || design == BuiltinTerrainRiverErase) {
 		fe.CancelPaint()
 		fe.TerrainBrush = design
 		fe.DressActive = false
@@ -879,6 +914,7 @@ func (tr *TerrainEditor) Ready() {
 		SetShaderParameter("texture_albedo", textures).
 		SetShaderParameter("radius", 2.0).
 		SetShaderParameter("height", 0.0).
+		SetShaderParameter("brush_mode", 0.0).
 		// 1 while the river-erase ("no water") brush previews filling the channel
 		// back to the original ground; see terrain.gdshader's river_fill block.
 		SetShaderParameter("river_fill", 0.0).
@@ -892,7 +928,8 @@ func (tr *TerrainEditor) Ready() {
 		SetShader(buried).
 		SetShaderParameter("texture_albedo", rock).
 		SetShaderParameter("radius", 2.0).
-		SetShaderParameter("height", 0.0)
+		SetShaderParameter("height", 0.0).
+		SetShaderParameter("brush_mode", 0.0)
 
 	// Water surface material plus its scrolling normal maps, UV distortion
 	// map and foam texture. The PNGs are raw (no .import files). The same wave
@@ -910,13 +947,18 @@ func (tr *TerrainEditor) Ready() {
 		// the raise/lower height preview before it commits (see water.gdshader).
 		SetShaderParameter("radius", 2.0).
 		SetShaderParameter("height", 0.0).
+		SetShaderParameter("brush_mode", 0.0).
 		SetShaderParameter("river_preview", 0.0).
 		// Start glassy — wave height is driven by the environment Wind slider
 		// (see updateWeatherIntensity); no wind means no swell.
-		SetShaderParameter("wave_height", 0.0)
+		SetShaderParameter("wave_height", 0.0).
+		// Off until the quality tier turns it on (Client.applyWaterQuality); the
+		// shader skips the screen-space-reflection march entirely when this is 0.
+		SetShaderParameter("reflection_strength", 0.0)
 
 	// Default level -2 == skirt bottom == hidden under flat terrain.
 	tr.WaterLevel = -2
+	tr.waterDisplayed = tr.WaterLevel // settled: no glide until the level changes
 	tr.water_shader.SetShaderParameter("water_level", float64(tr.WaterLevel))
 
 	tr.BrushRadius = 2.0
@@ -938,30 +980,37 @@ func (tr *TerrainEditor) Ready() {
 	tr.mapper = make(map[musical.Design]int)
 	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
 	tr.normal_maps = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
+	tr.spec_maps = []Image.Instance{defaultTerrainSpec()}
 	tr.uploadTextureArrays()
 	// Spawn + reveal the starter tile so the world is clickable before any
 	// sculpt arrives (every other tile starts hidden until an explicit extend).
 	tr.revealTile(tileCoord{0, 0})
 }
 
-// uploadTextureArrays rebuilds the Texture2DArray (and bumpmap
-// counterpart) from editor-level albedos/normal_maps and pushes them
-// to the shared shader. Called both at startup and when a new paint
-// Design first appears via uploadDesign.
+// uploadTextureArrays rebuilds the albedo / normal / gloss Texture2DArrays
+// from the editor-level image slices and pushes them to the shared shader.
+// Called both at startup and when a new paint Design first appears via
+// uploadDesign. All layers within an array must share size+format+mipmaps:
+// albedos and normal_maps rely on every terrain texture importing identically
+// (see normal.png.import, aligned to the pack's compressed-normal settings),
+// and spec_maps are normalised to R8 in loadTerrainSpec.
 func (tr *TerrainEditor) uploadTextureArrays() {
 	terrains := Texture2DArray.New()
 	terrains.AsImageTextureLayered().CreateFromImages(tr.albedos)
 	bumpmaps := Texture2DArray.New()
 	bumpmaps.AsImageTextureLayered().CreateFromImages(tr.normal_maps)
+	specmaps := Texture2DArray.New()
+	specmaps.AsImageTextureLayered().CreateFromImages(tr.spec_maps)
 	tr.shader.
 		SetShaderParameter("texture_albedo", terrains).
-		SetShaderParameter("texture_normal", bumpmaps)
+		SetShaderParameter("texture_normal", bumpmaps).
+		SetShaderParameter("texture_spec", specmaps)
 }
 
-// uploadDesign assigns the given paint Design a layer index in the
-// shared texture array, loading the texture (and its `_normal` sibling
-// if one exists) the first time it appears. Returns the layer index;
-// 0 is reserved for the default base layer.
+// uploadDesign assigns the given paint Design a layer index in the shared
+// texture arrays, loading the texture and its `_norm`/`_spec` siblings (if
+// present) the first time it appears. Returns the layer index; 0 is reserved
+// for the default base layer.
 func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 	if idx, ok := tr.mapper[design]; ok {
 		return idx
@@ -973,15 +1022,59 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 	idx := len(tr.albedos)
 	tr.mapper[design] = idx
 	tr.albedos = append(tr.albedos, texture.GetImage())
-	ext := path.Ext(texture.AsResource().ResourcePath())
-	normal_path := strings.TrimSuffix(texture.AsResource().ResourcePath(), ext) + "_normal" + ext
+	resPath := texture.AsResource().ResourcePath()
+	ext := path.Ext(resPath)
+	base := strings.TrimSuffix(resPath, ext)
+	// Normal map sibling. The wildfire_games terrain pack ships these as
+	// "<name>_norm.png" (NOT "_normal"); the old "_normal" lookup never
+	// matched, so every painted design silently fell back to the flat
+	// default normal. Load the real map so the surface shows relief.
+	normal_path := base + "_norm" + ext
 	if FileAccess.FileExists(normal_path) {
 		tr.normal_maps = append(tr.normal_maps, LoadSync[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
 	} else {
 		tr.normal_maps = append(tr.normal_maps, LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
 	}
+	// Specular/gloss sibling ("<name>_spec.png"): feeds the shader's roughness.
+	spec_path := base + "_spec" + ext
+	if FileAccess.FileExists(spec_path) {
+		tr.spec_maps = append(tr.spec_maps, loadTerrainSpec(spec_path))
+	} else {
+		tr.spec_maps = append(tr.spec_maps, defaultTerrainSpec())
+	}
 	tr.uploadTextureArrays()
 	return idx
+}
+
+// terrainTextureSize is the edge length of every wildfire_games terrain
+// texture (diffuse/normal/spec are all 2048²); the generated default gloss
+// layer matches it so it slots into the same Texture2DArray as loaded specs.
+const terrainTextureSize = 2048
+
+// loadTerrainSpec loads a "<name>_spec.png" gloss map and normalises it to a
+// single-channel, mip-free R8 Image. The pack's spec PNGs come in mixed source
+// formats (L / RGB / RGBA / paletted / 16-bit) which would otherwise import to
+// inconsistent GPU formats and break CreateFromImages; flattening to R8 here
+// guarantees every gloss layer shares one format. Falls back to the neutral
+// default if the image can't be decompressed.
+func loadTerrainSpec(spec_path string) Image.Instance {
+	img := LoadSync[Texture2D.Instance](spec_path).AsTexture2D().GetImage()
+	if img.IsCompressed() {
+		if err := img.Decompress(); err != nil {
+			return defaultTerrainSpec()
+		}
+	}
+	img.Convert(Image.FormatR8)
+	img.ClearMipmaps()
+	return img
+}
+
+// defaultTerrainSpec is the gloss layer used for the base layer and for any
+// design that ships no `_spec` sibling: fully black, i.e. ROUGHNESS = 1.0 in
+// the shader, matching the terrain's prior uniformly-matte look.
+func defaultTerrainSpec() Image.Instance {
+	return Image.CreateFromData(terrainTextureSize, terrainTextureSize, false,
+		Image.FormatR8, make([]byte, terrainTextureSize*terrainTextureSize))
 }
 
 func (tr *TerrainEditor) Paint() {
@@ -1074,6 +1167,7 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		tr.TerrainBrush = ""
 		tr.BrushActive = false
 		tr.BrushAmount = 0
+		tr.sculptStroke = false // drop any in-progress plateau/smooth drag lock
 		active = true
 		clearedBrush = true
 	}
@@ -1086,6 +1180,9 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		// The active brush drove the GizmoPower slider; with none selected it
 		// falls back to the sculpt-power parameter.
 		tr.refreshGizmoPowerSlider()
+		tr.shader.SetShaderParameter("brush_mode", 0.0)
+		tr.shader_buried.SetShaderParameter("brush_mode", 0.0)
+		tr.water_shader.SetShaderParameter("brush_mode", 0.0)
 	}
 	if active {
 		tr.syncBrushSliders()
@@ -1420,30 +1517,47 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		break
 	}
 	if !vr.PaintActive && vr.client.ui.mode == ModeGeometry && vr.TerrainBrush != "" {
-		// Height-sculpt preview: show the terrain shifted by the brush amount
-		// before the user clicks to confirm it. While a press is held, preview
-		// the actual pressed amount (BrushAmount); otherwise preview the tool's
-		// primary (LMB) GizmoPower amount so the shift is visible on hover.
-		// terrainBrushDelta is 0 for non-height tools (e.g. the river brush),
-		// so those show no height preview.
-		preview := vr.BrushAmount
-		if !vr.BrushActive {
-			preview = vr.terrainBrushDelta(true)
+		// Height-sculpt preview: deform the terrain the way a click will, before
+		// the user commits. brush_mode selects the deformation so the preview
+		// matches the committed stroke: 0 additive (raise/lower), 1 plateau
+		// (flatten toward the cursor height), 2 smooth (gentle pull toward it).
+		brushMode := 0.0
+		switch vr.TerrainBrush {
+		case BuiltinTerrainPlateau:
+			brushMode = 1.0
+		case BuiltinTerrainSmooth:
+			brushMode = 2.0
 		}
-		// The river brush isn't a height bump (terrainBrushDelta is 0 for it), so
-		// without this it previewed nothing. Preview its channel as a negative
-		// carve (height) plus a still-water fill at the cursor (river_preview, the
-		// channel depth) so the river's water shows before the live stroke commits.
+		// heightParam drives the terrain + side-wall shader preview: the additive
+		// bump for raise/lower (and the river carve), or the convergence fraction
+		// for plateau/smooth (the shader pulls toward the cursor height by
+		// fraction*falloff, matching the committed pull). surfaceDelta is the
+		// additive world-Y displacement for props/water that ride an ADDITIVE bump
+		// (zero for the flatten brushes — those ride flattenTarget via flatten=true).
+		var heightParam, surfaceDelta Float.X
+		flatten := false                  // plateau/smooth: pull toward flattenTarget rather than add
+		flatTop := false                  // plateau only: hold a flat top (plateauFalloff) vs a soft cone
+		flattenTarget := vr.BrushTarget.Y // plateau/smooth pull toward the cursor height
 		riverPreview := Float.X(0)
 		riverFill := Float.X(0)
 		riverCarve := Float.X(0)
 		switch vr.TerrainBrush {
+		case BuiltinTerrainPlateau:
+			heightParam = Float.X(terrainSculptFactor(vr.BrushPower, plateauStrengthScale))
+			flatten = true
+			flatTop = true
+		case BuiltinTerrainSmooth:
+			// Smooth pulls the disc toward its mean ground height with a soft cone —
+			// the preview shows exactly that (flattenTarget = disc mean, set below).
+			heightParam = Float.X(terrainSculptFactor(vr.BrushPower, smoothStrengthScale))
+			flatten = true
 		case BuiltinTerrainRiver:
 			depth := vr.BrushRiverDepth
 			if depth <= 0 {
 				depth = riverDefaultDepth
 			}
-			preview = -depth
+			heightParam = -depth
+			surfaceDelta = -depth
 			riverPreview = depth
 			// Carve the bed with PAINT-OVER semantics (matching the commit) instead
 			// of the additive `height` bump, so an overlapping drag segment doesn't
@@ -1456,21 +1570,74 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			// bed per-vertex toward the original ground (CUSTOM2.r) inside the
 			// disc, so the river shoals and the (separately rendered) water is
 			// occluded where the channel fills — matching one committed stroke.
-			preview = 0
 			riverFill = 1
+		default: // raise / lower: additive. While a press is held preview the
+			// pressed amount (BrushAmount); otherwise the tool's primary (LMB)
+			// GizmoPower amount so the shift is visible on hover.
+			amount := vr.BrushAmount
+			if !vr.BrushActive {
+				amount = vr.terrainBrushDelta(true)
+			}
+			heightParam = amount
+			surfaceDelta = amount
 		}
-		vr.shader.SetShaderParameter("height", preview)
+		// Flatten brushes pull toward a target the preview must match. Plateau: the
+		// LOCKED level once a drag is in progress (so the hover matches the committed
+		// terrace), else the live cursor height. Smooth: the disc-mean ground height
+		// (the same scalar the commit stores in Target.Y). uplift is the flatten target
+		// the terrain/buried/water shaders pull toward; override its Y to match (XZ
+		// stays the cursor for the disc centre), and feed flattenTarget to grass/objects.
+		switch vr.TerrainBrush {
+		case BuiltinTerrainPlateau:
+			if vr.sculptStroke {
+				flattenTarget = vr.sculptLockY
+			}
+		case BuiltinTerrainSmooth:
+			flattenTarget = vr.discGroundMean(vr.BrushTarget, vr.BrushRadius, vr.BrushTarget.Y)
+		}
+		if flatten {
+			up := Vector3.New(vr.BrushTarget.X, flattenTarget, vr.BrushTarget.Z)
+			vr.shader.SetShaderParameter("uplift", up)
+			vr.shader_buried.SetShaderParameter("uplift", up)
+			vr.water_shader.SetShaderParameter("uplift", up)
+		}
+		vr.shader.SetShaderParameter("height", heightParam)
 		vr.shader.SetShaderParameter("river_fill", riverFill)
 		vr.shader.SetShaderParameter("river_carve", riverCarve)
-		vr.shader_buried.SetShaderParameter("height", preview)
-		vr.water_shader.SetShaderParameter("height", preview)
+		vr.shader.SetShaderParameter("brush_mode", brushMode)
+		vr.shader_buried.SetShaderParameter("height", heightParam)
+		vr.shader_buried.SetShaderParameter("brush_mode", brushMode)
+		// Water reacts to the preview too: additive brushes (raise/lower/river) shift
+		// the bed by `height` and ride river surfaces; the flatten brushes (brush_mode
+		// >0.5) pull the bed toward uplift.y so the lake shoals over a raised mesa /
+		// covers a lowered one. heightParam carries the additive amount OR the flatten
+		// fraction, matching the terrain shader.
+		vr.water_shader.SetShaderParameter("height", heightParam)
 		vr.water_shader.SetShaderParameter("river_preview", riverPreview)
-		// Carry the exact same disc-falloff preview onto the things sitting on the
-		// terrain: grass rides it in its own shader (GPU), placed objects we don't
-		// own a shader for are nudged on the CPU. Both reset to neutral on commit
-		// (reprojectGrass / reprojectObjects re-seat on the real surface).
-		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, preview)
-		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, preview)
+		vr.water_shader.SetShaderParameter("brush_mode", brushMode)
+		// Carry the previewed surface onto the things sitting on the terrain: grass
+		// rides it in its own shader (GPU), placed objects we don't own a shader for
+		// are nudged on the CPU. Both reset on commit (reprojectGrass /
+		// reprojectObjects re-seat on the real surface). Flatten brushes ride toward
+		// flattenTarget by the strength fraction; additive brushes ride surfaceDelta.
+		grassParam := surfaceDelta
+		if flatten {
+			grassParam = heightParam // the strength fraction the shader pulls by
+		}
+		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, grassParam, brushMode, flattenTarget)
+		// Placed scenery objects (trees, props) ride the preview ONLY while a
+		// stroke is actively being applied — a held raise/lower press (BrushActive)
+		// or a plateau/smooth/river drag (brushStrokeActive). On a passive hover we
+		// pass 0 so they settle on the COMMITTED surface instead of leaping to the
+		// would-be-clicked height, which read as props floating high above the
+		// solid ground. They re-seat for real on commit via reprojectObjects. The
+		// scattered dressing above keeps riding the live ghost every frame — it is
+		// part of the terrain skin, not a thing standing on it.
+		objParam := grassParam
+		if !vr.BrushActive && !vr.brushStrokeActive {
+			objParam = 0
+		}
+		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, objParam, flatten, flatTop, flattenTarget)
 	} else {
 		vr.BrushAmount = 0.0
 		vr.shader.SetShaderParameter("height", 0.0)
@@ -1479,8 +1646,11 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		vr.shader_buried.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("height", 0.0)
 		vr.water_shader.SetShaderParameter("river_preview", 0.0)
-		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, 0)
-		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, 0)
+		vr.shader.SetShaderParameter("brush_mode", 0.0)
+		vr.shader_buried.SetShaderParameter("brush_mode", 0.0)
+		vr.water_shader.SetShaderParameter("brush_mode", 0.0)
+		vr.setGrassBrushPreview(vr.BrushTarget, vr.BrushRadius, 0, 0, 0)
+		vr.updateObjectPreview(vr.BrushTarget, vr.BrushRadius, 0, false, false, 0)
 	}
 	// Live dressing-brush preview: render the scatter a click would place while
 	// hovering in ModeDressing (cleared while stroking / off-tool). Independent of
@@ -1590,14 +1760,16 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	if brush.Author == vr.client.id {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader.SetShaderParameter("river_carve", 0.0)
+		vr.shader.SetShaderParameter("brush_mode", 0.0)
 		vr.shader_buried.SetShaderParameter("height", 0.0)
+		vr.shader_buried.SetShaderParameter("brush_mode", 0.0)
 	}
 	// A height sculpt (no Design, nonzero Amount — raise/lower or a river carve)
 	// reshapes the ground, so anything sitting on the affected area must follow.
 	// Snapshot each placed object's height-above-terrain against the CURRENT
 	// surface before the tiles reload, so the deferred reprojection can re-seat
 	// them on the new surface (see reprojectObjects).
-	isHeight := brush.Design == (musical.Design{}) && brush.Amount != 0
+	isHeight := brush.Design == (musical.Design{}) && (brush.Amount != 0 || isSpecialTerrainSlider(brush.Slider))
 	var objectCaps []objectHeightCapture
 	if isHeight {
 		objectCaps = vr.captureObjectHeights(brush.Target, brush.Radius)
@@ -1686,12 +1858,18 @@ func (vr *TerrainEditor) reprojectObjects(caps []objectHeightCapture) {
 
 // setGrassBrushPreview pushes the live height-brush hover preview (centre XZ,
 // strength, radius) to the grass shader's global uniforms so every grass blade
-// rides the previewed surface on the GPU. height 0 (passed when no height brush
-// is hovering) makes the shader's lift inert. See grass_wind.gdshader.
-func (vr *TerrainEditor) setGrassBrushPreview(target Vector3.XYZ, radius, height Float.X) {
+// rides the previewed surface on the GPU. mode mirrors the terrain shader's
+// brush_mode (0 additive raise/lower/river, 1 plateau, 2 smooth): in mode 0
+// `height` is the disc lift; in the flatten modes it is the strength fraction and
+// the blade is pulled toward targetY (plateau with a flat top, smooth with a soft
+// cone). height 0 (passed when no height brush is hovering) makes the shader's
+// effect inert. See grass_wind.gdshader.
+func (vr *TerrainEditor) setGrassBrushPreview(target Vector3.XYZ, radius, height Float.X, mode float64, targetY Float.X) {
 	RenderingServer.GlobalShaderParameterSet("grass_brush_uplift", Vector2.New(target.X, target.Z))
 	RenderingServer.GlobalShaderParameterSet("grass_brush_height", float64(height))
 	RenderingServer.GlobalShaderParameterSet("grass_brush_radius", float64(radius))
+	RenderingServer.GlobalShaderParameterSet("grass_brush_mode", mode)
+	RenderingServer.GlobalShaderParameterSet("grass_brush_target_y", float64(targetY))
 }
 
 // updateObjectPreview is the CPU counterpart of setGrassBrushPreview for placed
@@ -1701,8 +1879,11 @@ func (vr *TerrainEditor) setGrassBrushPreview(target Vector3.XYZ, radius, height
 // worldFloorY). It maintains the node.Y == committedY + offset invariant via
 // objectPreviewOffsets, adjusting only by the change in offset so repeated frames
 // (and an overlapping commit's reprojectObjects) never accumulate or drift.
-// Pass amount 0 to settle every object back to its committed position.
-func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount Float.X) {
+// In flatten mode (plateau/smooth) `amount` is the strength fraction and each
+// object is pulled toward targetY rather than lifted additively; flatTop selects
+// the plateau's flat-topped falloff vs smooth's soft cone. Pass amount 0 to
+// settle every object back to its committed position.
+func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount Float.X, flatten, flatTop bool, targetY Float.X) {
 	if vr.client == nil {
 		return
 	}
@@ -1714,7 +1895,6 @@ func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount 
 		vr.restoreObjectPreview()
 		return
 	}
-	floor := Float.X(worldFloorY)
 	for _, id := range vr.client.entity_to_object {
 		node, ok := id.Instance()
 		if !ok {
@@ -1729,14 +1909,14 @@ func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount 
 		dz := float64(pos.Z - target.Z)
 		d2 := dx*dx + dz*dz
 		if d2 <= r2 {
-			// HeightAt ignores Y, so the committed terrain height under the object
-			// is correct even though node.Y carries the old offset.
-			oldH := vr.HeightAt(pos)
-			newH := oldH + amount*Float.X(1-d2/r2)
-			if newH < floor {
-				newH = floor
+			// Match the GPU exactly: the rendered surface shift at this object is the
+			// triangle-interpolated per-vertex deformation (previewDisplacementAt), not
+			// a pointwise mix(HeightAt, target, fac) — the latter drifts within a cell
+			// (the per-vertex falloff is nonlinear) enough to float a prop on a steep
+			// flatten. node.Y's old offset is moot since this is a pure XZ-keyed shift.
+			if tile := vr.tileForWorld(pos); tile != nil {
+				want = tile.previewDisplacementAt(pos, target, radius, amount, flatten, flatTop, targetY)
 			}
-			want = newH - oldH
 		}
 		if want == old {
 			continue
@@ -1770,7 +1950,7 @@ func (vr *TerrainEditor) restoreObjectPreview() {
 // stranded at their previewed height.
 func (vr *TerrainEditor) clearObjectPreview() {
 	vr.restoreObjectPreview()
-	vr.setGrassBrushPreview(Vector3.Zero, 0, 0)
+	vr.setGrassBrushPreview(Vector3.Zero, 0, 0, 0, 0)
 }
 
 // editStroke is one committed editor-level mutation (dressing / water level /
@@ -1909,6 +2089,8 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 		if !tr.PaintActive && tr.BrushActive && (event.ButtonIndex() == Input.MouseButtonLeft || event.ButtonIndex() == Input.MouseButtonRight) && event.AsInputEvent().IsReleased() {
+			// Single-shot raise/lower commit on release. Plateau/smooth are drag-paint
+			// (PaintTerrainSculpt) and never arm BrushActive, so they don't reach here.
 			if tr.BrushAmount != 0 {
 				tr.client.commitSculpt(musical.Sculpt{
 					Author: tr.client.id,
@@ -1947,6 +2129,8 @@ const worldFloorY float32 = -2.0
 const (
 	BuiltinTerrainRaise      = "procedural://terrain/raise"
 	BuiltinTerrainLower      = "procedural://terrain/lower"
+	BuiltinTerrainPlateau    = "procedural://terrain/plateau"
+	BuiltinTerrainSmooth     = "procedural://terrain/smooth"
 	BuiltinTerrainRiver      = "procedural://terrain/river"
 	BuiltinTerrainRiverErase = "procedural://terrain/river_erase"
 
@@ -1954,9 +2138,9 @@ const (
 	// These arm a brush that emits negative-Amount sculpts for the whole category
 	// (all designs under that Slider), replacing the old Ctrl+Shift hack.
 	BuiltinDressingClearGrasses = "procedural://dressing/clear_grasses"
-	BuiltinDressingClearPebbles = "procedural://dressing/clear_pebbles"
 	BuiltinDressingClearFoliage = "procedural://dressing/clear_foliage"
-	BuiltinDressingClearMineral = "procedural://dressing/clear_mineral"
+	BuiltinDressingClearShrooms = "procedural://dressing/clear_shrooms"
+	BuiltinDressingClearBoulder = "procedural://dressing/clear_boulder"
 
 	// BuiltinDressingClearAll (the "bomb") clears every dressing category at once.
 	BuiltinDressingClearAll = "procedural://dressing/clear_all"
@@ -1982,12 +2166,181 @@ const extendSlider = "extend"
 // restores it seamlessly).
 const hideSlider = "hide"
 
-// terrainBrushDelta returns the signed height amount one click applies for
-// the given mouse button, according to the currently selected terrain brush
-// tool and the GizmoPower slider. The "raise" tool makes the primary button
-// (LMB) raise terrain; the "lower" tool makes the primary button lower it.
-// The secondary button (RMB) always inverts the tool's direction. The
-// magnitude is the GizmoPower strength (BrushPower), applied in one shot.
+// plateauSlider / smoothSlider tag Sculpt entries for the new terrain brushes.
+// Amount is deliberately left 0 (and thus often absent from the wire record)
+// so that older clients decode them as a no-op height stroke (+0) and never
+// corrupt a world that contains plateau/smooth edits. The brush strength is
+// carried in Orient; for plateau the click-point surface height is the
+// already-present Target.Y.
+const (
+	plateauSlider = "terrain/plateau"
+	smoothSlider  = "terrain/smooth"
+)
+
+func isSpecialTerrainSlider(s string) bool {
+	return s == plateauSlider || s == smoothSlider
+}
+
+// plateauStrengthScale / smoothStrengthScale map a special terrain brush's power
+// (BrushPower, the GizmoPower slider; range 0.1–10, default 2) to the convergence
+// fraction one pass applies at the disc centre. Plateau is strong — at the default
+// power a single click fully flattens the disc centre to the click height — so it
+// shapes mesas in a click or two. Smooth is lighter per pass but runs
+// smoothIterations passes, easing broad bumps without snapping them to one level.
+const (
+	plateauStrengthScale float32 = 0.5
+	smoothStrengthScale  float32 = 0.3
+)
+
+// plateauFlatCore is the fraction of the brush radius that the plateau brush
+// holds DEAD FLAT at the target height; beyond it the disc eases back to the
+// original terrain over the remaining skirt. A large core gives the harsh,
+// flat-topped mesa a plateau should make (vs the soft dome a plain 1−d²/r² cone
+// produces). It is replicated as PLATEAU_FLAT_CORE in terrain/buried/grass_wind
+// shaders so the committed flatten, the hover preview, and the props riding it
+// all agree — keep them in sync. Inside the flat core every point (vertices,
+// grass, objects) clamps to exactly the target, so nothing drifts there.
+const plateauFlatCore float32 = 0.6
+
+// plateauFalloff is the plateau brush's flat-topped weight profile: 1 across the
+// flat core, eased to 0 at the rim with a smoothstep skirt. t is the normalised
+// distance from the brush centre (d/radius, in [0,1]). Shared by the committed
+// apply and the CPU object preview; the shaders inline the identical curve.
+func plateauFalloff(t float32) float32 {
+	if t <= plateauFlatCore {
+		return 1
+	}
+	if t >= 1 {
+		return 0
+	}
+	u := (t - plateauFlatCore) / (1 - plateauFlatCore) // 0 at core edge, 1 at rim
+	return 1 - u*u*(3-2*u)                             // 1 − smoothstep(core,1,t)
+}
+
+// terrainSculptFactor converts a plateau/smooth stroke's stored strength (the
+// raw brush power carried in Orient) into the centre convergence fraction for the
+// given scale, clamped to [0,1]. Shared by the committed apply (per-tile Reload)
+// and the hover preview (the shader `height` uniform) so the previewed deformation
+// matches exactly what a click commits. Smooth uses the smaller smoothStrengthScale
+// (a softer pull toward the disc mean, since a drag re-applies it many times);
+// plateau the larger plateauStrengthScale (full clamp to the level in one click).
+func terrainSculptFactor(power Float.X, scale float32) float32 {
+	f := float32(power) * scale
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	return f
+}
+
+// discGroundMean returns the mean original-ground height over the brush disc,
+// sampled across every intersecting tile's groundHeights. The smooth brush stores
+// this in its Sculpt.Target.Y and pulls the ground toward it — ONE shared scalar,
+// so the deformation is a pure function of world position (like plateau) and thus
+// SEAMLESS across tile boundaries and reproducible on recompute, unlike a
+// per-vertex neighbour average (which each tile would compute differently at a
+// shared edge, tearing the seam). Returns fallback if the disc covers no
+// generated tile.
+func (tr *TerrainEditor) discGroundMean(target Vector3.XYZ, radius, fallback Float.X) Float.X {
+	r2 := float64(radius) * float64(radius)
+	if r2 <= 0 {
+		return fallback
+	}
+	var sum float64
+	var count int
+	for _, tile := range tr.tilesIntersecting(target, radius) {
+		n := tile.size
+		if n == 0 {
+			n = terrainDefaultSize
+		}
+		hm := n + 1
+		if len(tile.groundHeights) < hm*hm {
+			continue // not generated yet
+		}
+		half := float64(n) / 2
+		ox := float64(tile.coord.X*n) - half
+		oz := float64(tile.coord.Z*n) - half
+		for gz := 0; gz <= n; gz++ {
+			dz := oz + float64(gz) - float64(target.Z)
+			for gx := 0; gx <= n; gx++ {
+				dx := ox + float64(gx) - float64(target.X)
+				if dx*dx+dz*dz > r2 {
+					continue
+				}
+				sum += float64(tile.groundHeights[gx+gz*hm])
+				count++
+			}
+		}
+	}
+	if count == 0 {
+		return fallback
+	}
+	return Float.X(sum / float64(count))
+}
+
+// specialTerrainBrushActive reports whether the plateau or smooth brush is armed.
+// These are drag-paint tools (PaintTerrainSculpt), unlike the single-shot
+// raise/lower brushes, so they share the river/dressing continuous-stroke path.
+func (tr *TerrainEditor) specialTerrainBrushActive() bool {
+	return tr.TerrainBrush == BuiltinTerrainPlateau || tr.TerrainBrush == BuiltinTerrainSmooth
+}
+
+// PaintTerrainSculpt commits one segment of a plateau/smooth drag stroke as a
+// musical.Sculpt (so every client reproduces it). Called throttled from the
+// client loop while the left button is held — mirroring PaintRiver. The plateau
+// target height is LOCKED at the stroke's start (sculptLockY) and reused for every
+// segment, so dragging carves one continuous flat terrace at the height the
+// preview showed rather than chasing the terrain under each segment. Smooth needs
+// no lock (it pulls toward the local neighbour average; Target.Y is unused).
+func (tr *TerrainEditor) PaintTerrainSculpt() {
+	if !tr.specialTerrainBrushActive() || tr.client == nil {
+		return
+	}
+	if !tr.sculptStroke {
+		// Stroke start: lock the plateau level and commit the first segment now.
+		tr.sculptStroke = true
+		tr.sculptLockY = tr.BrushTarget.Y
+		tr.sculptLast = tr.BrushTarget
+	} else {
+		// Movement spacing (shared idiom with dressing/river): emit only once the
+		// brush has moved ~half a radius, so a stationary hold doesn't spam segments.
+		dx := tr.BrushTarget.X - tr.sculptLast.X
+		dz := tr.BrushTarget.Z - tr.sculptLast.Z
+		spacing := tr.BrushRadius * 0.5
+		if dx*dx+dz*dz < spacing*spacing {
+			return
+		}
+		tr.sculptLast = tr.BrushTarget
+	}
+	s := musical.Sculpt{
+		Author: tr.client.id,
+		Target: tr.BrushTarget,
+		Radius: tr.BrushRadius,
+		Orient: Angle.Radians(tr.BrushPower),
+		Commit: true,
+	}
+	switch tr.TerrainBrush {
+	case BuiltinTerrainPlateau:
+		s.Slider = plateauSlider
+		s.Target.Y = tr.sculptLockY // flatten to the locked level, not the live terrain
+	case BuiltinTerrainSmooth:
+		s.Slider = smoothSlider
+		// Pull toward the disc's mean ground height (a single shared scalar → seamless
+		// across tiles). Recomputed per segment, so a drag follows the terrain's
+		// large-scale shape while shaving local bumps toward the local average.
+		s.Target.Y = tr.discGroundMean(tr.BrushTarget, tr.BrushRadius, tr.BrushTarget.Y)
+	}
+	tr.client.commitSculpt(s)
+}
+
+// terrainBrushDelta returns the signed height amount one click applies for the
+// given mouse button for the SINGLE-SHOT raise/lower brushes: the "raise" tool
+// makes the primary button (LMB) raise terrain, "lower" makes it lower; the
+// secondary button (RMB) inverts. The magnitude is the GizmoPower strength
+// (BrushPower), applied in one shot. Plateau/smooth are drag-paint
+// (PaintTerrainSculpt), not single-shot, so they're deliberately absent here.
 func (tr *TerrainEditor) terrainBrushDelta(leftButton bool) Float.X {
 	switch tr.TerrainBrush {
 	case BuiltinTerrainRaise:
@@ -2167,6 +2520,76 @@ func (tile *TerrainTile) revert(author musical.Author, timing musical.Timing) bo
 	return false
 }
 
+// recomputeNormals fills tile.normals from the current heightfield so the
+// terrain shades by its real slope (hills catch and lose the sun) instead of
+// being lit as a flat plane. Each of the 6 duplicated vertices in a cell keys
+// off its grid point and gets that point's heightfield-gradient normal — the
+// same (-dh/dx, 1, -dh/dz) convention NormalAt uses for object placement — so
+// coincident vertices share a normal and the surface shades smoothly. Samples
+// one cell beyond the tile border read the neighbouring tile via the editor's
+// cross-tile lookup so normals stay continuous across tile seams; with no
+// neighbour there (world edge / unrevealed tile) they clamp to the border.
+func (tile *TerrainTile) recomputeNormals() {
+	n := tile.size
+	hm := n + 1
+	if len(tile.normals) != n*n*6 || len(tile.heights) != hm*hm {
+		return
+	}
+	origin := tile.Mesh.AsNode3D().GlobalPosition()
+	h := func(gx, gy int) Float.X {
+		if gx >= 0 && gx <= n && gy >= 0 && gy <= n {
+			return Float.X(tile.heights[gx+gy*hm])
+		}
+		// Ghost cell beyond this tile's edge: read the neighbour so the gradient
+		// (and thus the normal) is continuous across the seam.
+		if tile.editor != nil {
+			world := Vector3.Add(origin, Vector3.XYZ{X: Float.X(gx), Z: Float.X(gy)})
+			if nb := tile.editor.tileForWorld(world); nb != nil && nb != tile && len(nb.heights) == (nb.size+1)*(nb.size+1) {
+				return nb.HeightAt(world)
+			}
+		}
+		// No neighbour: clamp to this tile's border so the edge normal stays flat
+		// there rather than diving toward a phantom 0 height off the world's rim.
+		cx, cy := gx, gy
+		if cx < 0 {
+			cx = 0
+		} else if cx > n {
+			cx = n
+		}
+		if cy < 0 {
+			cy = 0
+		} else if cy > n {
+			cy = n
+		}
+		return Float.X(tile.heights[cx+cy*hm])
+	}
+	// One normal per grid vertex (computed once), then scattered to the 6
+	// duplicated triangle vertices per cell. n = normalize(-dh/dx, 1, -dh/dz);
+	// central differences over a 1-unit cell give 2·dh/dx = h(x+1)-h(x-1), and the
+	// constant factor drops under normalize, so build (h(x-1)-h(x+1), 2, h(y-1)-h(y+1)).
+	grid := make([]Vector3.XYZ, hm*hm)
+	for gy := 0; gy <= n; gy++ {
+		for gx := 0; gx <= n; gx++ {
+			grid[gx+gy*hm] = Vector3.Normalized(Vector3.XYZ{
+				X: h(gx-1, gy) - h(gx+1, gy),
+				Y: 2,
+				Z: h(gx, gy-1) - h(gx, gy+1),
+			})
+		}
+	}
+	for x := 0; x < n; x++ {
+		for y := 0; y < n; y++ {
+			base := 6 * (x + n*y)
+			tile.normals[base+0] = grid[x+y*hm]
+			tile.normals[base+1] = grid[(x+1)+y*hm]
+			tile.normals[base+2] = grid[x+(y+1)*hm]
+			tile.normals[base+3] = grid[(x+1)+y*hm]
+			tile.normals[base+4] = grid[(x+1)+(y+1)*hm]
+			tile.normals[base+5] = grid[x+(y+1)*hm]
+		}
+	}
+}
+
 // generateBase mesh, textures and the collision shape, these will change whenever a [musical.Sculpt] arrives.
 func (tile *TerrainTile) generateBase() {
 	tile.generated = true
@@ -2226,6 +2649,9 @@ func (tile *TerrainTile) generateBase() {
 			add(6*(x+n*y)+5, x, y+1, 0, 0, 1, 0)   // bottom left
 		}
 	}
+	// Replace the flat seed normals with real heightfield-gradient normals so the
+	// terrain self-shades by slope (see recomputeNormals).
+	tile.recomputeNormals()
 	attributes := [Mesh.ArrayMax]any{
 		Mesh.ArrayVertex:  tile.vertices,
 		Mesh.ArrayTexUv:   tile.uvs,
@@ -2240,6 +2666,9 @@ func (tile *TerrainTile) generateBase() {
 			Mesh.ArrayFormat(Mesh.ArrayCustomRgbaFloat)<<Mesh.ArrayFormatCustom1Shift|
 			Mesh.ArrayFormat(Mesh.ArrayCustomRFloat)<<Mesh.ArrayFormatCustom2Shift,
 	)
+	// Regenerate tangents for the now-varying normals so the terrain normal map
+	// still applies correctly on slopes (matches the recompute path).
+	mesh.RegenNormalMaps()
 	tile.Mesh.
 		SetMesh(mesh.AsMesh()).
 		AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
@@ -2405,16 +2834,21 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 			}
 			return 0
 		}
-		// Accumulate each non-river height stroke (raise/lower) into the
-		// original-ground field — the terrain as if no river had ever been dug
-		// (the river's water-surface reference "where the terrain used to be").
-		// River strokes are applied separately to riverDepth below so they
-		// overwrite/erase rather than add.
+		// Height strokes reshape the original-ground field — the terrain as if no
+		// river had ever been dug (the river's water-surface reference "where the
+		// terrain used to be"). Two kinds share this single pass because both
+		// mutate groundHeights and so MUST be replayed in chronological order
+		// relative to each other (a plateau flattens whatever raise/lower strokes
+		// preceded it; running them in separate grouped passes made undo/redo,
+		// which replays history, reshape the terrain differently than live
+		// editing): raise/lower add a falloff bump, plateau/smooth pull the ground
+		// toward a target. River strokes are a separate channel (riverDepth),
+		// applied below so they overwrite/erase rather than add.
 		//
-		// The -2 floor is applied PER STROKE (not to an accumulated per-batch sum)
-		// so reverting one stroke removes exactly the contribution it added, and a
-		// from-scratch recompute over the surviving strokes matches the
-		// incremental forward path stroke for stroke.
+		// The -2 floor on raise/lower is applied PER STROKE (not to an accumulated
+		// per-batch sum) so reverting one stroke removes exactly the contribution
+		// it added, and a from-scratch recompute over the surviving strokes matches
+		// the incremental forward path stroke for stroke.
 		for si := range strokes {
 			sculpt := strokes[si]
 			if sculpt.Design != (musical.Design{}) || isRiverSlider(sculpt.Slider) {
@@ -2429,6 +2863,53 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 				continue
 			}
 			r2 := sculpt.Radius * sculpt.Radius
+			// Plateau / smooth: convergent pull toward a SINGLE target height carried
+			// in Target.Y (Amount stays 0 for back-compat). Plateau's target is the
+			// locked click level (a flat-topped mesa); smooth's is the mean ground
+			// height over the disc, computed once at commit (see discGroundMean) so it
+			// reduces local relief toward the local average. Using one shared scalar —
+			// rather than a per-vertex neighbour average — keeps the result a pure
+			// function of world position, so adjacent tiles agree exactly at a shared
+			// edge (no seam tear) and a recompute reproduces it. Falloff differs:
+			// plateau holds a flat top (plateauFalloff), smooth uses a soft 1−d²/r²
+			// cone. Strength = terrainSculptFactor(Orient), shared with the preview.
+			if isSpecialTerrainSlider(sculpt.Slider) {
+				smooth := sculpt.Slider == smoothSlider
+				scale := plateauStrengthScale
+				if smooth {
+					scale = smoothStrengthScale
+				}
+				strength := terrainSculptFactor(Float.X(sculpt.Orient), scale)
+				if strength <= 0 {
+					continue
+				}
+				targetH := float32(sculpt.Target.Y)
+				for i := 0; i < hm*hm; i++ {
+					pos := Vector3.Add(Vector3.XYZ{Float.X(i % hm), 0, Float.X(i / hm)}, offset)
+					dx := pos.X - sculpt.Target.X
+					dy := pos.Z - sculpt.Target.Z
+					d2 := dx*dx + dy*dy
+					if d2 > r2 {
+						continue
+					}
+					var ff float32
+					if smooth {
+						ff = float32(1 - d2/r2)
+					} else {
+						ff = plateauFalloff(float32(Float.Sqrt(d2) / sculpt.Radius))
+					}
+					fac := strength * ff
+					if fac <= 0 {
+						continue
+					}
+					if fac > 1 {
+						fac = 1
+					}
+					tile.groundHeights[i] = tile.groundHeights[i]*(1-fac) + targetH*fac
+				}
+				continue
+			}
+			// Raise / lower: additive falloff bump.
 			for i := 0; i < hm*hm; i++ {
 				pos := Vector3.Add(Vector3.XYZ{Float.X(i % hm), 0, Float.X(i / hm)}, offset)
 				dx := pos.X - sculpt.Target.X
@@ -2519,6 +3000,9 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 				update(6*(x+n*y)+5, x, y, x, y+1)   // bottom left
 			}
 		}
+		// Re-derive the slope normals from the edited heights so the relit terrain
+		// shades by its new shape (RegenNormalMaps below rebuilds tangents to suit).
+		tile.recomputeNormals()
 		tile.heightmapShape.SetMapData(tile.heights)
 		attributes := [Mesh.ArrayMax]any{
 			Mesh.ArrayVertex:  tile.vertices,
@@ -2911,9 +3395,90 @@ func (tile *TerrainTile) HeightAt(pos Vector3.XYZ) Float.X {
 	h11 := Float.X(tile.heights[x1+z1*hm])
 	sx := x - Float.X(x0)
 	sz := z - Float.X(z0)
-	h0 := h00*(1-sx) + h10*sx
-	h1 := h01*(1-sx) + h11*sx
-	return (h0*(1-sz) + h1*sz)
+	// Interpolate within the SAME triangle the mesh renders (Reload's update():
+	// TL,TR,BL + TR,BR,BL, split along the TR–BL anti-diagonal), not a bilinear
+	// average. The bilinear "twist" can sit ~1 unit off the rendered surface on a
+	// saddle/edited cell, which floats every prop that rests via HeightAt (placement,
+	// reprojectObjects, floats, grass). Triangle interp puts them on what's drawn.
+	if sx+sz <= 1 {
+		return h00 + sx*(h10-h00) + sz*(h01-h00)
+	}
+	return h11 + (1-sx)*(h01-h11) + (1-sz)*(h10-h11)
+}
+
+// previewDisplacementAt returns how far the height-brush HOVER preview shifts the
+// rendered terrain surface at pos (previewedHeight − committedHeight), so a prop
+// resting on the surface rides it exactly. It mirrors terrain.gdshader to the
+// pixel: each committed corner vertex of pos's cell is deformed the way the shader
+// does — additively lifted by amount*(1−d²/r²) for raise/lower/river, pulled toward
+// targetY by a 1−d²/r² cone for smooth (flatTop=false), or by the flat-topped
+// plateauFalloff for plateau (flatTop=true) — floored per-vertex at the world
+// floor, and the four per-corner shifts are interpolated with the SAME triangle
+// split the mesh uses (Reload's update()), matching the GPU's linear-per-triangle
+// rasterisation rather than a bilinear guess that drifts within a cell.
+func (tile *TerrainTile) previewDisplacementAt(pos, target Vector3.XYZ, radius, amount Float.X, flatten, flatTop bool, targetY Float.X) Float.X {
+	n := tile.size
+	hm := n + 1
+	maxF := Float.X(n)
+	base := tile.Mesh.AsNode3D().GlobalPosition()
+	local := Vector3.Sub(pos, base)
+	x := max(0.0, min(maxF, local.X))
+	z := max(0.0, min(maxF, local.Z))
+	x0 := int(x)
+	z0 := int(z)
+	x1 := x0 + 1
+	z1 := z0 + 1
+	if x1 > n {
+		x1 = n
+	}
+	if z1 > n {
+		z1 = n
+	}
+	r2 := radius * radius
+	floor := Float.X(worldFloorY)
+	// shift returns the rendered Y change at one committed grid vertex.
+	shift := func(gx, gz int) Float.X {
+		h := Float.X(tile.heights[gx+gz*hm])
+		d := h
+		if r2 > 0 {
+			dx := base.X + Float.X(gx) - target.X
+			dz := base.Z + Float.X(gz) - target.Z
+			dd := dx*dx + dz*dz
+			if dd < r2 {
+				if flatten {
+					var ff float32
+					if flatTop {
+						ff = plateauFalloff(float32(Float.Sqrt(dd) / radius))
+					} else {
+						ff = float32(1 - dd/r2)
+					}
+					fac := Float.X(float32(amount) * ff)
+					if fac > 1 {
+						fac = 1
+					}
+					if fac < 0 {
+						fac = 0
+					}
+					d = h*(1-fac) + targetY*fac
+				} else {
+					d = h + amount*(1-dd/r2)
+				}
+			}
+		}
+		return max(d, floor) - max(h, floor)
+	}
+	d00 := shift(x0, z0)
+	d10 := shift(x1, z0)
+	d01 := shift(x0, z1)
+	d11 := shift(x1, z1)
+	sx := x - Float.X(x0)
+	sz := z - Float.X(z0)
+	// Match the mesh triangulation (Reload's update()): each cell splits along the
+	// TR–BL anti-diagonal into triangles TL,TR,BL (sx+sz≤1) and TR,BR,BL (sx+sz>1).
+	if sx+sz <= 1 {
+		return d00 + sx*(d10-d00) + sz*(d01-d00)
+	}
+	return d11 + (1-sx)*(d01-d11) + (1-sz)*(d10-d11)
 }
 
 // NormalAt returns the surface normal of the terrain mesh at the given position.
@@ -2967,16 +3532,17 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				// only thing allowed to start a real paint/dress/height/river
 				// stroke. This is what prevents clicks inside the 2D
 				// design explorer from leaking into the world.
-				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.riverBrushActive() || tile.editor.ClearActive {
+				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.riverBrushActive() || tile.editor.ClearActive || tile.editor.specialTerrainBrushActive() {
 					tile.editor.brushStrokeActive = true
 				}
 				deltaV := Float.X(0)
 				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.ClearActive {
 					deltaV = 2
-				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" {
-					// Explicit terrain brush tool selected: the sign depends on
-					// which brush ("raise" vs "lower") the user picked in the
-					// terrain tab. LMB applies the tool's primary direction.
+				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" && !tile.editor.specialTerrainBrushActive() {
+					// Single-shot raise/lower: LMB applies the tool's primary direction
+					// (raise vs lower) in one shot. Plateau/smooth are drag-paint
+					// (brushStrokeActive above drives PaintTerrainSculpt), so they send
+					// deltaV 0 here and never arm the single-shot release commit.
 					deltaV = tile.editor.terrainBrushDelta(true)
 				}
 				select {
@@ -2991,6 +3557,7 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				// is currently over UI (the global release will also be
 				// observed in client.Process as a belt-and-suspenders).
 				tile.editor.brushStrokeActive = false
+				tile.editor.sculptStroke = false // unlock the plateau level for the next stroke
 			}
 		}
 		if event.ButtonIndex() == Input.MouseButtonRight {
@@ -3003,9 +3570,10 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				} else if tile.editor.DressActive {
 					// RMB during dressing is erase (negative density).
 					deltaV = -2
-				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" {
-					// RMB with an explicit terrain brush applies the inverse of
-					// the selected tool's primary direction.
+				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" && !tile.editor.specialTerrainBrushActive() {
+					// RMB with a single-shot raise/lower brush applies the inverse of
+					// the tool's primary direction. Plateau/smooth (drag-paint) ignore
+					// RMB — it just tracks the brush position.
 					deltaV = tile.editor.terrainBrushDelta(false)
 				}
 				select {

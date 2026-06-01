@@ -107,6 +107,15 @@ type UI struct {
 	// click spin can return to the designed tilt instead of snapping
 	// upright (see spinControl).
 	undoSpin, redoSpin spinState
+
+	// photoMode is true while the camera view (in the ViewSelector) has
+	// hidden the whole editor overlay for a clean, UI-free screenshot. The
+	// next key/mouse press restores it; see enterPhotoMode / UI.Input.
+	photoMode bool
+	// photoArrowsRestore remembers whether the terrain extend/reveal arrows
+	// (3D, but functionally UI) were showing when photo mode hid them, so
+	// exitPhotoMode only brings them back if they were up to begin with.
+	photoArrowsRestore bool
 }
 
 // spinState caches a toolbar button's resting rotation. rest is captured
@@ -221,6 +230,7 @@ func (ui *UI) buildSettingsMenu() {
 		if ui.client != nil {
 			q.ApplyAmbientOcclusion(ui.client.Environment)
 			ui.client.applyCloudQuality(q)
+			ui.client.applyWaterQuality(q)
 			// Persist the choice so it survives across runs.
 			UserState.GraphicsQuality = q
 			UserState.GraphicsQualitySet = true
@@ -341,61 +351,69 @@ func (ui *UI) buildEnvironmentMenu() {
 	rn := Float.X(0.0)
 	sn := Float.X(0.0)
 	wn := Float.X(0.0)
+	mn := Float.X(0.5) // half moon by default
 	if ui.client != nil {
-		tod, sunAng, fg, cl, rn, sn, wn = ui.client.GetLightingMenuState()
+		tod, sunAng, fg, cl, rn, sn, wn, mn = ui.client.GetLightingMenuState()
 	}
 
 	// Friendly, non-technical controls. We drive them through
 	// ApplyLightingMenuState so each axis stays completely independent.
 	makeRow("environment/time_of_day", "daytime", "Time of Day", 0, 1, 0.005, tod, func(v Float.X) {
 		if ui.client != nil {
-			_, angle, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(v, angle, fog, clouds, rain, snow, wind)
+			_, angle, fog, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(v, angle, fog, clouds, rain, snow, wind, moon)
 		}
 		// Still send the Sculpt for networking + persistence
 		ui.sendEnvironmentSlider("environment/time_of_day", v)
 	})
 	makeRow("environment/sun_angle", "sunside", "Sun Angle", 0, 1, 0.005, sunAng, func(v Float.X) {
 		if ui.client != nil {
-			tod, _, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, v, fog, clouds, rain, snow, wind)
+			tod, _, fog, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, v, fog, clouds, rain, snow, wind, moon)
 		}
 		ui.sendEnvironmentSlider("environment/sun_angle", v)
 	})
 	makeRow("environment/fog", "fogmist", "Fog / Atmosphere", 0, 1, 0.01, fg, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, _, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, v, clouds, rain, snow, wind)
+			tod, angle, _, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, v, clouds, rain, snow, wind, moon)
 		}
 		ui.sendEnvironmentSlider("environment/fog", v)
 	})
 	makeRow("environment/clouds", "cumulus", "Clouds", 0, 1, 0.01, cl, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, fog, _, rain, snow, wind := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, v, rain, snow, wind)
+			tod, angle, fog, _, rain, snow, wind, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, v, rain, snow, wind, moon)
 		}
 		ui.sendEnvironmentSlider("environment/clouds", v)
 	})
 	makeRow("environment/rain", "raining", "Rain", 0, 1, 0.01, rn, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, fog, clouds, _, snow, wind := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, v, snow, wind)
+			tod, angle, fog, clouds, _, snow, wind, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, v, snow, wind, moon)
 		}
 		ui.sendEnvironmentSlider("environment/rain", v)
 	})
 	makeRow("environment/snow", "snowing", "Snow", 0, 1, 0.01, sn, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, fog, clouds, rain, _, wind := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, v, wind)
+			tod, angle, fog, clouds, rain, _, wind, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, v, wind, moon)
 		}
 		ui.sendEnvironmentSlider("environment/snow", v)
 	})
 	makeRow("environment/wind", "cyclone", "Wind", 0, 1, 0.01, wn, func(v Float.X) {
 		if ui.client != nil {
-			tod, angle, fog, clouds, rain, snow, _ := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, v)
+			tod, angle, fog, clouds, rain, snow, _, moon := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, v, moon)
 		}
 		ui.sendEnvironmentSlider("environment/wind", v)
+	})
+	makeRow("environment/moon", "moonlit", "Moon Phase", 0, 1, 0.01, mn, func(v Float.X) {
+		if ui.client != nil {
+			tod, angle, fog, clouds, rain, snow, wind, _ := ui.client.GetLightingMenuState()
+			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, wind, v)
+		}
+		ui.sendEnvironmentSlider("environment/moon", v)
 	})
 }
 
@@ -444,7 +462,7 @@ func (ui *UI) syncEnvironmentSliders() {
 	if ui.client == nil || ui.environmentSliders == nil {
 		return
 	}
-	tod, angle, fog, clouds, rain, snow, wind := ui.client.GetLightingMenuState()
+	tod, angle, fog, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
 	for key, v := range map[string]Float.X{
 		"environment/time_of_day": tod,
 		"environment/sun_angle":   angle,
@@ -453,6 +471,7 @@ func (ui *UI) syncEnvironmentSliders() {
 		"environment/rain":        rain,
 		"environment/snow":        snow,
 		"environment/wind":        wind,
+		"environment/moon":        moon,
 	} {
 		if sld, ok := ui.environmentSliders[key]; ok {
 			sld.AsRange().SetValueNoSignal(v)
@@ -547,6 +566,31 @@ func (ui *UI) Process(_ Float.X) {
 }
 
 func (ui *UI) Input(event InputEvent.Instance) {
+	// Photo mode is a free-look framing view: camera navigation passes
+	// straight through so the shot can still be framed (WASD/arrows/Q/E/R/F/
+	// +-, middle-drag to orbit, wheel to dolly). Only a deliberate left/right
+	// click — or a non-navigation key — brings the overlay back, and that
+	// dismissing press is swallowed (AcceptEvent) so it doesn't also paint
+	// terrain or select an object underneath. _input is delivered even though
+	// the Control is hidden, which is what lets this fire at all.
+	if ui.photoMode {
+		if key, ok := Object.As[InputEventKey.Instance](event); ok {
+			if key.AsInputEvent().IsPressed() && !key.AsInputEvent().IsEcho() && !isPhotoNavKey(key.Keycode()) {
+				ui.exitPhotoMode()
+				ui.AsControl().AcceptEvent()
+			}
+			return
+		}
+		if mb, ok := Object.As[InputEventMouseButton.Instance](event); ok {
+			btn := mb.ButtonIndex()
+			if mb.AsInputEvent().IsPressed() && (btn == Input.MouseButtonLeft || btn == Input.MouseButtonRight) {
+				ui.exitPhotoMode()
+				ui.AsControl().AcceptEvent()
+			}
+			return
+		}
+		return
+	}
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() {
 			if event.Keycode() == Input.KeyTab {
@@ -760,8 +804,70 @@ func (ui *UI) Ready() {
 	ui.scaling()
 	ui.AsControl().OnResized(ui.scaling)
 	ui.ViewSelector.ViewSelected.Call(func(view string) {
+		// The camera view is a UI-level action (hide the overlay), not an
+		// editor view, so it never reaches the active editor's SwitchToView.
+		if view == cameraView {
+			ui.enterPhotoMode()
+			return
+		}
 		ui.Editor.editor.SwitchToView(view)
 	})
+}
+
+// enterPhotoMode hides the entire editor overlay for a clean, UI-free view
+// ("photo mode"), triggered by the camera view in the top-of-screen
+// ViewSelector. Any subsequent key or mouse-button press restores it (see
+// UI.Input) — UI.Input keeps firing while the Control is hidden because
+// _input is delivered regardless of Control visibility. No-op in XR, where
+// the overlay lives on wrist panels and there is no key/mouse to bring it
+// back.
+func (ui *UI) enterPhotoMode() {
+	if ui.photoMode {
+		return
+	}
+	if ui.client != nil && ui.client.xr {
+		return
+	}
+	ui.photoMode = true
+	ui.AsCanvasItem().SetVisible(false)
+	// The terrain extend/reveal arrows live in the 3D world rather than the
+	// overlay, so hiding the Control alone leaves them floating in shot. Hide
+	// them too, remembering whether they were up so exitPhotoMode can restore
+	// exactly that (they only show while the terrain editor is active).
+	if ui.client != nil && ui.client.TerrainEditor != nil {
+		ui.photoArrowsRestore = ui.client.TerrainEditor.arrowsVisible
+		ui.client.TerrainEditor.setArrowsVisible(false)
+	}
+}
+
+// exitPhotoMode restores the overlay hidden by enterPhotoMode.
+func (ui *UI) exitPhotoMode() {
+	if !ui.photoMode {
+		return
+	}
+	ui.photoMode = false
+	ui.AsCanvasItem().SetVisible(true)
+	if ui.photoArrowsRestore && ui.client != nil && ui.client.TerrainEditor != nil {
+		ui.client.TerrainEditor.setArrowsVisible(true)
+	}
+	ui.photoArrowsRestore = false
+}
+
+// isPhotoNavKey reports whether a key drives the camera (WASD/arrows to move,
+// Q/E to turn, R/F to tilt, +/- to dolly) or is a bare modifier. These never
+// dismiss photo mode, so the shot can be framed from the keyboard; any other
+// key does. The set mirrors the camera keys polled in Client.Process, plus
+// the modifiers so e.g. Shift+wheel doesn't pop the overlay back.
+func isPhotoNavKey(keycode Input.Key) bool {
+	switch keycode {
+	case Input.KeyW, Input.KeyA, Input.KeyS, Input.KeyD,
+		Input.KeyUp, Input.KeyDown, Input.KeyLeft, Input.KeyRight,
+		Input.KeyQ, Input.KeyE, Input.KeyR, Input.KeyF,
+		Input.KeyEqual, Input.KeyMinus,
+		Input.KeyShift, Input.KeyCtrl, Input.KeyAlt, Input.KeyMeta:
+		return true
+	}
+	return false
 }
 
 func (ui *UI) scaling() {

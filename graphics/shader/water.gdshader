@@ -9,6 +9,10 @@ shader_type spatial;
 //                 ground minus a small lip; for lakes it is the global level.
 //   CUSTOM0.r   : world-space terrain floor (channel/lake bed) at this vertex.
 //   CUSTOM0.gb  : normalised world-XZ flow direction (0,0 for still water).
+//   CUSTOM0.a   : DUAL-PURPOSE, disambiguated by NORMAL (flat plane vs. wall):
+//                 * flat surface  -> downhill slope along flow (drives foam).
+//                 * cut-through wall -> heave weight: 1 on the top row (follows
+//                   the swell, welding to the plane), 0 on the bed row (pinned).
 //
 // DESIGN NOTES
 //   * Fine ripple detail comes from scrolling NORMAL MAPS (mip-filtered, so no
@@ -74,9 +78,25 @@ uniform float shallow_calm : hint_range(0.0, 2.0) = 0.5;
 uniform float flow_opacity : hint_range(0.0, 0.8) = 0.30; // extra opacity for rivers
 uniform float min_alpha : hint_range(0.0, 1.0) = 0.45;
 
+// --- Reflections (Highest quality tier only) --------------------------------
+// Screen-space reflection intensity. The water is transparent (blend_mix), so
+// Godot's Environment SSR — which only runs on the opaque GBuffer — never
+// reaches it; the sky still reflects via the material's specular IBL, but
+// on-screen scene geometry (banks, trees, placed objects) does not. So we
+// ray-march the reflection ourselves against the depth buffer below. 0 disables
+// the whole march (the cheaper tiers, where it costs nothing); the Highest tier
+// sets it to ~1. Pushed from Go by Client.applyWaterQuality.
+uniform float reflection_strength : hint_range(0.0, 1.0) = 0.0;
+
 // Pushed by the editor for backwards compatibility; unused now (the surface is
 // carried per-vertex in VERTEX.y).
 uniform float water_level = 0.0;
+
+// Transient visual offset for a CHANGING water level: the editor rebuilds the
+// mesh at the new level and eases this (= previous_level - new_level) to 0 over a
+// few frames so the still water glides to its new height instead of teleporting
+// through the slider's discrete steps. 0 when the level is settled.
+uniform float water_rise = 0.0;
 
 // --- Terrain-sculpt preview (mirrors terrain.gdshader / buried.gdshader) -----
 // While the raise/lower brush previews a height change, the water tracks the
@@ -93,6 +113,11 @@ uniform float radius = 1.0;
 // hidden still-water plane to ~ground level inside the brush disc, so the river's
 // water shows before the stroke commits (no flow direction is known on hover).
 uniform float river_preview = 0.0;
+
+// brush_mode uniform declared for parity with terrain/buried so the editor can
+// always set it without shader warnings (preview ride logic below stays on
+// the generic `height` for all height-changing brushes).
+uniform float brush_mode = 0.0;
 
 varying vec3 world_pos;   // world position (XZ used for texture lookups)
 varying float v_surface;  // per-vertex base water surface (world Y)
@@ -139,7 +164,28 @@ void vertex() {
 	// raised bed simply shoals the water (then the opaque terrain occludes it,
 	// exactly as after the commit). Only world_pos.y is touched, so the XZ-keyed
 	// texture UVs stay stable.
-	if (height != 0.0 && radius > 0.0) {
+	if (brush_mode > 0.5 && height != 0.0 && radius > 0.0) {
+		// Flatten preview (plateau/smooth): pull the terrain floor toward the target
+		// height (uplift.y) so the lake shoals over a raised mesa / covers a lowered
+		// one, matching the previewed ground. The lake SURFACE itself doesn't move (a
+		// flatten doesn't change the water level) — only v_floor follows. `height` is
+		// the strength fraction; PLATEAU_FLAT_CORE matches plateauFlatCore in
+		// editor_terrain.go.
+		float bdx = world_pos.x - uplift.x;
+		float bdz = world_pos.z - uplift.z;
+		float bd2 = bdx * bdx + bdz * bdz;
+		if (bd2 < radius * radius) {
+			float ff;
+			if (brush_mode > 1.5) {
+				ff = 1.0 - bd2 / (radius * radius);   // smooth cone
+			} else {
+				float tt = sqrt(bd2) / radius;        // plateau flat top
+				ff = 1.0 - smoothstep(0.6, 1.0, tt);
+			}
+			float fac = clamp(height * ff, 0.0, 1.0);
+			v_floor = max(mix(v_floor, uplift.y, fac), -2.0);
+		}
+	} else if (height != 0.0 && radius > 0.0) {
 		float bdx = world_pos.x - uplift.x;
 		float bdz = world_pos.z - uplift.z;
 		float bd2 = bdx * bdx + bdz * bdz;
@@ -180,16 +226,30 @@ void vertex() {
 			world_pos.y = max(world_pos.y, target);
 		}
 	}
-	v_surface = world_pos.y;
 
 	// The water body's vertical cross-section walls carry a horizontal mesh
 	// normal; the flat surface carries an up normal. Flag the walls so they
 	// render as a clean "cut through" slice (no foam, no ripple) rather than
 	// running the churning surface treatment up a vertical face. Their TOP edge
 	// still heaves with the swell (below) so they stay welded to the ocean.
+	// (Computed before v_surface so the water-level glide can weight the walls.)
 	vec3 mesh_normal = NORMAL;
 	float side = (abs(mesh_normal.y) < 0.5) ? 1.0 : 0.0;
 	v_side = side;
+
+	// Smooth water-level changes: the editor rebuilds the mesh at the NEW level
+	// and eases water_rise (= previous_level - new_level) to 0 over a few frames,
+	// so the surface GLIDES to its new height instead of teleporting through the
+	// slider's discrete steps. Only STILL water (the global lake/ocean) rides the
+	// level, so gate on zero flow — rivers keep their own ground-relative lip. On
+	// a cut-through wall only the TOP follows (reuse the CUSTOM0.a heave weight);
+	// the bed stays pinned to the terrain. Applied before v_surface so the swell
+	// and shoreline calming below track the displayed height.
+	if (water_rise != 0.0 && length(v_flow) < 0.001) {
+		world_pos.y += water_rise * ((side > 0.5) ? clamp(v_slope, 0.0, 1.0) : 1.0);
+	}
+
+	v_surface = world_pos.y;
 
 	// Swell only on open, still, deep water: off on rivers (flow), faded out in
 	// shallow water near the shore so crests never rise through the terrain.
@@ -200,9 +260,16 @@ void vertex() {
 	// TOP edge follows the swell while the bottom stays pinned to the bed, so the
 	// wall welds to the heaving ocean surface above AND the terrain below.
 	// (Disabling swell on walls entirely left them static, disconnecting them
-	// from the moving ocean.) A wall's top verts sit at the surface (column well
-	// above 0); its bottom verts sit on the bed (column ~= 0).
-	float heave = (side > 0.5) ? clamp(column * 4.0, 0.0, 1.0) : 1.0;
+	// from the moving ocean.) The weight is carried PER-VERTEX in CUSTOM0.a (1 on
+	// the top row, 0 on the bed row) rather than inferred from water depth: at a
+	// shallow shore the top vertex's `column` is small, so the old `column*4`
+	// proxy gave it heave < 1 while the COINCIDENT plane-edge vertex used heave =
+	// 1 — the two welded surfaces then disagreed on the same vertex and the seam
+	// tore (the plane lifted, the wall top lagged: a vertex stuck out of sync at
+	// the waterline). A top weight of exactly 1 makes the wall top reproduce the
+	// plane's swell bit-for-bit (v_floor/v_flow/v_surface/world-XZ already match),
+	// so the shared vertex stays welded at any depth.
+	float heave = (side > 0.5) ? clamp(v_slope, 0.0, 1.0) : 1.0;
 	float swell = wave_height * (1.0 - clamp(fl * 2.0, 0.0, 1.0)) * shallow * heave;
 
 	vec3 tangent = vec3(1.0, 0.0, 0.0);
@@ -336,6 +403,60 @@ void fragment() {
 	// vertical lines. Zero foam there so the wall reads as a clean water slice.
 	float foam = (shore_foam + flow_foam) * calm * (1.0 - v_side);
 	col = mix(col, vec3(1.0), clamp(foam, 0.0, 1.0));
+
+	// --- Screen-space reflections (Highest quality tier only) ---------------
+	// Mirror the on-screen scene in the surface by ray-marching the reflected
+	// view ray against the depth buffer and folding the hit colour in, Fresnel-
+	// weighted so it reads hard at grazing angles and barely head-on (real
+	// water). Gated on reflection_strength > 0 (set only at the Highest tier) so
+	// the cheaper tiers skip the loop entirely, and off on the cut-through walls
+	// (their ripple is flattened and they have no stable tangent frame).
+	if (reflection_strength > 0.0 && v_side < 0.5) {
+		// Perturbed surface normal in VIEW space — the ripple riding the macro
+		// up-normal, from the same tangent frame the vertex stage set. `perturb`
+		// is the full-strength decoded ripple; scale it by the shaded strength
+		// (and shallow-water calm) so the reflection wobbles like the lighting.
+		vec3 ts_n = normalize(vec3(perturb * normal_strength * calm, 1.0));
+		vec3 n_view = normalize(TANGENT * ts_n.x + BINORMAL * ts_n.y + NORMAL * ts_n.z);
+		vec3 incident = normalize(VERTEX);          // camera -> fragment (view space)
+		vec3 refl = reflect(incident, n_view);      // reflected ray direction
+
+		// March in view space, projecting each step to screen and testing scene
+		// depth. A coarse step that lengthens with distance gives cheap reach;
+		// the thickness gate stops the ray matching the far background (sky).
+		float step_len = 0.4;
+		vec3 ray = VERTEX;
+		float hit = 0.0;
+		vec2 hit_uv = vec2(0.0);
+		for (int i = 0; i < 24; i++) {
+			ray += refl * step_len;
+			step_len *= 1.08;
+			if (ray.z > -0.01) break;               // crossed behind the camera plane
+			vec4 clip = PROJECTION_MATRIX * vec4(ray, 1.0);
+			vec2 suv = clip.xy / clip.w * 0.5 + 0.5;
+			if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) break;
+			float sraw = texture(depth_texture, suv).r;
+			vec4 svp = INV_PROJECTION_MATRIX * vec4(suv * 2.0 - 1.0, sraw, 1.0);
+			float scene_z = svp.z / max(svp.w, 1e-4); // scene view-space z (negative ahead)
+			float gap = scene_z - ray.z;            // >0 once the ray passes behind a surface
+			if (gap > 0.0 && gap < step_len * 2.0) {
+				hit = 1.0;
+				hit_uv = suv;
+				break;
+			}
+		}
+
+		if (hit > 0.5) {
+			float ct = clamp(dot(n_view, -incident), 0.0, 1.0);
+			float fres = 0.02 + 0.98 * pow(1.0 - ct, 5.0); // Schlick, F0 ~0.02 (water)
+			// Fade as the sample nears a screen edge so off-screen geometry that
+			// scrolls out of frame doesn't pop a hard reflection seam.
+			vec2 ef = smoothstep(vec2(0.0), vec2(0.12), hit_uv) * (1.0 - smoothstep(vec2(0.88), vec2(1.0), hit_uv));
+			vec3 refl_col = texture(screen_texture, hit_uv).rgb;
+			float amt = reflection_strength * fres * ef.x * ef.y * calm;
+			col = mix(col, refl_col, clamp(amt, 0.0, 1.0));
+		}
+	}
 
 	// Flatten the ripple normal in very shallow water for a still, glassy look,
 	// and fully on the cut-through walls (the XZ-keyed ripple smears vertically).

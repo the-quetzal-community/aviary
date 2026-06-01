@@ -205,10 +205,18 @@ func (ui *CloudControl) set_gizmo(gizmo Gizmo) {
 	ui.Gizmo = gizmo
 	child := ui.gizmoControl(gizmo)
 	if child == Control.Nil {
+		// No toolbar button frames this gizmo (e.g. the active tool isn't
+		// present in the current editor's set) — there's nothing to point
+		// at, so hide the indicator rather than leaving it stranded.
+		ui.GizmoIndicator.AsCanvasItem().SetVisible(false)
 		return
 	}
 	types := ui.GizmoTypes.AsControl()
 	indicator := ui.GizmoIndicator.AsControl()
+	// Make the indicator visible again. SetGizmos hides it when an editor
+	// has no selectable gizmo; once a real gizmo is picked we must re-show
+	// it, otherwise it stays hidden for the rest of the session.
+	indicator.AsCanvasItem().SetVisible(true)
 	childCenter := Vector2.Add(
 		types.Position(),
 		Vector2.Mul(Vector2.Add(child.Position(), Vector2.MulX(child.Size(), 0.5)), types.Scale()),
@@ -849,5 +857,12 @@ func (ui *CloudControl) SetGizmos(gizmos []Gizmo) {
 			// No selectable gizmo remains; hide the active-gizmo border.
 			ui.GizmoIndicator.AsCanvasItem().SetVisible(false)
 		}
+	} else {
+		// The current gizmo is still valid in the new toolbar, so the
+		// branch above doesn't run. Re-run set_gizmo anyway to reposition
+		// the indicator over its (possibly reordered) button and re-show
+		// it — a previously active editor may have hidden it, and nothing
+		// else would bring it back.
+		ui.set_gizmo(ui.Gizmo)
 	}
 }

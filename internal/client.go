@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/CameraAttributesPractical"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/DirectionalLight3D"
 	"graphics.gd/classdb/Engine"
@@ -45,6 +46,8 @@ import (
 	"graphics.gd/classdb/QuadMesh"
 	"graphics.gd/classdb/RayCast3D"
 	"graphics.gd/classdb/RenderingServer"
+	"graphics.gd/classdb/Resource"
+	"graphics.gd/classdb/Script"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/Sky"
@@ -92,6 +95,15 @@ type Client struct {
 
 	Light DirectionalLight3D.Instance
 
+	// Moon is a second directional light that lights the scene at night, from
+	// the side of the sky opposite the sun (so it rises as the sun sets). It is
+	// SkyModeLightOnly — it must NOT register in the sky shader's LIGHTn slots
+	// (the sun owns LIGHT0); the visible moon disk is drawn directly in
+	// sky.gdshader from the sun direction and the moon_phase uniform. Its energy
+	// and the disk's crescent are both driven by the Moon slider's phase (see
+	// applyMoonState).
+	Moon DirectionalLight3D.Instance
+
 	// Environment and WorldEnvironment are the live resources/nodes
 	// for global scene lighting + fog. They are mutated by editor-
 	// specific environment sliders (routed as special Sculpt records
@@ -112,6 +124,7 @@ type Client struct {
 		rain      Float.X
 		snow      Float.X
 		wind      Float.X
+		moon      Float.X // moon phase: 0 = new (dark), 0.5 = half, 1 = full
 	}
 
 	// FocalPoint is the point in the scene that the camera is
@@ -147,6 +160,18 @@ type Client struct {
 	// whether it renders (via the Environment's volumetric fog) per quality tier.
 	cloudVolume FogVolume.Instance
 	cloudFog    ShaderMaterial.Instance
+
+	// cloudsDriver is the vendored SunshineClouds2 driver node (a GDScript
+	// CompositorEffect system, graphics/addons/SunshineClouds2) that draws the
+	// Highest-tier volumetric clouds; cloudsEffect is its CompositorEffect resource
+	// (aviary_clouds.tres). The addon has no Go bindings, so both are driven
+	// generically via Object.Set/Call. applyCloudQuality attaches/detaches the
+	// effect from the WorldEnvironment's compositor per tier (Highest only), the
+	// Clouds slider drives cloudsEffect's coverage, and the Wind slider drives the
+	// driver's structure speeds; the sun (world.Light) is tracked so the clouds
+	// follow the day/night cycle automatically.
+	cloudsDriver Node.Instance
+	cloudsEffect Resource.Instance
 
 	// weatherAnchor is a node positioned under the camera each frame so that
 	// rain and snow particles are always emitted in a volume around the viewer.
@@ -574,9 +599,31 @@ func (world *Client) Ready() {
 		SetShadowBlur(2.0)
 	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
 	// Drive the volumetric cloud layer harder than the default 1.0 so the sunlit
-	// faces read as bright white instead of flat grey. Only affects volumetric fog
-	// (the Highest-tier clouds); ordinary surface lighting is unchanged.
-	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamVolumetricFogEnergy, 3.0)
+	// faces read as bright cumulus rather than flat grey. With single-scatter fog
+	// (no multiple-scattering brightening) this energy is the WHOLE layer's
+	// brightness, so it is a knife-edge: 3.0 blew it to a flat neon white, but 2.0
+	// dimmed the entire layer to uniform rain-cloud grey. 2.8 keeps the sunlit tops
+	// bright; the not-neon look is recovered instead from the off-white albedo and
+	// the lowered ambient inject below (which darkens the bases for real cumulus
+	// form). Only affects volumetric fog (the Highest-tier clouds); surface lighting
+	// is unchanged.
+	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamVolumetricFogEnergy, 2.8)
+
+	// The moon: a second directional that lights the night from opposite the sun.
+	// SkyModeLightOnly keeps it OUT of the sky shader's LIGHTn slots (the sun is
+	// LIGHT0 and the moon disk is drawn procedurally from moon_phase), so it only
+	// contributes scene lighting + shadows. It starts dark; applyMoonState raises
+	// its energy (and toggles visibility) with the phase and the night gate.
+	world.Moon.
+		SetDirectionalShadowMode(DirectionalLight3D.ShadowOrthogonal).
+		SetSkyMode(DirectionalLight3D.SkyModeLightOnly).
+		AsLight3D().
+		SetLightEnergy(0).
+		SetShadowEnabled(true).
+		SetShadowBias(0.015).
+		SetShadowNormalBias(0).
+		SetShadowBlur(2.0)
+	Light3D.Advanced(world.Moon.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
 
 	// Procedural sky with drifting clouds. The shader reacts to the directional
 	// light (LIGHT0); only the cloud coverage is pushed in, by the Clouds slider.
@@ -594,13 +641,44 @@ func (world *Client) Ready() {
 		SetAmbientLightColor(Color.X11.White).
 		SetAmbientLightSkyContribution(0).
 		SetAmbientLightSource(Environment.AmbientSourceColor).
-		SetAmbientLightEnergy(0.5)
+		SetAmbientLightEnergy(0.5).
+		// Filmic tonemapping + glow so HDR highlights — the SunshineClouds2 clouds
+		// especially, but also the sky/sun disk — roll off into shaded gradients
+		// instead of clipping to flat white the way the default Linear tonemap did
+		// (that was why the clouds read as a pure-white blob while looking fluffy in
+		// the addon's own example scene, which ships Filmic + glow). NOTE: this is a
+		// GLOBAL change — it reshapes every surface's highlights, so the day/night
+		// sun energy / ambient (mapTimeOfDaySunAngleFog) may want a follow-up re-tune.
+		SetTonemapMode(Environment.ToneMapperFilmic).
+		// Raise the tonemapper white point well above the default 1.0. The cloud
+		// shader scales its brightness by sun height (sunUpWeight), so an overhead
+		// noon sun pushes the clouds past 1.0 and clips them to flat white — detail
+		// only survived at sunrise/sunset where the low sun keeps them dim. A higher
+		// white reference rolls those bright noon values off into visible shading
+		// instead of clipping (Godot recommends >=6 for photographic lighting). It is
+		// global, so it also softens terrain/water highlights; dial toward ~4-5 if the
+		// scene looks too low-contrast, or re-tune the day/night sun energy.
+		SetTonemapWhite(8.0).
+		SetGlowEnabled(true)
 
 	worldenv := WorldEnvironment.New().SetEnvironment(env)
 
 	world.AsNode().AddChild(worldenv.AsNode())
 	world.Environment = env
 	world.WorldEnvironment = worldenv
+	// Auto-exposure on the world camera attributes. The SunshineClouds2 shader
+	// scales cloud brightness by sun height (sunUpWeight), so an overhead noon sun
+	// makes the clouds intrinsically ~7x brighter than the low-sun sunrise/sunset
+	// clouds that already read well — no fixed exposure or tonemap white point can
+	// satisfy both (lower it enough for noon and sunset goes black). Auto-exposure
+	// adapts exposure to the on-screen brightness: a bright noon sky exposes DOWN so
+	// the clouds drop into the tonemapper's range and their shading shows; a dim
+	// sunset exposes up. The low scale targets a darker mid-grey (what surfaced the
+	// cloud detail in testing); the bounded min/max sensitivity stops it pumping too
+	// hard as the view pans between sky and terrain. Pairs with the raised
+	// tonemap_white, which gives the still-bright clouds headroom to roll off.
+	camAttrs := CameraAttributesPractical.New()
+	worldenv.SetCameraAttributes(camAttrs.AsCameraAttributes())
 
 	// Volumetric cloud layer for the Highest tier. A box-shaped FogVolume sitting
 	// at the cloud altitude geometrically confines the fog to its bounds, so it
@@ -624,10 +702,12 @@ func (world *Client) Ready() {
 	// Strong forward scattering (like real clouds) so the sun-facing side glows /
 	// gets a bright silver lining instead of reading as uniform grey.
 	env.SetVolumetricFogAnisotropy(0.5)
-	// Lift the shadowed bases with sky ambient so they're bright cumulus-grey, not
-	// dark grey — the single-scatter fog has no multiple-scattering brightening, so
-	// this stands in for it. Too high would flatten them, too low leaves them dim.
-	env.SetVolumetricFogAmbientInject(0.9)
+	// Lift the shadowed bases with sky ambient so they're cumulus-grey, not dark
+	// grey — the single-scatter fog has no multiple-scattering brightening, so this
+	// stands in for it. Too high would flatten them (everything reads white), too
+	// low leaves them dim. 0.7 (was 0.9) keeps a touch more sun->shadow contrast so
+	// the clouds have form rather than a uniform bright wash.
+	env.SetVolumetricFogAmbientInject(0.7)
 	env.SetVolumetricFogGiInject(0.0)
 	// Enlarge the volumetric-fog froxel buffer (default 64×64×64) so the clouds
 	// aren't a low-res blur: more width/height sharpens them across the screen,
@@ -651,6 +731,53 @@ func (world *Client) Ready() {
 	world.AsNode().AddChild(cloudVolume.AsNode())
 	world.cloudVolume = cloudVolume
 
+	// Highest-tier volumetric clouds: the vendored SunshineClouds2 addon (MIT,
+	// graphics/addons/SunshineClouds2). It is a GDScript CompositorEffect driver
+	// with no Go bindings, so it is instanced by attaching its script to a bare
+	// Node and driven generically with Object.Set/Call. The driver self-attaches
+	// its CompositorEffect to the WorldEnvironment's compositor the moment the
+	// clouds_resource is assigned — and it must already be in the tree for that —
+	// so we AddChild BEFORE assigning the resource. Tracking world.Light makes the
+	// clouds follow the sun (day/night + golden hour) automatically. The effect is
+	// only kept attached at QualityHighest; applyCloudQuality (called just below)
+	// detaches it on every other tier.
+	cloudsDriver := Node.New()
+	Object.Instance(cloudsDriver.AsObject()).SetScript(LoadSync[Script.Instance]("res://addons/SunshineClouds2/SunshineCloudsDriver.gd"))
+	cloudsDriver.SetName("SunshineClouds")
+	Object.Set(cloudsDriver, "ambience_sample_environment", env)
+	// Light the clouds with the scene's actual sun energy (multiplier 1.0). The
+	// cloud shader feeds this energy into BOTH the direct term (pow(energy,2.2),
+	// which blows out fast) AND the ambient/shadow-fill floor (ambientLightColor *
+	// totalLightPower) — so over-driving it (an earlier 8x) flooded the shadows
+	// brighter than white and erased all shading, leaving a flat white blob. Keep
+	// it at the real energy; tune the LOOK via the resource's hot-reloadable
+	// cloud_ambient_color (shadow darkness), lighting_density and clouds_density.
+	Object.Set(cloudsDriver, "directional_light_power_multiplier", 1.0)
+	// Set the tracked sun through a GDScript helper rather than assigning the
+	// Array[DirectionalLight3D] property directly: a Go slice / Array through the
+	// generic Object.Set arrived as an untyped Variant array that the typed property
+	// rejected, leaving it empty (no lights → pitch-black clouds). aviary_set_sun
+	// takes one DirectionalLight3D (single-object Call marshals reliably) and builds
+	// the typed array on the GDScript side. See SunshineCloudsDriver.gd.
+	Object.Call(cloudsDriver, "aviary_set_sun", world.Light)
+	world.AsNode().AddChild(cloudsDriver)
+	world.cloudsDriver = cloudsDriver
+	world.cloudsEffect = LoadSync[Resource.Instance]("res://addons/SunshineClouds2/aviary_clouds.tres")
+	// Assigning clouds_resource runs the driver's setter, attaching the effect to
+	// the compositor (creating one if absent). applyCloudQuality then detaches it
+	// unless the launch tier is Highest.
+	Object.Set(cloudsDriver, "clouds_resource", world.cloudsEffect)
+	// Enable per-frame updates ONLY now — after the node is in the tree AND the
+	// resource is assigned. The driver's _ready (which ran synchronously during
+	// AddChild above) force-disables update_continuously whenever clouds_resource is
+	// still null at that moment, so enabling it any earlier silently sticks at false:
+	// _process then never runs the light-tracking block and the clouds freeze on the
+	// resource's placeholder directional light — never following the real sun (white
+	// even at night, unaffected by Time of Day). Setting it here, with the resource
+	// and sun both present, re-runs retrieve_texture_data so the clouds track the
+	// day/night cycle.
+	Object.Set(cloudsDriver, "update_continuously", true)
+
 	// Seed cloud + SSAO state from the launch quality tier (persisted or default).
 	// The UI's launch-time Apply ran during editor.Setup above, before this
 	// Environment/sky/FogVolume existed, so these per-resource flags have to be
@@ -658,12 +785,13 @@ func (world *Client) Ready() {
 	// buildSettingsMenu).
 	UserState.GraphicsQuality.ApplyAmbientOcclusion(env)
 	world.applyCloudQuality(UserState.GraphicsQuality)
+	world.applyWaterQuality(UserState.GraphicsQuality)
 
 	// Start the world in daytime. Driving the initial look through the same
 	// friendly path the rolldown uses keeps lightingMenuState authoritative,
 	// so the menu opens on the real values and every editor's lighting seeds
 	// from a lit world rather than the zero-value (midnight / energy 0 / black).
-	world.ApplyLightingMenuState(0.38, 0.08, 0.0, 0.0, 0.0, 0.0, 0.0)
+	world.ApplyLightingMenuState(0.38, 0.08, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5)
 
 	// Weather particles (rain, snow) + wind propagation. Created once; intensity
 	// is driven live by the environment menu via applyWeather.
@@ -743,6 +871,9 @@ func (world *Client) Process(dt Float.X) {
 	// fills with rock, so going below the water plane into the ground reads as
 	// being buried rather than underwater.
 	if world.TerrainEditor != nil {
+		// Glide the water surface toward a changed level (ticks every frame, so a
+		// remote/undo change animates even outside the terrain editor).
+		world.TerrainEditor.processWaterRise(dt)
 		camNode := world.FocalPoint.Lens.Camera.AsNode3D()
 		camPos := camNode.GlobalPosition()
 		// Camera-terrain collision: stop the camera descending into the ground.
@@ -827,6 +958,7 @@ func (world *Client) Process(dt Float.X) {
 	// design explorer or other UI.
 	if !Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 		world.TerrainEditor.brushStrokeActive = false
+		world.TerrainEditor.sculptStroke = false // unlock plateau height for the next stroke
 	}
 
 	// Texture painting and dressing only produce strokes when the user
@@ -865,6 +997,16 @@ func (world *Client) Process(dt Float.X) {
 	if world.TerrainEditor.riverBrushActive() && world.TerrainEditor.brushStrokeActive {
 		if time.Since(world.last_PaintAt) > time.Second/5 {
 			world.TerrainEditor.PaintRiver()
+			world.last_PaintAt = time.Now()
+		}
+	}
+
+	// Plateau/smooth are likewise drag-paint: each throttled segment commits one
+	// flatten/smooth Sculpt (PaintTerrainSculpt carries its own movement-spacing
+	// guard and locks the plateau level at the stroke's start).
+	if world.TerrainEditor.specialTerrainBrushActive() && world.TerrainEditor.brushStrokeActive {
+		if time.Since(world.last_PaintAt) > time.Second/5 {
+			world.TerrainEditor.PaintTerrainSculpt()
 			world.last_PaintAt = time.Now()
 		}
 	}
@@ -1393,31 +1535,91 @@ func (tc *TimingCoordinator) Follow(t musical.Timing) {
 // single place that actually touches the renderer nodes; all per-editor
 // environment Sculpt handlers and the lighting menu call it (or wrappers).
 func (world *Client) applyLightingState(azimuth, elevation, energy, fogDensity Float.X) {
+	// The sun's height above the horizon (sun_dir.y), recovered from the light
+	// pitch: the light points opposite the sun, so forward.y = sin(elevation) and
+	// the sun height is its negation. Drives the day/night fade for BOTH the
+	// directional warmth and the ambient below, using the SAME smoothstep the sky
+	// shader uses for its day blend so sky and ground always agree.
+	sunHeight := -math.Sin(float64(elevation))
+	day := smoothstep(-0.12, 0.18, sunHeight)
+	// The directional light IS the sun: below the horizon there is no direct
+	// sunlight, so fade its energy to zero across a short band just under the
+	// horizon. Without this the light lingered through the night — dim (the 0.15
+	// energy floor in mapTimeOfDaySunAngleFog), pointing UP (the sun pitch flips
+	// past the horizon so the light tilts skyward) and pinned to the full golden-
+	// hour orange (`low` below saturates at 1), washing the scene's undersides in
+	// a stale sunset tint. Zeroing the energy leaves night lit by the cool ambient
+	// alone. The node stays ENABLED (energy 0, NOT hidden) so the sky shader keeps
+	// a valid LIGHT0_DIRECTION for its own day/night blend; hiding it would default
+	// sun_dir to straight up and the sky would read as full daylight.
+	horizonGate := smoothstep(-0.1, 0.0, sunHeight)
 	if world.Light != DirectionalLight3D.Nil {
 		// elevation is the sun's pitch in radians (0 at the horizon, negative
 		// tilts the light down from overhead) and azimuth is its compass
 		// orientation. A directional light points along its local -Z, so its
-		// direction is fully described by pitch (X) + yaw (Y). The previous
-		// code put the height on Z (roll), which is a no-op for a directional
-		// light, so the sun never actually rose or set with the time of day.
+		// direction is fully described by pitch (X) + yaw (Y).
 		world.Light.AsNode3D().SetRotation(Euler.Radians{
 			X: Angle.Radians(elevation),
 			Y: Angle.Radians(azimuth),
 			Z: 0,
 		})
-		world.Light.AsLight3D().SetLightEnergy(energy)
+		world.Light.AsLight3D().SetLightEnergy(energy * Float.X(horizonGate))
+		// Golden hour: warm the sunlight toward orange while the sun is low (and
+		// through twilight), neutral white when it is high. This is what gives
+		// sunrise/sunset its glow — and it also tints the sky's sun disk and the
+		// sunlit clouds, since they read LIGHT0_COLOR. `low` is 1 at/below the
+		// horizon, easing to 0 once the sun has climbed a bit.
+		low := 1 - smoothstep(0.04, 0.32, sunHeight)
+		world.Light.AsLight3D().SetLightColor(Color.RGBA{
+			R: 1.0,
+			G: float32(1.0 - 0.40*low),
+			B: float32(1.0 - 0.62*low),
+			A: 1,
+		})
 	}
 	if world.Environment != Environment.Nil {
 		world.Environment.SetFogEnabled(fogDensity > 0.0001)
 		world.Environment.SetFogDensity(fogDensity)
 		world.Environment.SetFogSunScatter(0.25)
-		// Gentle ambient reduction in heavy fog for atmosphere.
-		amb := Float.X(0.5)
+		// Ambient must track the day/night cycle. It used to be pinned at 0.5
+		// (white) no matter the time of day, so the ground stayed fully lit at
+		// night — reading as "the environment is the wrong way around from the
+		// scene". On the flat-normal terrain top the ambient is the only light
+		// once the sun is below the horizon, so fading it with the sun is what
+		// makes night look like night.
+		amb := 0.1 + day*0.4 // dim moonlight (~0.1) -> full daylight (0.5)
 		if fogDensity > 0.008 {
-			amb = 0.32
+			amb *= 0.7 // keep the old heavy-fog softening
 		}
-		world.Environment.SetAmbientLightEnergy(amb)
+		// Cool blue night -> neutral white day.
+		world.Environment.SetAmbientLightColor(Color.RGBA{
+			R: float32(0.55 + day*0.45),
+			G: float32(0.62 + day*0.38),
+			B: float32(0.90 + day*0.10),
+			A: 1,
+		})
+		world.Environment.SetAmbientLightEnergy(Float.X(amb))
 	}
+}
+
+// smoothstep is the GLSL smoothstep: 0 below edge0, 1 above edge1, with a smooth
+// Hermite ramp in between. Used to keep the Go-side lighting fades identical to
+// the shaders'.
+func smoothstep(edge0, edge1, x float64) float64 {
+	if edge1 == edge0 {
+		if x < edge0 {
+			return 0
+		}
+		return 1
+	}
+	t := (x - edge0) / (edge1 - edge0)
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return t * t * (3 - 2*t)
 }
 
 // activeLightingEditorKey returns the musical Editor routing key that
@@ -1454,32 +1656,36 @@ func (world *Client) activeLightingEditorKey() string {
 func (world *Client) applyLightingStateFromSlider(slider string, value Float.X) {
 	switch slider {
 	case "environment/time_of_day":
-		_, angle, fog, clouds, rain, snow, wind := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(value, angle, fog, clouds, rain, snow, wind)
+		_, angle, fog, clouds, rain, snow, wind, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(value, angle, fog, clouds, rain, snow, wind, moon)
 
 	case "environment/sun_angle":
-		tod, _, fog, clouds, rain, snow, wind := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, value, fog, clouds, rain, snow, wind)
+		tod, _, fog, clouds, rain, snow, wind, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, value, fog, clouds, rain, snow, wind, moon)
 
 	case "environment/fog":
-		tod, angle, _, clouds, rain, snow, wind := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, value, clouds, rain, snow, wind)
+		tod, angle, _, clouds, rain, snow, wind, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, value, clouds, rain, snow, wind, moon)
 
 	case "environment/clouds":
-		tod, angle, fog, _, rain, snow, wind := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, fog, value, rain, snow, wind)
+		tod, angle, fog, _, rain, snow, wind, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, value, rain, snow, wind, moon)
 
 	case "environment/rain":
-		tod, angle, fog, clouds, _, snow, wind := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, fog, clouds, value, snow, wind)
+		tod, angle, fog, clouds, _, snow, wind, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, value, snow, wind, moon)
 
 	case "environment/snow":
-		tod, angle, fog, clouds, rain, _, wind := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, value, wind)
+		tod, angle, fog, clouds, rain, _, wind, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, value, wind, moon)
 
 	case "environment/wind":
-		tod, angle, fog, clouds, rain, snow, _ := world.GetLightingMenuState()
-		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, value)
+		tod, angle, fog, clouds, rain, snow, _, moon := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, value, moon)
+
+	case "environment/moon":
+		tod, angle, fog, clouds, rain, snow, wind, _ := world.GetLightingMenuState()
+		world.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, wind, value)
 
 	// Old technical names are no longer supported (pre-release).
 	default:
@@ -1510,7 +1716,7 @@ func (world *Client) applyLightingStateFromSlider(slider string, value Float.X) 
 // ApplyLightingMenuState is the single authoritative way to drive the
 // friendly lighting + weather controls (Time of Day + Sun Angle + Fog + Clouds + Rain + Snow + Wind).
 // It updates the stored friendly state and immediately applies visuals.
-func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds, rain, snow, wind Float.X) {
+func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds, rain, snow, wind, moon Float.X) {
 	world.lightingMenuState.timeOfDay = timeOfDay
 	world.lightingMenuState.sunAngle = sunAngle
 	world.lightingMenuState.fog = fog
@@ -1518,17 +1724,57 @@ func (world *Client) ApplyLightingMenuState(timeOfDay, sunAngle, fog, clouds, ra
 	world.lightingMenuState.rain = rain
 	world.lightingMenuState.snow = snow
 	world.lightingMenuState.wind = wind
+	world.lightingMenuState.moon = moon
 
 	az, el, en, fd := world.mapTimeOfDaySunAngleFog(timeOfDay, sunAngle, fog)
 	world.applyLightingState(az, el, en, fd)
+	world.applyMoonState(az, el, moon)
 	world.applyCloudDensity(clouds)
 	world.applyWeather(rain, snow, wind)
 }
 
+// applyMoonState positions and lights the moon for the given sun azimuth/
+// elevation (radians) and moon phase (0 = new, 0.5 = half, 1 = full). The moon
+// sits opposite the sun, so it climbs as the sun sets; its directional light
+// fades in across the horizon (the inverse of the sun's gate in
+// applyLightingState) and scales with phase, and the same phase is pushed to the
+// sky shader, which carves the visible crescent. Kept separate from
+// applyLightingState (which owns the sun) so the two lights stay independent.
+func (world *Client) applyMoonState(sunAzimuth, sunElevation, phase Float.X) {
+	// sunHeight is the sun's height above the horizon (see applyLightingState);
+	// the moon is lit only while the sun is below it. moonGate is the exact
+	// complement of the sun's horizonGate, so sun and moon cross-fade at dusk/dawn.
+	sunHeight := -math.Sin(float64(sunElevation))
+	moonGate := smoothstep(0.0, -0.1, sunHeight) // 1 deep night, 0 by daybreak
+	if world.Moon != DirectionalLight3D.Nil {
+		// Point the moon light opposite the sun: negate the sun's pitch and swing
+		// the yaw 180°, so its forward vector is exactly -(sun forward) and the
+		// light arrives from the moon's side of the sky.
+		world.Moon.AsNode3D().SetRotation(Euler.Radians{
+			X: Angle.Radians(-sunElevation),
+			Y: Angle.Radians(sunAzimuth + math.Pi),
+			Z: 0,
+		})
+		// Dim, cool moonlight. Full moon (phase 1) at midnight peaks at moonPeak;
+		// a new moon (phase 0) casts nothing. Hidden during the day so its shadow
+		// map isn't rendered for a light that contributes nothing.
+		const moonPeak = 0.3
+		energy := Float.X(moonPeak) * phase * Float.X(moonGate)
+		world.Moon.AsLight3D().SetLightColor(Color.RGBA{R: 0.60, G: 0.72, B: 1.0, A: 1})
+		world.Moon.AsLight3D().SetLightEnergy(energy)
+		world.Moon.AsNode3D().SetVisible(moonGate > 0.001)
+	}
+	// Hand the phase to the sky so it can carve the crescent on the moon disk.
+	if world.sky != (ShaderMaterial.Instance{}) {
+		world.sky.SetShaderParameter("moon_phase", phase)
+	}
+}
+
 // applyCloudDensity pushes the cloud coverage (0 = clear, 1 = overcast) into
-// both cloud systems — the procedural sky shader and the world-space cloud
-// FogVolume — so the Clouds slider drives whichever one the active quality tier
-// is showing. Safe to call before either material exists.
+// all three cloud systems — the procedural sky shader, the world-space cloud
+// FogVolume, and the SunshineClouds2 effect — so the Clouds slider drives
+// whichever one the active quality tier is showing. Safe to call before any of
+// them exist.
 func (world *Client) applyCloudDensity(clouds Float.X) {
 	if world.sky != (ShaderMaterial.Instance{}) {
 		world.sky.SetShaderParameter("coverage", clouds)
@@ -1536,21 +1782,50 @@ func (world *Client) applyCloudDensity(clouds Float.X) {
 	if world.cloudFog != (ShaderMaterial.Instance{}) {
 		world.cloudFog.SetShaderParameter("coverage", clouds)
 	}
+	if world.cloudsEffect != (Resource.Instance{}) {
+		Object.Set(world.cloudsEffect, "clouds_coverage", clouds)
+	}
 }
 
 // applyCloudQuality switches the cloud system to match the graphics-quality
-// tier: it pushes the sky shader's cloud_steps (cheap flat / sky-march / off)
-// and toggles the Environment's volumetric fog, which is what makes the
-// world-space fly-through FogVolume clouds render (Highest tier only). Kept on
-// the Client because it spans the sky material and the Environment, both created
-// here after the UI's launch-time GraphicsQuality.Apply has already run. Safe
-// before those exist (each branch guards its resource).
+// tier. There is one distinct system per tier (cheapest first): Toaster's flat
+// sky projection, Average's sky-shader march (both via cloud_steps), Refined's
+// world-space FogVolume (the Environment's volumetric fog), and Highest's
+// SunshineClouds2 compositor effect. So this pushes cloud_steps, toggles the
+// FogVolume, and attaches/detaches the SunshineClouds effect. Kept on the Client
+// because it spans the sky material, the Environment, and the clouds driver, all
+// created here after the UI's launch-time GraphicsQuality.Apply has already run.
+// Safe before those exist (each branch guards its resource).
 func (world *Client) applyCloudQuality(q GraphicsQuality) {
 	if world.sky != (ShaderMaterial.Instance{}) {
 		world.sky.SetShaderParameter("cloud_steps", q.cloudSteps())
 	}
 	if world.Environment != Environment.Nil {
-		world.Environment.SetVolumetricFogEnabled(q.volumetricClouds())
+		world.Environment.SetVolumetricFogEnabled(q.fogVolumeClouds())
+	}
+	// SunshineClouds2 (Highest only). The driver attaches/detaches its
+	// CompositorEffect through these two methods; a remove-before-add keeps
+	// re-enabling idempotent, so repeated applies (every settings-slider move)
+	// never stack duplicate effects on the compositor.
+	if world.cloudsDriver != (Node.Instance{}) {
+		Object.Call(world.cloudsDriver, "clouds_res_removed")
+		if q.sunshineClouds() {
+			Object.Call(world.cloudsDriver, "clouds_res_added")
+		}
+	}
+}
+
+// applyWaterQuality toggles the water's screen-space reflections to match the
+// graphics-quality tier by pushing the reflection_strength uniform into the
+// shared water material. The water is transparent (blend_mix), so Godot's
+// Environment SSR can't reach it; the water shader ray-marches its own
+// reflections, gated on this uniform — off below the Highest tier, where the
+// per-pixel depth march would cost too much. Kept on the Client alongside
+// applyCloudQuality since it reaches into the TerrainEditor's material; safe
+// before that material exists (the guard no-ops during the launch window).
+func (world *Client) applyWaterQuality(q GraphicsQuality) {
+	if world.TerrainEditor != nil && world.TerrainEditor.water_shader != (ShaderMaterial.Instance{}) {
+		world.TerrainEditor.water_shader.SetShaderParameter("reflection_strength", q.reflectionStrength())
 	}
 }
 
@@ -1563,9 +1838,9 @@ func (world *Client) applyWeather(rain, snow, wind Float.X) {
 }
 
 // GetLightingMenuState returns the current friendly lighting + weather values.
-func (world *Client) GetLightingMenuState() (timeOfDay, sunAngle, fog, clouds, rain, snow, wind Float.X) {
+func (world *Client) GetLightingMenuState() (timeOfDay, sunAngle, fog, clouds, rain, snow, wind, moon Float.X) {
 	s := world.lightingMenuState
-	return s.timeOfDay, s.sunAngle, s.fog, s.clouds, s.rain, s.snow, s.wind
+	return s.timeOfDay, s.sunAngle, s.fog, s.clouds, s.rain, s.snow, s.wind, s.moon
 }
 
 // mapTimeOfDaySunAngleFog converts the friendly, artist-friendly slider values
@@ -1574,21 +1849,42 @@ func (world *Client) GetLightingMenuState() (timeOfDay, sunAngle, fog, clouds, r
 func (world *Client) mapTimeOfDaySunAngleFog(timeOfDay, sunAngle, fog Float.X) (az, el, energy, fogDensity Float.X) {
 	// timeOfDay: 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset, 1 = midnight.
 	phase := (float64(timeOfDay) - 0.25) * 2 * math.Pi
-	height := math.Sin(phase) // -1 at deepest night .. +1 at noon
 
-	// Sun pitch: near the horizon (0) around sunrise/sunset, tilted up toward
-	// overhead (~ -80°) at noon. Negative tilts the directional light down
-	// toward the ground (it points along -Z). Driving X here is what actually
-	// makes the sun rise and set as the time of day changes.
-	el = Float.X(-height * math.Pi * 0.45)
+	// The sun travels a real arc across the sky — rising on one side, passing
+	// high overhead, and setting on the OPPOSITE side — instead of going up and
+	// back down the same side (which is what a fixed-azimuth + pitch-only mapping
+	// gave). Model the sun's direction as a point sweeping a tilted great circle:
+	//   A = the sunrise point on the horizon (compass bearing = Sun Angle),
+	//   B = the noon point, 90° around from A and lifted to maxEl elevation.
+	// sun = cos(phase)·A + sin(phase)·B, so it sits at A at sunrise, B at noon,
+	// −A (the opposite horizon) at sunset and −B (below ground) at midnight.
+	// maxEl < 90° keeps it off the exact zenith for a natural, slightly tilted arc.
+	const maxEl = 72.0 * math.Pi / 180.0
+	azr := float64(sunAngle) * 2 * math.Pi // compass bearing the sun rises from
+	ax, az0, azz := math.Sin(azr), 0.0, math.Cos(azr)
+	bx := math.Cos(maxEl) * math.Sin(azr+math.Pi/2)
+	by := math.Sin(maxEl)
+	bz := math.Cos(maxEl) * math.Cos(azr+math.Pi/2)
+	cp, sp := math.Cos(phase), math.Sin(phase)
+	sunX := cp*ax + sp*bx
+	sunY := cp*az0 + sp*by
+	sunZ := cp*azz + sp*bz
 
-	// Energy: a broad, bright daytime plateau that rolls off softly through
-	// twilight to a dim — but not pitch-black — night.
-	day := math.Max(0, height)
-	energy = Float.X(0.15 + day*1.6)
+	// The directional light points the way the light travels — opposite the sun.
+	// Recover its pitch/yaw Euler (order YXZ, as Node3D uses) from that forward
+	// vector: forward = (−sin(yaw)·cos(pitch), sin(pitch), −cos(yaw)·cos(pitch)),
+	// so pitch = asin(forward.y) and yaw = atan2(−forward.x, −forward.z).
+	fx, fy, fz := -sunX, -sunY, -sunZ
+	el = Float.X(math.Asin(math.Max(-1, math.Min(1, fy))))
+	az = Float.X(math.Atan2(-fx, -fz))
 
-	// Azimuth: the artist-controlled Sun Angle, a full circle around 0..1.
-	az = Float.X(float64(sunAngle) * 2 * math.Pi)
+	// Energy: stays strong while the sun is above the horizon and rolls off
+	// through twilight to a dim — not pitch-black — night. Driven by the sun's
+	// actual height (sunY) through the SAME smoothstep the ambient + sky-shader
+	// day blend use, so a low-but-visible sun still lights the scene (the
+	// sunrise/sunset glow) instead of cutting to night the instant it grazes the
+	// horizon. Peak ~1.35 keeps noon clouds and water highlights from blowing out.
+	energy = Float.X(0.15 + 1.2*smoothstep(-0.12, 0.18, sunY))
 
 	// Fog / atmosphere amount (user-facing 0-1 maps to reasonable density).
 	fogDensity = fog * 0.055
@@ -1699,6 +1995,11 @@ func ensureGrassWindGlobals() {
 		RenderingServer.GlobalShaderParameterAdd("grass_brush_uplift", RenderingServer.GlobalVarTypeVec2, Vector2.Zero)
 		RenderingServer.GlobalShaderParameterAdd("grass_brush_height", RenderingServer.GlobalVarTypeFloat, float64(0.0))
 		RenderingServer.GlobalShaderParameterAdd("grass_brush_radius", RenderingServer.GlobalVarTypeFloat, float64(0.0))
+		// Flatten preview (plateau/smooth): mode 1 pulls each blade toward
+		// grass_brush_target_y by grass_brush_height*(1−d²/r²) instead of an
+		// additive lift, so grass rides the flatten the same way it rides a bump.
+		RenderingServer.GlobalShaderParameterAdd("grass_brush_mode", RenderingServer.GlobalVarTypeFloat, float64(0.0))
+		RenderingServer.GlobalShaderParameterAdd("grass_brush_target_y", RenderingServer.GlobalVarTypeFloat, float64(0.0))
 	})
 }
 
@@ -1764,6 +2065,19 @@ func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
 			float64(base.X*(1+1.8*w)),
 			float64(base.Y*(1+1.8*w)),
 		))
+	}
+
+	// SunshineClouds2 advances each noise octave by its own structure wind speed
+	// (world units/sec). The upstream defaults are km-scale (140/100/40/12); these
+	// are scaled ~100x down to this world and ramped by the Wind slider with the
+	// same 1+1.8*w shape as the other two systems, so a gentle drift persists at
+	// wind 0. wind_direction keeps the resource default (1,0,1).
+	if world.cloudsDriver != (Node.Instance{}) {
+		w := float64(1 + 1.8*Float.X(wind))
+		Object.Set(world.cloudsDriver, "extra_large_structures_wind_speed", 1.4*w)
+		Object.Set(world.cloudsDriver, "large_structures_wind_speed", 1.0*w)
+		Object.Set(world.cloudsDriver, "medium_structures_wind_speed", 0.4*w)
+		Object.Set(world.cloudsDriver, "small_structures_wind_speed", 0.12*w)
 	}
 
 	// Foliage editor preview wind (if active).

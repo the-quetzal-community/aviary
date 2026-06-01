@@ -34,7 +34,10 @@ uniform float horizon_fade = 0.36;
 // Per-unit extinction of a fully-dense froxel × the band thickness ≈ optical depth;
 // keep ~O(1) or the layer becomes an opaque wall. Higher = thicker/more opaque.
 uniform float density_mul = 1.2;
-uniform vec3 cloud_albedo : source_color = vec3(1.0);
+// A hair off pure white: real cloud droplets scatter near-neutrally but a literal
+// vec3(1.0) albedo, lit hard by the sun, reads as a digital "neon" white. The
+// faint warm desaturation keeps the sunlit faces bright but believable.
+uniform vec3 cloud_albedo : source_color = vec3(0.97, 0.96, 0.93);
 
 float remap(float v, float a, float b, float c, float d) {
 	return c + (v - a) * (d - c) / (b - a);

@@ -12,6 +12,10 @@ uniform float height;
 uniform float radius;
 uniform bool brush_active;
 
+// brush_mode (see terrain.gdshader): only 0 (add) vs 1/2 (special) affect the
+// simple height preview here; sides use a close approximation.
+uniform float brush_mode = 0.0;
+
 uniform float blend_sharpness = 8.0; // Higher values make transitions sharper, reducing unwanted blending/shearing on sides
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -23,7 +27,28 @@ void vertex() {
     float dy = (VERTEX.z - uplift.z);
 	// uplift the terrain, if within radius
 	if (dx*dx+dy*dy < radius*radius && VERTEX.y > 0.0) {
-        VERTEX.y += height * (1.0 - (dx*dx+dy*dy)/(radius*radius));
+		float br2 = dx*dx + dy*dy;
+		float rr = radius*radius;
+		float w = 1.0 - br2/rr;
+		if (brush_mode > 0.5) {
+			// plateau/smooth preview: shift the wall RIGIDLY by the delta its top edge
+			// moves, so the skirt stays welded to the (flattened) terrain top instead
+			// of collapsing toward uplift.y. VERTEX.y here is the terrain top height
+			// PLUS the skirt's +2.2 offset (see reloadSides), so recover the true top
+			// before measuring the flatten delta — matching terrain.gdshader, whose
+			// top sits at top + (uplift.y - top)*fac. Plateau uses the flat-topped
+			// falloff, smooth the soft cone (PLATEAU_FLAT_CORE matches editor_terrain.go).
+			float top = VERTEX.y - 2.2;
+			float ff = w; // smooth: 1−d²/r² cone
+			if (brush_mode < 1.5) {
+				float t = sqrt(br2) / radius;
+				ff = 1.0 - smoothstep(0.6, 1.0, t); // plateau: flat top
+			}
+			float fac = clamp(height*ff, 0.0, 1.0);
+			VERTEX.y += (uplift.y - top) * fac;
+		} else {
+			VERTEX.y += height * w;
+		}
     }
     VERTEX.y -= 2.2;
     VERTEX.y = max(VERTEX.y, -2.0);
