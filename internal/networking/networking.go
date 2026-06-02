@@ -22,6 +22,9 @@ type Server func(client Client)
 type Client struct {
 	Recv <-chan []byte
 	Send chan<- []byte
+	// Done is closed by the networking layer once the peer disconnects, so the
+	// server can stop reading and writing instead of blocking on a dead channel.
+	Done <-chan struct{}
 }
 
 type Code string
@@ -36,6 +39,8 @@ type Connectivity struct {
 
 	local_recv chan<- []byte
 	server     Server
+
+	closed chan struct{} // closed when a session joined via Join disconnects
 
 	Raise func(error)
 	Print func(string, ...any)
@@ -125,6 +130,10 @@ func (c *Connectivity) Send(data []byte) {
 	}
 }
 
+// Done is closed when a session joined via Join disconnects. It is nil before
+// Join is called (and on the host side), so selecting on it simply blocks.
+func (c *Connectivity) Done() <-chan struct{} { return c.closed }
+
 func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	if err := c.setup(); err != nil {
 		return xray.New(err)
@@ -144,6 +153,19 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	})
 	if err != nil {
 		return xray.New(err)
+	}
+	c.closed = make(chan struct{})
+	var closeOnce sync.Once
+	// closeSession tears the joined session down exactly once, signalling the
+	// server (via c.closed) so its Recv/Send unblock, and releasing the peer and
+	// signalling socket. Safe to call from the data-channel and connection-state
+	// callbacks, which may race on an abrupt disconnect.
+	closeSession := func() {
+		closeOnce.Do(func() {
+			close(c.closed)
+			signalling.Close()
+			go c.peer.Close()
+		})
 	}
 	var issues = make(chan error, 2)
 	var mutex sync.Mutex
@@ -181,23 +203,27 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 			if debug {
 				c.Print("Received message on data channel: %s\n", string(msg.Data))
 			}
-			updates <- msg.Data
+			select {
+			case updates <- msg.Data:
+			case <-c.closed:
+			}
 		})
 		ch.OnClose(func() {
-			close(updates)
+			closeSession()
 		})
 	})
-	var states = make(chan webrtc.PeerConnectionState, 3)
 	c.peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if debug {
 			c.Print("Connection state changed: %s\n", state.String())
 		}
-		select {
-		case states <- state:
-		default:
+		switch state {
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+			closeSession()
 		}
 	})
-	c.peer.SetRemoteDescription(message.SDP)
+	if err := c.peer.SetRemoteDescription(message.SDP); err != nil {
+		return xray.New(err)
+	}
 	answer, err := c.peer.CreateAnswer(nil)
 	if err != nil {
 		return xray.New(err)
@@ -221,7 +247,9 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 			}
 			switch msg.Type {
 			case string(iceMessageTypeCandidate):
-				c.peer.AddICECandidate(msg.Candidate)
+				if err := c.peer.AddICECandidate(msg.Candidate); err != nil {
+					c.Raise(xray.New(err))
+				}
 			case string(iceMessageTypeError):
 				issues <- fmt.Errorf("error from signalling server: %s", msg.Message)
 				return
@@ -238,7 +266,6 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	}); err != nil {
 		return xray.New(err)
 	}
-	c.peer.SetRemoteDescription(message.SDP)
 	for {
 		select {
 		case ch := <-data_channels:
@@ -253,22 +280,58 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	}
 }
 
+// offerTimeout bounds how long a parked offer waits for an answer. If a peer
+// grabs the offer but never completes the handshake (e.g. it disconnects part
+// way through), the offer slot is reclaimed so new peers can still join, rather
+// than the host wedging forever on one half-open peer.
+const offerTimeout = 30 * time.Second
+
 func (c *Connectivity) addPeers(sock *websocket.Conn) {
-	var mutex sync.Mutex
-	var pending = make(map[string]*webrtc.PeerConnection)
-	var make_offer = make(chan struct{}, 1)
-	for i := 0; i < cap(make_offer); i++ {
-		make_offer <- struct{}{}
+	type peerState struct {
+		conn     *webrtc.PeerConnection
+		timer    *time.Timer
+		resolved bool // the offer slot has already been handed back for this session
 	}
+	var mutex sync.Mutex
+	var pending = make(map[string]*peerState)
+	var make_offer = make(chan struct{}, 1)
+	var stop = make(chan struct{})
+	make_offer <- struct{}{}
+
+	// returnToken hands the single offer slot back so the next peer can be
+	// offered. Non-blocking, and safe after shutdown (make_offer is never closed).
+	returnToken := func() {
+		select {
+		case make_offer <- struct{}{}:
+		default:
+		}
+	}
+	// claim resolves the offer for a session exactly once. The winning caller
+	// owns returning the offer slot; later callers (a disconnect after the answer
+	// already arrived, or a timeout that lost the race to an answer) get false
+	// and leave the slot alone.
+	claim := func(sessionID string) bool {
+		mutex.Lock()
+		defer mutex.Unlock()
+		ps, ok := pending[sessionID]
+		if !ok || ps.resolved {
+			return false
+		}
+		ps.resolved = true
+		if ps.timer != nil {
+			ps.timer.Stop()
+		}
+		return true
+	}
+
 	go func() {
+		defer close(stop)
 		for {
 			msg, err := wsRecv[iceMessage](sock)
 			if err != nil {
-				if errors.Is(err, websocket.ErrCloseSent) {
-					close(make_offer)
-					return
+				if !errors.Is(err, websocket.ErrCloseSent) {
+					c.Raise(xray.New(err))
 				}
-				c.Raise(xray.New(err))
 				return
 			}
 			if debug {
@@ -277,26 +340,28 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 			switch msg.Type {
 			case string(iceMessageTypeAnswer):
 				mutex.Lock()
-				peer, ok := pending[msg.SessionID]
+				ps, ok := pending[msg.SessionID]
 				mutex.Unlock()
 				if !ok {
-					c.Raise(fmt.Errorf("received offer for unknown session ID: %s", msg.SessionID))
+					c.Raise(fmt.Errorf("received answer for unknown session ID: %s", msg.SessionID))
 					continue
 				}
-				if err := peer.SetRemoteDescription(msg.SDP); err != nil {
+				if err := ps.conn.SetRemoteDescription(msg.SDP); err != nil {
 					c.Raise(xray.New(err))
 					continue
 				}
-				make_offer <- struct{}{} // allow new offers to be made
+				if claim(msg.SessionID) {
+					returnToken() // a peer claimed the offer; allow the next one
+				}
 			case string(iceMessageTypeCandidate):
 				mutex.Lock()
-				peer, ok := pending[msg.SessionID]
+				ps, ok := pending[msg.SessionID]
 				mutex.Unlock()
 				if !ok {
 					c.Raise(fmt.Errorf("received candidate for unknown session ID: %s", msg.SessionID))
 					continue
 				}
-				if err := peer.AddICECandidate(msg.Candidate); err != nil {
+				if err := ps.conn.AddICECandidate(msg.Candidate); err != nil {
 					c.Raise(xray.New(err))
 					continue
 				}
@@ -306,44 +371,82 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 		}
 	}()
 
-	for range make_offer {
+	for {
+		select {
+		case <-stop:
+			return // signalling socket closed; existing peers keep running
+		case <-make_offer:
+		}
+
 		peer, err := webrtc.NewPeerConnection(webrtc.Configuration{
 			ICEServers: c.ice,
 		})
 		if err != nil {
 			c.Raise(err)
 			time.Sleep(time.Second)
+			returnToken()
 			continue
 		}
+		sessionID := uuid.NewString()
+		client_recv := make(chan []byte, 1)
+		client_send := make(chan []byte, 1)
+		done := make(chan struct{})
+		var closeOnce sync.Once
+
+		// cleanup tears the peer down exactly once: it signals the server (via
+		// done) so its Recv/Send unblock, drops the routing entry, and releases
+		// the connection. teardown additionally reclaims the offer slot when the
+		// peer dies before it ever answered.
+		cleanup := func() {
+			closeOnce.Do(func() {
+				mutex.Lock()
+				delete(pending, sessionID)
+				mutex.Unlock()
+				close(done)
+				go peer.Close()
+			})
+		}
+		teardown := func() {
+			if claim(sessionID) {
+				returnToken()
+			}
+			cleanup()
+		}
+
 		ch, err := peer.CreateDataChannel("data", nil)
 		if err != nil {
 			c.Raise(xray.New(err))
+			go peer.Close()
+			returnToken()
 			time.Sleep(time.Second)
 			continue
 		}
-		client_recv := make(chan []byte, 1)
-		client_send := make(chan []byte, 1)
 		ch.OnMessage(func(msg webrtc.DataChannelMessage) {
 			if debug {
 				c.Print("Received message on data channel")
 			}
-			client_recv <- msg.Data
+			select {
+			case client_recv <- msg.Data:
+			case <-done:
+			}
 		})
 		ch.OnClose(func() {
 			if debug {
 				c.Print("Data channel closed.\n")
 			}
-			close(client_recv)
+			teardown()
 		})
 		offer, err := peer.CreateOffer(nil)
 		if err != nil {
 			c.Raise(xray.New(err))
+			go peer.Close()
+			returnToken()
 			time.Sleep(time.Second)
 			continue
 		}
-		sessionID := uuid.NewString()
+		ps := &peerState{conn: peer}
 		mutex.Lock()
-		pending[sessionID] = peer
+		pending[sessionID] = ps
 		mutex.Unlock()
 		if err := wsSend(sock, iceMessage{
 			Type:      string(iceMessageTypeOffer),
@@ -351,6 +454,7 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 			SDP:       offer,
 		}); err != nil {
 			c.Raise(xray.New(err))
+			teardown()
 			time.Sleep(time.Second)
 			continue
 		}
@@ -374,9 +478,17 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 		})
 		ch.OnOpen(func() {
 			go func() {
-				for msg := range client_send {
-					if err := ch.Send(msg); err != nil {
-						c.Raise(xray.New(err))
+				for {
+					select {
+					case msg, ok := <-client_send:
+						if !ok {
+							return
+						}
+						if err := ch.Send(msg); err != nil {
+							c.Raise(xray.New(err))
+							return
+						}
+					case <-done:
 						return
 					}
 				}
@@ -384,18 +496,34 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 			go c.server(Client{
 				Recv: client_recv,
 				Send: client_send,
+				Done: done,
 			})
 		})
 		peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 			if debug {
 				c.Print("Peer connection state changed: %s\n", state.String())
 			}
-			if state == webrtc.PeerConnectionStateConnected {
-				return
+			switch state {
+			case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+				teardown()
 			}
 		})
+		mutex.Lock()
+		if !ps.resolved {
+			ps.timer = time.AfterFunc(offerTimeout, func() {
+				if claim(sessionID) {
+					if debug {
+						c.Print("Offer %s timed out with no answer.\n", sessionID)
+					}
+					returnToken()
+					cleanup()
+				}
+			})
+		}
+		mutex.Unlock()
 		if err := peer.SetLocalDescription(offer); err != nil {
 			c.Raise(xray.New(err))
+			teardown()
 			time.Sleep(time.Second)
 			continue
 		}

@@ -46,7 +46,11 @@ func (f File) SetMissing(missing bool, dst io.WriteSeeker) error {
 	if _, err := dst.Seek(f.Head, io.SeekStart); err != nil {
 		return xray.New(err)
 	}
-	if err := binary.Write(dst, binary.LittleEndian, uint32(0)); err != nil {
+	var val uint32
+	if missing {
+		val = uint32(FlagMissing)
+	}
+	if err := binary.Write(dst, binary.LittleEndian, val); err != nil {
 		return xray.New(err)
 	}
 	return nil

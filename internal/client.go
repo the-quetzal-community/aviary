@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -268,6 +269,25 @@ type Client struct {
 
 	member bool // true when we have been assigned an author ID
 
+	// Loading screen state. While loading is true, Process suppresses 3D
+	// rendering (Viewport.SetDisable3d) and fast-drains the replay queue under
+	// a full-screen SceneLoader overlay, so the world is built up without
+	// rendering the half-finished scene each frame (see beginLoading /
+	// processLoading / finishLoading).
+	loading        bool
+	loadingOverlay *SceneLoader
+	// loadProgressArmed gates the byte-counting file wrapper to the FIRST
+	// Storage.Open (the initial replay); later Opens serve joining peers
+	// (musical server srv.handle) and must not reset the bar.
+	loadProgressArmed atomic.Bool
+	loadTotalBytes    atomic.Int64 // .mus3 size; 0 ⇒ unknown (multiplayer join)
+	loadReadBytes     atomic.Int64 // bytes decoded so far (initial replay)
+	loadEnqueued      atomic.Int64 // mutation closures pushed into queue
+	loadDequeued      atomic.Int64 // mutation closures applied during loading
+	loadIdleSince     time.Time    // when the queue first went idle (join grace)
+	loadLastProgress  time.Time    // last time any load counter advanced (stall guard)
+	loadLastSeen      int64        // counter snapshot for the stall guard
+
 	ui *UI
 
 	// xr is true once setupXR has confirmed an OpenXR runtime is
@@ -506,6 +526,12 @@ func (world *Client) Ready() {
 	if UserDataDir == "" {
 		UserDataDir = OS.GetUserDataDir()
 	}
+	// Bring up the loading overlay and stop rendering the 3D world before any
+	// replay/setup runs: the scene is built up under the splash and only shown
+	// once the .mus3 log is fully applied (see processLoading/finishLoading).
+	// Must happen before musical.Host below so loadProgressArmed is set before
+	// the decode goroutine calls Storage.Open.
+	world.beginLoading()
 	// Register the cloud-shadow global uniforms up front, before any terrain tile (and
 	// its shader) is created and compiled — otherwise terrain.gdshader compiles first and
 	// Godot errors "Global uniform 'cloud_shadow_sun_dir' does not exist" until the lazy
@@ -749,6 +775,142 @@ func (world *Client) applyCoverDefault() {
 	world.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, mat)
 }
 
+// loadDrainBudget bounds how long processLoading spends applying queued
+// mutations per frame before yielding so the 2D loading overlay keeps animating
+// and the window stays responsive. The decode goroutine produces faster than we
+// apply, so this is effectively a continuous-drain duty cycle: larger ⇒ faster
+// build, choppier splash.
+const loadDrainBudget = 30 * time.Millisecond
+
+// joinLoadGrace is how long the queue must stay idle (after author assignment)
+// before the splash is dismissed on the join path, where the host streams
+// catch-up state with no end marker. Single-player loads dismiss immediately on
+// idle (the decode completes synchronously before the author assignment).
+const joinLoadGrace = 400 * time.Millisecond
+
+// loadStallTimeout fails the loading screen open if no load counter advances for
+// this long, so a broken or hung load never traps the user behind the splash.
+const loadStallTimeout = 30 * time.Second
+
+// beginLoading raises the SceneLoader splash and suppresses 3D rendering for the
+// duration of the initial replay. Called at the top of Ready (before
+// musical.Host) for both single-player loads and multiplayer joins.
+func (world *Client) beginLoading() {
+	world.loading = true
+	world.loadProgressArmed.Store(true)
+	world.loadLastProgress = time.Now()
+	overlay := LoadSync[PackedScene.Instance]("res://ui/scene_loader.tscn").Instantiate()
+	if loader, ok := Object.As[*SceneLoader](overlay); ok {
+		world.loadingOverlay = loader
+		world.AsNode().AddChild(loader.AsNode())
+	}
+	// Skip the 3D render pass while the opaque splash is up; 2D still draws, so
+	// the overlay animates but the half-built world is never rendered.
+	Viewport.Get(world.AsNode()).SetDisable3d(true)
+}
+
+// finishLoading tears the splash down and resumes 3D rendering once the world
+// has been fully built.
+func (world *Client) finishLoading() {
+	if !world.loading {
+		return
+	}
+	world.loading = false
+	Viewport.Get(world.AsNode()).SetDisable3d(false)
+	if world.loadingOverlay != nil {
+		world.loadingOverlay.AsNode().QueueFree()
+		world.loadingOverlay = nil
+	}
+}
+
+// processLoading fast-drains the replay queue under the splash. It applies as
+// many queued mutations as fit in loadDrainBudget (decoupling the build from the
+// frame rate), refreshes the progress readout, and dismisses the splash once the
+// scene is fully built.
+func (world *Client) processLoading(dt Float.X) {
+	// Advance the timing coordinator so time-driven entities (e.g. the
+	// ActionRenderer that replays recorded citizen/critter movement) read a
+	// real, advancing client.time.Now() and settle to the right place. Without
+	// this, time.Now() stays 0 and the movement interpolation extrapolates to
+	// non-finite/astronomical transforms (look_at + is_finite engine errors).
+	world.time.Process(dt)
+	deadline := time.Now().Add(loadDrainBudget)
+	for {
+		select {
+		case fn := <-world.queue:
+			fn()
+			world.loadDequeued.Add(1)
+			if !time.Now().Before(deadline) {
+				goto progress
+			}
+		default:
+			goto progress
+		}
+	}
+progress:
+	world.updateLoadProgress()
+	if world.loadingComplete() {
+		world.finishLoading()
+	}
+}
+
+// updateLoadProgress drives the splash readout: a determinate bar for
+// single-player loads (bytes decoded, then queued mutations applied) and an
+// indeterminate status for joins (state streams in with no known total).
+func (world *Client) updateLoadProgress() {
+	// Stall guard: remember the last time any counter advanced (independent of
+	// the overlay, so loadingComplete's fail-open works even if it didn't load).
+	seen := world.loadReadBytes.Load() + world.loadEnqueued.Load() + world.loadDequeued.Load()
+	if seen != world.loadLastSeen {
+		world.loadLastSeen = seen
+		world.loadLastProgress = time.Now()
+	}
+	if world.loadingOverlay == nil {
+		return
+	}
+	if world.joining {
+		world.loadingOverlay.SetIndeterminate()
+		return
+	}
+	total := world.loadTotalBytes.Load()
+	if !world.member && total > 0 {
+		// Decode/stream phase: how much of the .mus3 log we've read.
+		world.loadingOverlay.SetProgress(float64(world.loadReadBytes.Load()) / float64(total))
+		return
+	}
+	// Build phase: the decode finished (member assigned), so loadEnqueued is the
+	// final mutation count and dequeued/enqueued is real build progress.
+	if enq := world.loadEnqueued.Load(); enq > 0 {
+		world.loadingOverlay.SetProgress(float64(world.loadDequeued.Load()) / float64(enq))
+	} else {
+		world.loadingOverlay.SetProgress(1)
+	}
+}
+
+// loadingComplete reports whether the initial replay has been fully applied.
+func (world *Client) loadingComplete() bool {
+	// Fail open if the load wedged (no counter advanced for a long time).
+	if time.Since(world.loadLastProgress) > loadStallTimeout {
+		return true
+	}
+	if !world.member || len(world.queue) > 0 {
+		world.loadIdleSince = time.Time{}
+		return false
+	}
+	if !world.joining {
+		// Single-player: decode finished before the author assignment and the
+		// queue has drained — the world is fully built.
+		return true
+	}
+	// Join: the host streams catch-up with no end marker, so require a short
+	// continuous-idle grace before assuming the stream has finished.
+	if world.loadIdleSince.IsZero() {
+		world.loadIdleSince = time.Now()
+		return false
+	}
+	return time.Since(world.loadIdleSince) > joinLoadGrace
+}
+
 const speed = 8
 
 // cameraTerrainClearance is how far above the terrain the camera is held when it
@@ -758,6 +920,17 @@ const speed = 8
 const cameraTerrainClearance Float.X = 0.5
 
 func (world *Client) Process(dt Float.X) {
+	// While the world is still replaying, fast-drain the mutation queue under
+	// the loading splash (3D rendering is disabled) instead of running the
+	// normal per-frame world logic. processLoading still advances the timing
+	// coordinator so time-driven entities (ActionRenderer-replayed movement)
+	// keep synchronising to their correct positions while we build — we only
+	// suppress rendering, not state-building. It dismisses the splash and
+	// re-enables rendering once the scene is fully built.
+	if world.loading {
+		world.processLoading(dt)
+		return
+	}
 	world.time.Process(dt)
 
 	// Keep the underwater post-process in sync with the water surface AND terrain
@@ -1243,20 +1416,27 @@ type networkingFor struct {
 }
 
 func (nf networkingFor) Send(data []byte) error {
-	nf.Client.Send <- data
-	return nil
+	select {
+	case nf.Client.Send <- data:
+		return nil
+	case <-nf.Client.Done:
+		return fmt.Errorf("connection closed")
+	}
 }
 
 func (nf networkingFor) Recv() ([]byte, error) {
-	data, ok := <-nf.Client.Recv
-	if !ok {
+	select {
+	case data := <-nf.Client.Recv:
+		return data, nil
+	case <-nf.Client.Done:
 		return nil, fmt.Errorf("connection closed")
 	}
-	return data, nil
 }
 
+// Close is a no-op: the networking layer owns the peer's lifetime and closes
+// Client.Done on disconnect, which is what unblocks the send/recv goroutines.
+// Closing Client.Send here would race with concurrent broadcast Sends.
 func (nf networkingFor) Close() error {
-	close(nf.Client.Send)
 	return nil
 }
 
@@ -1335,11 +1515,15 @@ func (nv networkingVia) Send(data []byte) error {
 }
 
 func (nv networkingVia) Recv() ([]byte, error) {
-	data, ok := <-nv.updates
-	if !ok {
+	select {
+	case data, ok := <-nv.updates:
+		if !ok {
+			return nil, fmt.Errorf("connection closed")
+		}
+		return data, nil
+	case <-nv.network.Done():
 		return nil, fmt.Errorf("connection closed")
 	}
-	return data, nil
 }
 
 func (nv networkingVia) Close() error {

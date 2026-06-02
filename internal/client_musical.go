@@ -3,9 +3,11 @@ package internal
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"graphics.gd/classdb/Animation"
@@ -32,6 +34,14 @@ func (world musicalImpl) ReportError(err error) {
 }
 
 func (world musicalImpl) Open(space musical.WorkID) (fs.File, error) {
+	file, err := world.openStorage(space)
+	if err != nil {
+		return nil, err
+	}
+	return world.trackLoadProgress(file), nil
+}
+
+func (world musicalImpl) openStorage(space musical.WorkID) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(space[:])
 	if UserState.Aviary.TogetherUntil.After(time.Now()) {
 		fmt.Println("opening cloud save for", name)
@@ -46,6 +56,42 @@ func (world musicalImpl) Open(space musical.WorkID) (fs.File, error) {
 	}
 	return file, nil
 }
+
+// trackLoadProgress wraps the initial-replay .mus3 file so the loading screen
+// can show a determinate bar (bytes decoded / file size). Only the FIRST open
+// is wrapped (gated by loadProgressArmed); later opens serve joining peers via
+// the musical server's srv.handle and must not reset the bar. The wrapper keeps
+// the underlying io.Writer so committed sculpts still persist — musical/storage
+// keys persistence off whether the file implements io.Writer.
+func (world musicalImpl) trackLoadProgress(file fs.File) fs.File {
+	if !world.loadProgressArmed.CompareAndSwap(true, false) {
+		return file
+	}
+	w, ok := file.(io.Writer)
+	if !ok {
+		return file
+	}
+	if st, err := file.Stat(); err == nil {
+		world.loadTotalBytes.Store(st.Size())
+	}
+	return &countingFile{File: file, w: w, count: &world.loadReadBytes}
+}
+
+// countingFile is an fs.File (plus io.Writer) that tallies bytes read so the
+// loading screen can report decode progress.
+type countingFile struct {
+	fs.File
+	w     io.Writer
+	count *atomic.Int64
+}
+
+func (c *countingFile) Read(p []byte) (int, error) {
+	n, err := c.File.Read(p)
+	c.count.Add(int64(n))
+	return n, err
+}
+
+func (c *countingFile) Write(p []byte) (int, error) { return c.w.Write(p) }
 
 func parseVersion(version string) (major, minor, patch int) {
 	_, version, _ = strings.Cut(version, " ")
@@ -82,6 +128,7 @@ func (world musicalImpl) Member(req musical.Member) error {
 
 func (world musicalImpl) Upload(file musical.Upload) error { return nil }
 func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
+	world.loadEnqueued.Add(1)
 	world.queue <- func() {
 		editor, ok := world.editors[brush.Editor]
 		if !ok {
@@ -93,6 +140,7 @@ func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 	return nil
 }
 func (world musicalImpl) Import(uri musical.Import) error {
+	world.loadEnqueued.Add(1)
 	world.queue <- func() {
 		if _, ok := world.loaded[uri.Import]; ok {
 			return
@@ -146,6 +194,7 @@ func (world musicalImpl) Import(uri musical.Import) error {
 	return nil
 }
 func (world musicalImpl) Change(con musical.Change) error {
+	world.loadEnqueued.Add(1)
 	world.queue <- func() {
 		world.entity_ids[con.Entity.Author] = max(world.entity_ids[con.Entity.Author], con.Entity.Number)
 
@@ -255,6 +304,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 }
 
 func (world musicalImpl) Action(action musical.Action) error {
+	world.loadEnqueued.Add(1)
 	world.queue <- func() {
 		editor, ok := world.editors[action.Editor]
 		if !ok {
@@ -279,6 +329,7 @@ func (world musicalImpl) Action(action musical.Action) error {
 }
 
 func (world musicalImpl) LookAt(view musical.LookAt) error {
+	world.loadEnqueued.Add(1)
 	world.queue <- func() {
 		editor, ok := world.editors[view.Editor]
 		if !ok {

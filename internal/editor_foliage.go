@@ -216,7 +216,7 @@ func (client *Client) resolveMaterialTexture(design musical.Design) Texture2D.In
 	if tex, ok := client.textures[design].Instance(); ok {
 		return tex
 	}
-	return LoadSync[Texture2D.Instance](uri)
+	return loadSafe[Texture2D.Instance](uri)
 }
 
 type regionSidecar struct {
@@ -233,7 +233,7 @@ func loadRegionTexture(uri string) Texture2D.Instance {
 	if err := json.Unmarshal([]byte(f.GetAsText()), &sidecar); err != nil {
 		return Texture2D.Nil
 	}
-	mat := LoadSync[BaseMaterial3D.Instance](sidecar.Material)
+	mat := loadSafe[BaseMaterial3D.Instance](sidecar.Material)
 	if mat == BaseMaterial3D.Nil {
 		return Texture2D.Nil
 	}

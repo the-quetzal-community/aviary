@@ -1,7 +1,10 @@
 package internal
 
 import (
+	"fmt"
+	"path"
 	"runtime"
+	"strings"
 
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Material"
@@ -13,6 +16,43 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Path"
 )
+
+// loadSafe is like the generic Resource.Load[T] / LoadSync[T] but returns the
+// zero value for T (e.g. Material.Nil, Texture2D.Nil) instead of panicking if
+// the path is empty, the resource is missing, or the on-disk resource has a
+// different Godot type than T.
+//
+// This is used for paths that originate from community library designs
+// (e.g. MaterialSharingMeshInstance3D.Material strings baked into .glb assets,
+// or "material" fields inside .region sidecars). Such paths can dangle or
+// point at the wrong resource kind without being a code bug; we must not
+// crash the whole app when a user (or remote peer) has a design that
+// references bad library data.
+func loadSafe[T Resource.Any, P string | Path.ToResource](uri P) T {
+	raw := fmt.Sprint(uri)
+	if raw == "" {
+		var z T
+		return z
+	}
+	// Clean to handle baked-in relative ".." paths from library assets (e.g.
+	// foliage props with Material refs like ".../foliage/../texture/hash.tres").
+	// This ensures we request the canonical key that exists in the pck index,
+	// so RecognizePath triggers the on-demand download using the right key.
+	clean := path.Clean(strings.TrimPrefix(raw, "res://"))
+	if strings.HasPrefix(raw, "res://") {
+		clean = "res://" + clean
+	}
+	res := Resource.Load[Resource.Instance](clean)
+	if res == (Resource.Instance{}) {
+		var z T
+		return z
+	}
+	if t, ok := Object.As[T](res); ok {
+		return t
+	}
+	var z T
+	return z
+}
 
 // Community library resources live in library.pck, fetched on demand over
 // HTTP range requests by [CommunityResourceLoader]. Mesh geometry ships in
@@ -102,17 +142,17 @@ func LoadSync[T Resource.Any, P string | Path.ToResource](path P) T {
 // inline on the calling thread rather than being dropped.
 func LoadAsync[T Resource.Any, P string | Path.ToResource](path P, apply func(T)) {
 	if !loaderRunning {
-		apply(Resource.Load[T](path))
+		apply(loadSafe[T](path))
 		return
 	}
 	job := func() {
-		res := Resource.Load[T](path)
-		Callable.Defer(Callable.New(func() { apply(res) }))
+		typed := loadSafe[T](path)
+		Callable.Defer(Callable.New(func() { apply(typed) }))
 	}
 	select {
 	case resourceJobQueue <- job:
 	default:
-		apply(Resource.Load[T](path))
+		apply(loadSafe[T](path))
 	}
 }
 

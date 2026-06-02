@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"runtime"
 	"strings"
+	"time"
 
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/ProjectSettings"
@@ -68,14 +70,21 @@ func NewCommunityResourceLoader() *CommunityResourceLoader {
 //
 // [GetRecognizedExtensions]: https://pkg.go.dev/graphics.gd/classdb/ResourceFormatLoader#Interface
 // [GetResourceType]: https://pkg.go.dev/graphics.gd/classdb/ResourceFormatLoader#Interface
-func (crl *CommunityResourceLoader) RecognizePath(path string, atype string) bool {
-	path = strings.TrimPrefix(path, "res://")
-	path_import := path + ".import"
-	path_remap := path + ".remap"
-	if entry, ok := crl.local[path]; ok && !entry.Missing() {
-		if cloud, ok := crl.cloud[path]; ok {
+func (crl *CommunityResourceLoader) RecognizePath(requested string, atype string) bool {
+	// Normalize paths that may contain ".." (e.g. relative material references
+	// baked into MaterialSharingMeshInstance3D.Material strings inside library
+	// foliage/mineral/etc props, which can be of the form
+	// "res://library/author/foliage/../texture/hash.tres").
+	// The maps from pck.Index use canonical paths, so we must use the cleaned
+	// form for map lookups and to trigger downloads. Godot itself normalizes
+	// during actual resource resolution, but our on-demand logic must too.
+	clean := path.Clean(strings.TrimPrefix(requested, "res://"))
+	path_import := clean + ".import"
+	path_remap := clean + ".remap"
+	if entry, ok := crl.local[clean]; ok && !entry.Missing() {
+		if cloud, ok := crl.cloud[clean]; ok {
 			if entry.Hash != cloud.Hash && cloud.Size <= entry.Size {
-				crl.download(path)
+				crl.download(clean)
 			}
 		}
 		return false
@@ -86,8 +95,8 @@ func (crl *CommunityResourceLoader) RecognizePath(path string, atype string) boo
 	if entry, ok := crl.preview[path_remap]; ok {
 		return crl.remap(entry)
 	}
-	if _, ok := crl.cloud[path]; ok {
-		crl.download(path)
+	if _, ok := crl.cloud[clean]; ok {
+		crl.download(clean)
 		return false
 	}
 	return false
@@ -115,28 +124,81 @@ func (crl *CommunityResourceLoader) remap(entry pck.File) bool {
 }
 
 func (crl *CommunityResourceLoader) download(path string) {
-	if crl.cache == nil {
-		cache, err := httpseek.New("https://vpk.quetzal.community/library.pck")
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if crl.cache == nil {
+			cache, err := httpseek.New("https://vpk.quetzal.community/library.pck")
+			if err != nil {
+				Engine.Raise(err)
+				return
+			}
+			crl.cache = cache
+		}
+		reader := crl.cache
+		local, err := os.OpenFile(UserDataDir+"/library.pck", os.O_RDWR, 0644)
 		if err != nil {
 			Engine.Raise(err)
 			return
 		}
-		crl.cache = cache
+		// Note: defer close is per-attempt; we close explicitly on retry.
+		func() {
+			defer local.Close()
+			next := crl.local[path]
+			prev := crl.cloud[path]
+			if err := pck.Remap(local, reader, next, prev); err != nil {
+				lastErr = err
+				// Transient network error (e.g. "http2: response body closed").
+				// Invalidate any partial bytes written to the reserved data slot
+				// in the pck. This prevents Godot from later reading corrupt
+				// .scn / .ctex data (leading to BasisUniversal unpack failures,
+				// OOB in cowdata, and hard crashes like illegal instruction).
+				// Zeroing ensures a clean "empty resource" parse failure instead.
+				if next.Size > 0 {
+					if _, seekErr := local.Seek(next.Seek, io.SeekStart); seekErr == nil {
+						zero := make([]byte, 64<<10)
+						rem := next.Size
+						for rem > 0 {
+							n := int64(len(zero))
+							if n > rem {
+								n = rem
+							}
+							local.Write(zero[:n])
+							rem -= n
+						}
+					}
+				}
+				// Re-mark missing on disk (defensive, in case dir was touched).
+				if next.Head > 0 {
+					next.SetMissing(true, local)
+				}
+				// Force a fresh connection on next attempt.
+				if crl.cache != nil {
+					crl.cache.Close()
+					crl.cache = nil
+				}
+				if attempt < maxAttempts-1 {
+					// small backoff
+					time.Sleep(time.Duration(1<<uint(attempt)) * 250 * time.Millisecond)
+				}
+				return
+			}
+			// Success: clear missing flag in memory and on disk.
+			file := crl.local[path]
+			file.Flag = 0
+			crl.local[path] = file
+			if file.Head > 0 {
+				file.SetMissing(false, local)
+			}
+			lastErr = nil
+		}()
+		if lastErr == nil {
+			return
+		}
 	}
-	reader := crl.cache
-	local, err := os.OpenFile(UserDataDir+"/library.pck", os.O_RDWR, 0644)
-	if err != nil {
-		Engine.Raise(err)
-		return
+	if lastErr != nil {
+		Engine.Raise(fmt.Errorf("failed to download resource %q from community library: %v", path, lastErr))
 	}
-	defer local.Close()
-	if err := pck.Remap(local, reader, crl.local[path], crl.cloud[path]); err != nil {
-		Engine.Raise(fmt.Errorf("failed to download resource %q from community library: %v", path, err))
-		return
-	}
-	file := crl.local[path]
-	file.Flag = 0
-	crl.local[path] = file
 }
 
 type localFetcher struct {

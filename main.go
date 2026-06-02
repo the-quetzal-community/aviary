@@ -38,6 +38,7 @@ func main() {
 	classdb.Register[internal.ViewSelector]()
 	classdb.Register[internal.CloudControl]()
 	classdb.Register[internal.LibraryDownloader]()
+	classdb.Register[internal.SceneLoader]()
 	classdb.Register[internal.FlightPlanner]()
 	classdb.Register[internal.AnimationSaving]()
 	classdb.Register[internal.ActionRenderer]()

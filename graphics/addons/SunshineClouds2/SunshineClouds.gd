@@ -158,7 +158,22 @@ var last_size : Vector2i = Vector2i(0, 0)
 var color_images : Array[RID] = []
 var blit_screen_images : Array[RID] = []
 
-var buffers : RenderSceneBuffersRD
+# AVIARY: Texture2DRD wrappers exposing the per-view reflection textures
+# (accumulation_textures[...+6]) as the reflections_globalshaderparam global. Each
+# wrapper OWNS its backing RD texture, so they are tracked here and released by
+# _release_global_textures (not rd.free_rid'd) — same rule as shadow_map_global_tex.
+# Empty unless reflections_globalshaderparam is set (it is "" by default).
+var reflection_global_texs : Array[Texture2DRD] = []
+
+# AVIARY: buffers is a LOCAL in _render_callback, NOT a member. As a member it kept a
+# persistent Ref to the viewport's RenderSceneBuffersRD; because this CompositorEffect is
+# leaked at exit (held by Go / the compositor that is never torn down), that ref pinned the
+# render buffers, so their textures were never freed and the engine's sky/fog/post-process
+# framebuffers (built from them, cached in the global FramebufferCacheRD) were never
+# invalidated. They then survived to RenderingDevice::finalize(), whose force-free fired the
+# cache's invalidation callback into the already-destroyed FramebufferCacheRD singleton -> a
+# use-after-free segfault on exit. Keeping the ref frame-local lets the buffers free normally
+# when the viewport is torn down. (buffers is only ever read inside _render_callback.)
 
 
 var uniform_sets : Array[RID] = []
@@ -205,113 +220,97 @@ func _init():
 
 func _notification(what):
 	if what == NOTIFICATION_PREDELETE and is_instance_valid(self):
-		RenderingServer.call_on_render_thread(clear_compute)
+		# Release the Texture2DRD-wrapped globals NOW, synchronously. They own their
+		# backing RD textures (the texture_rd_create proxy frees them on wrapper
+		# destruction) and MUST be dropped while RenderingDevice is still alive; deferring
+		# them would let the wrappers race RD teardown -> the on-exit segfault. Safe on any
+		# thread (RenderingServer marshals the underlying texture free to the render thread).
+		_release_global_textures()
+		# Free the RD resources we own directly. RenderingDevice.free_rid is render-thread
+		# only, so it must be deferred — but a Callable bound to clear_compute (i.e. to THIS
+		# resource) is dropped before the render thread runs it, because we are being deleted
+		# right now: that is why cleanup never ran on exit under threaded rendering and the
+		# RIDs leaked/raced teardown. Copy the RIDs out and free them via a STATIC callable,
+		# which binds no object to invalidate; the captured array outlives this resource.
+		if rd:
+			RenderingServer.call_on_render_thread(SunshineCloudsGD._free_rids_static.bind(rd, _take_owned_rids()))
+
+# _release_global_textures drops the Texture2DRD wrappers this effect exposes as global
+# shader parameters (the cloud shadow map, and the reflections texture when enabled) and
+# points the globals back at a placeholder. Each wrapper OWNS its backing RD texture, so
+# dropping it frees that texture exactly once; those RIDs are therefore EXCLUDED from
+# _take_owned_rids (freeing them there too would double-free, and once the slot is recycled,
+# free a live texture out from under the engine — GPU-validation spam on every viewport
+# resize and a segfault inside libgodot_destroy_godot_instance on exit). Safe on any thread.
+func _release_global_textures():
+	if shadow_map_global_tex != null:
+		RenderingServer.global_shader_parameter_set("cloud_shadow_map", PlaceholderTexture2D.new())
+		shadow_map_global_tex = null # last ref -> ~Texture2DRD frees shadow_map_texture once
+	shadow_map_texture = RID()
+	if reflection_global_texs.size() > 0:
+		if reflections_globalshaderparam != "":
+			RenderingServer.global_shader_parameter_set(reflections_globalshaderparam, PlaceholderTexture2D.new())
+		# Null the wrapped accumulation slots so _take_owned_rids skips them (the wrappers
+		# free them); each view's reflection texture is accumulation_textures[view * 7 + 6].
+		for i in range(accumulation_textures.size()):
+			if i % 7 == 6:
+				accumulation_textures[i] = RID()
+		reflection_global_texs.clear() # drop refs -> each ~Texture2DRD frees its texture once
+
+# _take_owned_rids returns every RenderingDevice RID this effect owns DIRECTLY (everything
+# except the Texture2DRD-wrapped textures released by _release_global_textures) and resets
+# the member handles, so the caller frees them on the render thread. Used by clear_compute
+# (frees immediately — already on the render thread) and by the PREDELETE path (hands them
+# to the static render-thread callable). Call _release_global_textures first so the wrapped
+# accumulation slots are already nulled out here.
+func _take_owned_rids() -> Array:
+	var rids : Array = []
+	for r in [pipeline, shader, prepass_pipeline, prepass_shader,
+			postpass_pipeline, postpass_shader, display_pipeline, display_shader,
+			depth_write_pipeline, depth_write_shader, shadow_map_pipeline, shadow_map_shader,
+			shadow_map_params_buffer, display_vertex_array, display_vertex_buffer,
+			nearest_sampler, linear_sampler, linear_sampler_no_repeat,
+			general_data_buffer, light_data_buffer, point_sample_data_buffer, resized_depth]:
+		if r.is_valid():
+			rids.append(r)
+	pipeline = RID(); shader = RID()
+	prepass_pipeline = RID(); prepass_shader = RID()
+	postpass_pipeline = RID(); postpass_shader = RID()
+	display_pipeline = RID(); display_shader = RID()
+	depth_write_pipeline = RID(); depth_write_shader = RID()
+	shadow_map_pipeline = RID(); shadow_map_shader = RID()
+	shadow_map_params_buffer = RID()
+	shadow_map_uniform_set = RID() # auto-invalidated with its deps; rebuilt in _render_callback
+	display_vertex_array = RID(); display_vertex_buffer = RID()
+	nearest_sampler = RID(); linear_sampler = RID(); linear_sampler_no_repeat = RID()
+	general_data_buffer = RID(); light_data_buffer = RID(); point_sample_data_buffer = RID()
+	resized_depth = RID()
+	for item in accumulation_textures:
+		if item.is_valid():
+			rids.append(item)
+	accumulation_textures.clear()
+	for item in blit_screen_images:
+		if item.is_valid():
+			rids.append(item)
+	blit_screen_images.clear()
+	return rids
+
+# Static so a Callable to it has no bound object that can be invalidated when this resource
+# is freed (see _notification). RenderingDevice.free_rid resolves dependencies itself, so
+# the order within rids does not matter.
+static func _free_rids_static(rd_ref : RenderingDevice, rids : Array):
+	if rd_ref == null:
+		return
+	for r in rids:
+		if r.is_valid():
+			rd_ref.free_rid(r)
 
 func clear_compute():
 	if rd:
-		if pipeline.is_valid():
-			rd.free_rid(pipeline)
-		pipeline = RID()
-
-		if shader.is_valid():
-			rd.free_rid(shader)
-		shader = RID()
-
-		if prepass_pipeline.is_valid():
-			rd.free_rid(prepass_pipeline)
-		prepass_pipeline = RID()
-
-		if prepass_shader.is_valid():
-			rd.free_rid(prepass_shader)
-		prepass_shader = RID()
-
-		if postpass_pipeline.is_valid():
-			rd.free_rid(postpass_pipeline)
-		postpass_pipeline = RID()
-
-		if postpass_shader.is_valid():
-			rd.free_rid(postpass_shader)
-		postpass_shader = RID()
-
-		if display_pipeline.is_valid():
-			rd.free_rid(display_pipeline)
-		display_pipeline = RID()
-
-		if display_shader.is_valid():
-			rd.free_rid(display_shader)
-		display_shader = RID()
-
-		# AVIARY: depth-write pass
-		if depth_write_pipeline.is_valid():
-			rd.free_rid(depth_write_pipeline)
-		depth_write_pipeline = RID()
-
-		if depth_write_shader.is_valid():
-			rd.free_rid(depth_write_shader)
-		depth_write_shader = RID()
-
-		# AVIARY: cloud shadow map
-		if shadow_map_pipeline.is_valid():
-			rd.free_rid(shadow_map_pipeline)
-		shadow_map_pipeline = RID()
-		if shadow_map_shader.is_valid():
-			rd.free_rid(shadow_map_shader)
-		shadow_map_shader = RID()
-		if shadow_map_texture.is_valid():
-			rd.free_rid(shadow_map_texture)
-		shadow_map_texture = RID()
-		if shadow_map_params_buffer.is_valid():
-			rd.free_rid(shadow_map_params_buffer)
-		shadow_map_params_buffer = RID()
-		shadow_map_uniform_set = RID() # auto-invalidated with its deps; rebuilt in _render_callback
-
-		if display_vertex_array.is_valid():
-			rd.free_rid(display_vertex_array)
-		display_vertex_array = RID()
-
-		if display_vertex_buffer.is_valid():
-			rd.free_rid(display_vertex_buffer)
-		display_vertex_buffer = RID()
-
-		if nearest_sampler.is_valid():
-			rd.free_rid(nearest_sampler)
-		nearest_sampler = RID()
-		
-		if linear_sampler.is_valid():
-			rd.free_rid(linear_sampler)
-		linear_sampler = RID()
-		
-		if linear_sampler_no_repeat.is_valid():
-			rd.free_rid(linear_sampler_no_repeat)
-		linear_sampler_no_repeat = RID()
-		
-		if general_data_buffer.is_valid():
-			rd.free_rid(general_data_buffer)
-		general_data_buffer = RID()
-		
-		if light_data_buffer.is_valid():
-			rd.free_rid(light_data_buffer)
-		light_data_buffer = RID()
-		
-		if point_sample_data_buffer.is_valid():
-			rd.free_rid(point_sample_data_buffer)
-		point_sample_data_buffer = RID()
-		
-		if resized_depth.is_valid():
-			rd.free_rid(resized_depth)
-		resized_depth = RID()
-		
-		if accumulation_textures.size() > 0:
-			for item in accumulation_textures:
-				if item.is_valid():
-					rd.free_rid(item)
-			accumulation_textures.clear()
-
-		if blit_screen_images.size() > 0:
-			for item in blit_screen_images:
-				if item.is_valid():
-					rd.free_rid(item)
-			blit_screen_images.clear()
+		# Only ever called from the render thread (initialize_compute / _render_callback),
+		# so the direct frees below are valid; the PREDELETE path defers instead.
+		_release_global_textures()
+		_free_rids_static(rd, _take_owned_rids())
 
 func initialize_compute():
 	first_run = true
@@ -543,7 +542,7 @@ func _render_callback(effect_callback_type, render_data):
 	if rd == null:
 		initialize_compute()
 	elif pipeline.is_valid() and height_gradient and extra_large_noise_patterns and large_scale_noise and medium_scale_noise and small_scale_noise and dither_noise and curl_noise:
-		buffers = render_data.get_render_scene_buffers() as RenderSceneBuffersRD
+		var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 		if buffers:
 			msaa_mode = buffers.get_msaa_3d()
 			var is_msaa_on := msaa_mode != RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
@@ -795,6 +794,12 @@ func _render_callback(effect_callback_type, render_data):
 					if (reflections_globalshaderparam != ""):
 						var newTexture = Texture2DRD.new()
 						newTexture.texture_rd_rid = accumulation_textures[view * 7 + 6]
+						# AVIARY: track the wrapper so clear_compute can release it. The wrapper
+						# OWNS this accumulation texture (its texture_rd_create proxy frees the RID
+						# on destruction), so the +6 slots are excluded from the direct rd.free_rid
+						# set to avoid a double free / freeing a recycled RID. See
+						# _release_global_textures / _take_owned_rids.
+						reflection_global_texs.append(newTexture)
 						RenderingServer.global_shader_parameter_set(reflections_globalshaderparam, newTexture)
 
 					var postpass_input_screen_uniform = RDUniform.new()

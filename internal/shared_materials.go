@@ -76,13 +76,13 @@ func (ms *MaterialSharingMeshInstance3D) applySync(key sharingKey) {
 			ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, entry.Material)
 			return
 		}
-		material := Object.Leak(Resource.Duplicate(LoadSync[BaseMaterial3D.Instance](ms.Material)))
+		material := Object.Leak(Resource.Duplicate(loadSafe[BaseMaterial3D.Instance](ms.Material)))
 		material.SetAoTexture(ms.OverrideAO)
 		cacheAO[key] = sharingEntry{RC: 1, Material: material.AsMaterial()}
 		ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, material.AsMaterial())
 		return
 	}
-	ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, LoadSync[Material.Instance](ms.Material))
+	ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, loadSafe[Material.Instance](ms.Material))
 }
 
 func (ms *MaterialSharingMeshInstance3D) OnFree() {
@@ -108,7 +108,7 @@ type MaterialSharingDecal struct {
 
 func (decal *MaterialSharingDecal) Ready() {
 	if Engine.IsEditorHint() {
-		decal.applyDecal(LoadSync[Material.Instance](decal.Material))
+		decal.applyDecal(loadSafe[Material.Instance](decal.Material))
 		return
 	}
 	// The decal's source material may live in library.pck; load it off
