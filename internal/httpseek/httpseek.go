@@ -3,6 +3,7 @@ package httpseek
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,22 +12,59 @@ import (
 // URL to an internet-hosted io.ReadSeekCloser. It uses HTTP range requests to fetch content
 // from the URL on demand and attempts to reuse existing connections where possible.
 type URL struct {
-	url            string
-	client         *http.Client
-	modifiedAt     time.Time
-	contentLength  int64
-	currentPos     int64
-	reader         io.ReadCloser
-	supportsRanges bool
-	closed         bool
+	url           string
+	modifiedAt    time.Time
+	contentLength int64
+	currentPos    int64
+	reader        io.ReadCloser
+	closed        bool
 
 	on_modified func(*URL)
 }
 
-// New creates a new URLRangeReader by performing a HEAD request
-// to verify range support and get the content length.
+// seekDiscardThreshold is the largest forward gap that [URL.Seek] will skip by
+// reading and discarding bytes over the already-open connection instead of
+// issuing a fresh range request. Larger gaps are cheaper to reach with a new
+// range request than to download and throw away.
+const seekDiscardThreshold = 1 << 16 // 64 KiB
+
+// client is shared by every [URL] so keep-alive connections are pooled and
+// reused across range requests, and across separate URLs. The Transport sets
+// connection-setup and header timeouts; there is deliberately no Client.Timeout,
+// which would bound the whole body read and abort large, legitimate downloads.
+var client = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   4,
+	},
+}
+
+// parseLastModified returns the parsed Last-Modified header, or the zero time
+// if the header is absent or cannot be parsed.
+func parseLastModified(h http.Header) time.Time {
+	v := h.Get("Last-Modified")
+	if v == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(http.TimeFormat, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// New creates a new URL reader by performing an initial GET request to verify
+// range support and read the content length. The response body is retained so
+// that a read starting from the beginning reuses the same connection.
 func New(url string) (*URL, error) {
-	client := &http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -36,35 +74,26 @@ func New(url string) (*URL, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HEAD request failed: status %d", resp.StatusCode)
+		resp.Body.Close()
+		return nil, fmt.Errorf("range probe failed: status %d", resp.StatusCode)
 	}
 	acceptRanges := resp.Header.Get("Accept-Ranges")
 	if acceptRanges != "bytes" {
+		resp.Body.Close()
 		return nil, fmt.Errorf("server does not support byte-range requests")
 	}
 	contentLengthStr := resp.Header.Get("Content-Length")
 	contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64)
 	if err != nil || contentLength <= 0 {
+		resp.Body.Close()
 		return nil, fmt.Errorf("invalid or missing Content-Length")
 	}
-	lastModStr := resp.Header.Get("Last-Modified")
-	var lastMod time.Time
-	if lastModStr != "" {
-		lastMod, err = time.Parse(http.TimeFormat, lastModStr)
-		if err != nil {
-			// If parsing fails, log or handle appropriately; here we ignore and return zero time
-			fmt.Printf("Warning: Failed to parse Last-Modified: %v\n", err)
-			lastMod = time.Time{}
-		}
-	}
 	return &URL{
-		url:            url,
-		client:         client,
-		contentLength:  contentLength,
-		reader:         resp.Body,
-		currentPos:     0,
-		supportsRanges: true,
-		modifiedAt:     lastMod,
+		url:           url,
+		contentLength: contentLength,
+		reader:        resp.Body,
+		currentPos:    0,
+		modifiedAt:    parseLastModified(resp.Header),
 	}, nil
 }
 
@@ -95,7 +124,7 @@ func (u *URL) Read(p []byte) (int, error) {
 			return 0, err
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", u.currentPos))
-		resp, err := u.client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return 0, err
 		}
@@ -109,16 +138,7 @@ func (u *URL) Read(p []byte) (int, error) {
 			return 0, fmt.Errorf("range response Content-Length mismatch: got %d, expected %d", resp.ContentLength, expectedLen)
 		}
 
-		lastModStr := resp.Header.Get("Last-Modified")
-		var lastMod time.Time
-		if lastModStr != "" {
-			lastMod, err = time.Parse(http.TimeFormat, lastModStr)
-			if err != nil {
-				// If parsing fails, log or handle appropriately; here we ignore and return zero time
-				fmt.Printf("Warning: Failed to parse Last-Modified: %v\n", err)
-				lastMod = time.Time{}
-			}
-		}
+		lastMod := parseLastModified(resp.Header)
 		u.reader = resp.Body
 		if !lastMod.IsZero() && !lastMod.Equal(u.modifiedAt) {
 			u.modifiedAt = lastMod
@@ -135,8 +155,13 @@ func (u *URL) Read(p []byte) (int, error) {
 		return n, err
 	}
 	if err == io.EOF && u.currentPos < u.contentLength {
+		// The body ended before the logical end of the resource (e.g. a
+		// chunking proxy split the open-ended range). Drop the spent body and
+		// report a short read with no error: the next Read reopens a fresh
+		// range request from the current position and transparently resumes.
 		u.reader.Close()
 		u.reader = nil
+		return n, nil
 	}
 	return n, err
 }
@@ -163,13 +188,24 @@ func (u *URL) Seek(offset int64, whence int) (int64, error) {
 	if newPos > u.contentLength {
 		return 0, fmt.Errorf("seek position beyond content length")
 	}
-	if newPos != u.currentPos {
-		if u.reader != nil {
-			u.reader.Close()
-			u.reader = nil
-		}
-		u.currentPos = newPos
+	if newPos == u.currentPos {
+		return u.currentPos, nil
 	}
+	// Fast path: for a small forward seek while a response body is already
+	// open, discard the intervening bytes to reuse the current connection and
+	// save the round trip of a fresh range request. Larger gaps fall through to
+	// a new range request issued lazily on the next Read.
+	if u.reader != nil && newPos > u.currentPos && newPos-u.currentPos <= seekDiscardThreshold {
+		if _, err := io.CopyN(io.Discard, u, newPos-u.currentPos); err != nil {
+			return 0, err
+		}
+		return u.currentPos, nil
+	}
+	if u.reader != nil {
+		u.reader.Close()
+		u.reader = nil
+	}
+	u.currentPos = newPos
 	return u.currentPos, nil
 }
 

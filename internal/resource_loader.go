@@ -115,15 +115,15 @@ func (crl *CommunityResourceLoader) remap(entry pck.File) bool {
 }
 
 func (crl *CommunityResourceLoader) download(path string) {
-	var reader io.ReadSeeker = crl.cache
 	if crl.cache == nil {
 		cache, err := httpseek.New("https://vpk.quetzal.community/library.pck")
 		if err != nil {
 			Engine.Raise(err)
 			return
 		}
-		reader = cache
+		crl.cache = cache
 	}
+	reader := crl.cache
 	local, err := os.OpenFile(UserDataDir+"/library.pck", os.O_RDWR, 0644)
 	if err != nil {
 		Engine.Raise(err)
