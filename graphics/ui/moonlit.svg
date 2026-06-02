@@ -4,12 +4,35 @@
    height="100"
    version="1.1"
    viewBox="0 0 96 75"
-   xmlns="http://www.w3.org/2000/svg">
-  <!-- Crescent moon: an outer disc with an offset disc carved out (even-odd
+   id="svg1"
+   sodipodi:docname="moonlit.svg"
+   xml:space="preserve"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><defs
+     id="defs1" /><sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="4"
+     inkscape:cx="51.125"
+     inkscape:cy="59.75"
+     inkscape:window-width="1848"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" /><!-- Crescent moon: an outer disc with an offset disc carved out (even-odd
        fill), matching the monochrome #4c4c4c line-icon style of the other
-       environment slider icons. -->
-  <path
+       environment slider icons. --><path
+     d="M 45.685455,10.760983 C 32.74303,12.260192 22.693017,23.239917 22.693017,36.584068 c 0,14.365737 11.643949,26.012281 26.012281,26.012281 13.346746,0 24.323746,-10.050013 25.823087,-22.992438 -3.599105,6.652205 -10.636615,11.168791 -18.728983,11.168791 -11.755398,0 -21.282738,-9.527771 -21.282738,-21.282738 0,-8.092361 4.516586,-15.132042 11.168791,-18.728981 z"
      fill="#4c4c4c"
-     fill-rule="evenodd"
-     d="M 17,37.5 a 29,29 0 1,0 58,0 a 29,29 0 1,0 -58,0 Z M 34,31 a 26,26 0 1,0 52,0 a 26,26 0 1,0 -52,0 Z" />
-</svg>
+     id="path1"
+     style="stroke-width:0.0431961" /></svg>

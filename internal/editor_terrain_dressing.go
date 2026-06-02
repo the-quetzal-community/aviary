@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"graphics.gd/classdb/BaseMaterial3D"
+	"graphics.gd/classdb/GeometryInstance3D"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
@@ -299,6 +300,12 @@ func (vr *TerrainEditor) buildPatchNodes(patch *grassPatch, asset grassAsset) {
 		mm.SetMesh(part.mesh)
 		mmi := MultiMeshInstance3D.New()
 		mmi.SetMultimesh(mm)
+		// Keep the scattered grass OUT of any VoxelGI/SDFGI bake. Each patch can
+		// hold thousands of instances and there may be many patches, so feeding
+		// them to the GI voxelisation tanks the frame-rate the moment GI is turned
+		// on for negligible visual gain (grass barely bounces light). GiModeDisabled
+		// makes the renderer skip these instances entirely during the GI pass.
+		mmi.AsGeometryInstance3D().SetGiMode(GeometryInstance3D.GiModeDisabled)
 		vr.AsNode().AddChild(mmi.AsNode())
 		patch.mms = append(patch.mms, mm)
 		patch.mmNodes = append(patch.mmNodes, mmi)

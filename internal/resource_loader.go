@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"graphics.gd/classdb/Engine"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/ResourceFormatLoader"
 	"the.quetzal.community/aviary/internal/httpseek"
@@ -95,7 +94,7 @@ func (crl *CommunityResourceLoader) RecognizePath(path string, atype string) boo
 }
 
 func (crl *CommunityResourceLoader) remap(entry pck.File) bool {
-	local, err := os.OpenFile(OS.GetUserDataDir()+"/preview.pck", os.O_RDWR, 0644)
+	local, err := os.OpenFile(UserDataDir+"/preview.pck", os.O_RDWR, 0644)
 	if err != nil {
 		Engine.Raise(err)
 		return false
@@ -125,7 +124,7 @@ func (crl *CommunityResourceLoader) download(path string) {
 		}
 		reader = cache
 	}
-	local, err := os.OpenFile(OS.GetUserDataDir()+"/library.pck", os.O_RDWR, 0644)
+	local, err := os.OpenFile(UserDataDir+"/library.pck", os.O_RDWR, 0644)
 	if err != nil {
 		Engine.Raise(err)
 		return
@@ -167,7 +166,7 @@ func (f localFetcher) Fetch(start, end *int64) (io.Reader, error) {
 }
 
 func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
-	local, err := os.OpenFile(OS.GetUserDataDir()+"/library.pck", os.O_RDWR|os.O_CREATE, 0644)
+	local, err := os.OpenFile(UserDataDir+"/library.pck", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		Engine.Raise(err)
 		return
@@ -208,7 +207,7 @@ func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
 			return
 		}
 	}
-	preview, err := os.OpenFile(OS.GetUserDataDir()+"/preview.pck", os.O_RDWR|os.O_CREATE, 0644)
+	preview, err := os.OpenFile(UserDataDir+"/preview.pck", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		Engine.Raise(err)
 		return

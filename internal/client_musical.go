@@ -37,10 +37,10 @@ func (world musicalImpl) Open(space musical.WorkID) (fs.File, error) {
 		fmt.Println("opening cloud save for", name)
 		return OpenCloud(world.signalling, space)
 	}
-	if err := os.MkdirAll(OS.GetUserDataDir()+"/saves/"+name, 0777); err != nil {
+	if err := os.MkdirAll(UserDataDir+"/saves/"+name, 0777); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
+	file, err := os.OpenFile(UserDataDir+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}

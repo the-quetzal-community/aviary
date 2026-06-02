@@ -16,7 +16,6 @@ import (
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventMouseMotion"
 	"graphics.gd/classdb/Node"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Range"
@@ -546,7 +545,6 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			gridflow.scroll_lock = true
 			gridflow.AsNode().SetName(tab)
 			ui.Tabs.AsNode().AddChild(gridflow.AsNode())
-			OS.GetUserDataDir()
 			gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
 			ui.tabbed = append(ui.tabbed, gridflow)

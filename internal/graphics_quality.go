@@ -3,8 +3,10 @@ package internal
 import (
 	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Viewport"
+	"the.quetzal.community/aviary/internal/clouds"
 )
 
 // GraphicsQuality is a coarse, single-axis quality level driven by the
@@ -17,8 +19,9 @@ import (
 type GraphicsQuality int
 
 const (
-	// QualityToaster: no MSAA, no AA, hard (unfiltered) shadows, small
-	// shadow atlas. Cheapest — the low end of the slider.
+	// QualityToaster: no MSAA, no AA, and no real-time shadows at all (the
+	// shadow pass is dropped entirely here — see shadowsEnabled). Cheapest — the
+	// low end of the slider.
 	QualityToaster GraphicsQuality = iota
 	// QualityAverage: FXAA only, very-low soft shadows.
 	QualityAverage
@@ -58,12 +61,65 @@ func (q GraphicsQuality) directionalShadowAtlasSize() int {
 	}
 }
 
+// shadowsEnabled reports whether the directional (sun + moon) lights cast
+// real-time shadows at this tier. Disabled at QualityToaster: the shadow pass is
+// a genuine cost on the lowest-end target, and its small 1024 atlas makes it the
+// worst-looking tier regardless (the banding / peter-panning that bias alone
+// can't fully tame on fat texels). Dropping shadows there buys frame-rate and
+// sidesteps the artifacts entirely; every higher tier keeps them. The terrain's
+// shader-faked cloud shadows are independent of this and stay on.
+func (q GraphicsQuality) shadowsEnabled() bool {
+	return q > QualityToaster
+}
+
+// shadowBias maps each tier to the directional-shadow depth bias and normal
+// bias applied to both the sun and moon lights (see Client.applyShadowQuality).
+// The biases must scale UP as the directional shadow atlas
+// (directionalShadowAtlasSize) shrinks: a lower-res atlas spreads each shadow
+// texel across more world space, so the depth gradient across one texel grows
+// and self-shadowing "acne" — the horizontal banding on gently-sloped terrain —
+// reappears. The high tiers keep the original hand-tuned low bias (0.015 depth,
+// 0 normal): their dense atlas has no acne and the low depth bias avoids
+// peter-panning (the shadow detaching from the caster's base).
+//
+// The low tiers lean on NORMAL bias rather than more DEPTH bias. Depth bias is a
+// constant push into the light: enough of it to kill acne on the fat low-res
+// texels over-biases the near contacts and detaches their shadows (peter-pan),
+// which is exactly the both-at-once artifact on QualityToaster. Normal bias
+// instead offsets the shadow lookup along the surface normal, so it adapts to
+// the grazing angle — killing acne where the texels straddle a slope without
+// pulling flat contacts off the ground. So depth bias barely moves across tiers;
+// the normal bias carries the correction.
+func (q GraphicsQuality) shadowBias() (bias, normalBias float64) {
+	switch q {
+	case QualityToaster: // 1024 atlas: fattest texels, needs the most normal bias.
+		return 0.02, 2.0
+	case QualityAverage: // 2048 atlas.
+		return 0.02, 1.0
+	case QualityRefined: // 4096 atlas.
+		return 0.015, 0.5
+	default: // QualityHighest, 8192 atlas: original low bias, no acne.
+		return 0.015, 0.0
+	}
+}
+
 // ssaoEnabled reports whether screen-space ambient occlusion should be on
 // at this tier. SSAO is moderately expensive (a full-resolution depth
 // pass), so we reserve it for the upper two "refined"/"sports car" tiers
 // and leave the potato/average tiers free of it.
 func (q GraphicsQuality) ssaoEnabled() bool {
 	return q >= QualityRefined
+}
+
+// sdfgiEnabled reports whether signed-distance-field global illumination should
+// be on at this tier. SDFGI is fully dynamic real-time GI (no bake), which suits
+// this open terrain world, but it is the priciest lighting feature here — a
+// per-frame SDF + cascade update — so it is reserved for QualityHighest alone.
+// Scenery and terrain participate via their default (static) GI mode; the
+// scattered grass is deliberately excluded (GiModeDisabled, see
+// buildPatchNodes) so the dense instances never burden the GI pass.
+func (q GraphicsQuality) sdfgiEnabled() bool {
+	return q == QualityHighest
 }
 
 // ssaoQuality maps each tier to the global SSAO sample/blur quality. Only
@@ -80,42 +136,36 @@ func (q GraphicsQuality) ssaoQuality() RenderingServer.EnvironmentSSAOQuality {
 	}
 }
 
-// cloudSteps is the cloud_steps uniform pushed into the procedural sky shader at
-// this tier (see Client.applyCloudQuality, which owns the wiring). 0 selects the
-// shader's cheap flat 2D projection (QualityToaster); a positive count switches on
-// the sky-shader volumetric march (QualityAverage); a negative value disables the
-// painted sky clouds at the top two tiers, where the FogVolume (QualityRefined,
-// fogVolumeClouds) and SunshineClouds2 (QualityHighest, sunshineClouds) draw the
-// clouds instead.
-func (q GraphicsQuality) cloudSteps() int {
+// cloudMode maps this quality tier to the cloud renderer the clouds package
+// should use (see Client.applyCloudQuality). This is the importer's policy: the
+// clouds package owns the renderers (Modes) and their settings; it knows nothing
+// about graphics-quality tiers, so the mapping lives here. Cheapest first:
+// Toaster's flat sky projection, Average's sky-shader march, Refined's world-
+// space FogVolume, and Highest's SunshineClouds2 compositor.
+func (q GraphicsQuality) cloudMode() clouds.Mode {
 	switch q {
 	case QualityHighest:
-		return -1 // sky clouds off; SunshineClouds2 draws fly-through clouds.
+		return clouds.ModeSunshine
 	case QualityRefined:
-		return -1 // sky clouds off; the world-space FogVolume draws the clouds.
+		return clouds.ModeFogVolume
 	case QualityAverage:
-		// Sky-shader volumetric march (demoted from QualityRefined); fewer steps
-		// than the old Refined value since this is now the mid tier.
-		return 40
-	default: // QualityToaster: flat clouds, no march.
-		return 0
+		return clouds.ModeSkyMarch
+	default: // QualityToaster
+		return clouds.ModeFlat
 	}
 }
 
-// fogVolumeClouds reports whether the world-space FogVolume cloud layer (the
-// clouds_fog.gdshader fly-through clouds) should be active at this tier. Reserved
-// for QualityRefined: it is the second-most-expensive cloud option (a per-frame
-// volumetric-fog froxel pass), sitting just below the SunshineClouds2 compositor
-// clouds at QualityHighest.
-func (q GraphicsQuality) fogVolumeClouds() bool {
-	return q == QualityRefined
-}
-
-// sunshineClouds reports whether the SunshineClouds2 compositor cloud system (the
-// vendored addon, the most expensive / highest-fidelity option) should be active.
-// Reserved for QualityHighest.
-func (q GraphicsQuality) sunshineClouds() bool {
-	return q == QualityHighest
+// simpleWater reports whether the cheap water shader (water_simple.gdshader — a
+// flat blue transparent surface with one scrolling normal map, no depth/screen
+// fetches, foam, swell, or reflections) should be bound instead of the full
+// water.gdshader. Reserved for QualityToaster: the full shader's per-pixel depth
+// + screen samples and foam octaves are exactly the bandwidth the potato tier
+// can't spare, and the simple surface still reads as water. Swapped in by
+// Client.applyWaterQuality, which binds the matching Shader onto the shared water
+// material; the simple shader keeps the same geometry contract so terrain edits
+// still weld the water to the ground.
+func (q GraphicsQuality) simpleWater() bool {
+	return q == QualityToaster
 }
 
 // reflectionStrength is the screen-space-reflection intensity pushed into the
@@ -155,8 +205,21 @@ func (q GraphicsQuality) Apply(anyNode Node.Instance) {
 			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
 			vp.SetUseTaa(false)
 		default: // QualityHighest
-			vp.SetMsaa3d(Viewport.Msaa4x)
-			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
+			// SunshineClouds2 (the Highest-tier compositor clouds) writes to a
+			// multisampled storage image on its MSAA code path, which Metal/macOS
+			// does not support (no writable MS textures) — so the cloud effect
+			// produces nothing on Mac whenever the viewport is MSAA. Vulkan
+			// (Windows/Linux) supports it, so keep 4× MSAA there; on macOS fall back
+			// to FXAA so the Metal-safe non-MSAA cloud path runs and clouds appear.
+			// (Trade-off: Mac loses MSAA edge AA at Highest, incl. grass
+			// alpha-to-coverage, which degrades to a hard scissor.)
+			if OS.GetName() == "macOS" {
+				vp.SetMsaa3d(Viewport.MsaaDisabled)
+				vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaFxaa)
+			} else {
+				vp.SetMsaa3d(Viewport.Msaa4x)
+				vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
+			}
 			vp.SetUseTaa(false)
 		}
 	}
@@ -178,21 +241,22 @@ func (q GraphicsQuality) Apply(anyNode Node.Instance) {
 
 	// SSAO sample/blur quality is global renderer state, like the shadow
 	// filter above; the per-Environment on/off flag is set separately by
-	// ApplyAmbientOcclusion. The trailing args are Godot's stock defaults
+	// ApplyEnvironmentQuality. The trailing args are Godot's stock defaults
 	// (no half-res, adaptive_target 0.5, 2 blur passes, fade 50→300).
 	RenderingServer.EnvironmentSetSsaoQuality(q.ssaoQuality(), false, 0.5, 2, 50, 300)
 }
 
-// ApplyAmbientOcclusion toggles screen-space ambient occlusion on the
-// given world Environment for this quality tier. It is kept separate from
-// Apply because the on/off flag lives on the Environment resource (which
-// the Client owns and creates after the UI's launch-time Apply runs),
-// whereas Apply only reaches per-viewport and global renderer state. Safe
-// to call with a nil Environment (no-op), so callers needn't guard the
-// pre-creation launch window.
-func (q GraphicsQuality) ApplyAmbientOcclusion(env Environment.Instance) {
+// ApplyEnvironmentQuality toggles the per-tier lighting flags that live on the
+// world Environment resource — screen-space ambient occlusion (ssaoEnabled) and
+// signed-distance-field global illumination (sdfgiEnabled). It is kept separate
+// from Apply because these flags live on the Environment resource (which the
+// Client owns and creates after the UI's launch-time Apply runs), whereas Apply
+// only reaches per-viewport and global renderer state. Safe to call with a nil
+// Environment (no-op), so callers needn't guard the pre-creation launch window.
+func (q GraphicsQuality) ApplyEnvironmentQuality(env Environment.Instance) {
 	if env == Environment.Nil {
 		return
 	}
 	env.SetSsaoEnabled(q.ssaoEnabled())
+	env.SetSdfgiEnabled(q.sdfgiEnabled())
 }

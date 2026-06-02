@@ -45,10 +45,10 @@ uniform int cloud_steps = 0;
 // dialled by eye without rebuilding the Go side.
 const float CLOUD_BASE = 0.5;          // slab bottom: lower = nearer / lower clouds
 const float CLOUD_TOP = 1.05;          // slab top: TOP-BASE is the cloud thickness
-const int CLOUD_LIGHT_STEPS = 4;       // sun-ward samples per primary step
-const float CLOUD_LIGHT_STEP = 0.10;   // spacing of those samples
+const int CLOUD_LIGHT_STEPS = 2;       // sun-ward samples per primary step
+const float CLOUD_LIGHT_STEP = 0.18;   // spacing of those samples (×STEPS = sun-march reach)
 const float CLOUD_DENSITY = 3.6;       // lower = lighter / airier clouds
-const float CLOUD_LIGHT_ABSORB = 2.6;  // lower = brighter interiors (less self-shadow)
+const float CLOUD_LIGHT_ABSORB = 1.8;  // lower = brighter interiors (less self-shadow)
 
 // --- tileable value noise + fbm ----------------------------------------------
 //
@@ -127,6 +127,27 @@ float cloud_density(vec3 p, vec2 wind) {
 	return clamp(d, 0.0, 1.0) * vfall;
 }
 
+// Cheap density for the sun-ward shadow march only. The self-shadow optical
+// depth toward the light is dominated by the low-frequency cloud SHAPE, so the
+// high-frequency detail erosion — a whole second 5-octave fbm per sample — is
+// dropped here. The light loop is by far the march's hottest path (it runs
+// CLOUD_LIGHT_STEPS times per primary sample), so halving its fbm count is the
+// single biggest saving on this (Average) tier, for no visible change in the
+// shading. Note this returns a slightly DENSER value than cloud_density (no
+// erosion subtracted), which is why CLOUD_LIGHT_ABSORB is dialled down to match.
+float cloud_density_lite(vec3 p, vec2 wind) {
+	vec2 uv = p.xz * cloud_scale + wind;
+	float shape = fbm(uv);
+	float thresh = mix(1.0, 0.30, coverage);
+	float d = smoothstep(thresh, thresh + 0.10, shape);
+	if (d <= 0.0) {
+		return 0.0;
+	}
+	float hf = clamp((p.y - CLOUD_BASE) / (CLOUD_TOP - CLOUD_BASE), 0.0, 1.0);
+	float vfall = smoothstep(0.0, 0.10, hf) * smoothstep(1.0, 0.30, hf);
+	return d * vfall;
+}
+
 void sky() {
 	vec3 dir = normalize(EYEDIR);
 
@@ -142,9 +163,15 @@ void sky() {
 	// 1 in broad daylight, 0 once the sun has set well below the horizon.
 	float day = smoothstep(-0.12, 0.18, sun_dir.y);
 
-	// Base sky gradient: horizon -> zenith, blended day -> night.
-	float h = clamp(dir.y, 0.0, 1.0);
-	vec3 day_sky = mix(vec3(0.72, 0.80, 0.95), vec3(0.20, 0.46, 0.88), h);
+	// Base sky gradient: horizon -> zenith, blended day -> night. The blend is
+	// biased toward the zenith (pow < 1) so the saturated blue reaches DOWN near
+	// the horizon and only a thin band stays pale, instead of a linear ramp that
+	// left the whole lower sky washed-out with only the zenith truly blue. The
+	// horizon endpoint is also a more saturated blue than the old near-white
+	// (0.72, 0.80, 0.95): a touch of atmospheric paleness remains, but the horizon
+	// now reads as sky-blue rather than haze.
+	float h = pow(clamp(dir.y, 0.0, 1.0), 0.6);
+	vec3 day_sky = mix(vec3(0.48, 0.64, 0.92), vec3(0.20, 0.46, 0.88), h);
 	vec3 night_sky = mix(vec3(0.05, 0.06, 0.12), vec3(0.01, 0.02, 0.05), h);
 	vec3 sky = mix(night_sky, day_sky, day);
 
@@ -263,7 +290,7 @@ void sky() {
 					float ld = 0.0;
 					for (int j = 0; j < CLOUD_LIGHT_STEPS; j++) {
 						vec3 lp = p + sun_dir * (float(j) + 0.5) * CLOUD_LIGHT_STEP;
-						ld += cloud_density(lp, wind);
+						ld += cloud_density_lite(lp, wind);
 					}
 					float lightT = exp(-ld * CLOUD_LIGHT_STEP * CLOUD_LIGHT_ABSORB);
 					// Powder term: darkens the lobes facing the light, the cue that

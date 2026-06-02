@@ -15,7 +15,6 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Label"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/ProgressBar"
 	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/SceneTree"
@@ -124,7 +123,7 @@ func (dl *LibraryDownloader) download(body io.ReadCloser) {
 	}
 	reader := io.TeeReader(body, counter)
 	fmt.Println("Starting download of preview.pck...")
-	library, err := os.Create(filepath.Join(OS.GetUserDataDir(), "preview.pck"))
+	library, err := os.Create(filepath.Join(UserDataDir, "preview.pck"))
 	if err != nil {
 		Engine.Raise(err)
 		return

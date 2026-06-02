@@ -6,6 +6,7 @@ import (
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/ResourceLoader"
@@ -46,6 +47,7 @@ func main() {
 	classdb.Register[internal.DesignExplorer]()
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
 	startup.LoadingScene()
+	internal.UserDataDir = OS.GetUserDataDir()
 	if Engine.IsEditorHint() {
 		startup.Scene()
 		return

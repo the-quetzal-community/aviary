@@ -23,7 +23,6 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/FileAccess"
-	"graphics.gd/classdb/FogVolume"
 	"graphics.gd/classdb/GPUParticles3D"
 	"graphics.gd/classdb/GeometryInstance3D"
 	"graphics.gd/classdb/Input"
@@ -50,7 +49,6 @@ import (
 	"graphics.gd/classdb/Script"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
-	"graphics.gd/classdb/Sky"
 	"graphics.gd/classdb/SubViewport"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
@@ -71,6 +69,7 @@ import (
 	"graphics.gd/variant/Vector3"
 	"runtime.link/api"
 	"runtime.link/api/rest"
+	"the.quetzal.community/aviary/internal/clouds"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
 	"the.quetzal.community/aviary/internal/networking"
@@ -150,28 +149,12 @@ type Client struct {
 	// applyCoverDefault.
 	underwater ShaderMaterial.Instance
 
-	// sky is the ShaderMaterial backing the Environment's procedural sky. The
-	// Clouds slider drives its "coverage" parameter via applyCloudDensity.
-	sky ShaderMaterial.Instance
-
-	// cloudVolume is the world-space FogVolume drawing real, fly-through clouds
-	// at the Highest tier; cloudFog is its fog ShaderMaterial. The Clouds/Wind
-	// sliders drive its uniforms alongside the sky; applyCloudQuality toggles
-	// whether it renders (via the Environment's volumetric fog) per quality tier.
-	cloudVolume FogVolume.Instance
-	cloudFog    ShaderMaterial.Instance
-
-	// cloudsDriver is the vendored SunshineClouds2 driver node (a GDScript
-	// CompositorEffect system, graphics/addons/SunshineClouds2) that draws the
-	// Highest-tier volumetric clouds; cloudsEffect is its CompositorEffect resource
-	// (aviary_clouds.tres). The addon has no Go bindings, so both are driven
-	// generically via Object.Set/Call. applyCloudQuality attaches/detaches the
-	// effect from the WorldEnvironment's compositor per tier (Highest only), the
-	// Clouds slider drives cloudsEffect's coverage, and the Wind slider drives the
-	// driver's structure speeds; the sun (world.Light) is tracked so the clouds
-	// follow the day/night cycle automatically.
-	cloudsDriver Node.Instance
-	cloudsEffect Resource.Instance
+	// clouds owns every cloud-rendering subsystem (procedural sky, FogVolume,
+	// SunshineClouds2) and the terrain cloud-shadow globals. The Clouds/Wind
+	// sliders, Time-of-Day, and the graphics-quality tier drive it through the
+	// applyCloud*/SetWind forwarders below; the sun (world.Light) is tracked so
+	// the clouds follow the day/night cycle automatically. See internal/clouds.
+	clouds *clouds.System
 
 	// weatherAnchor is a node positioned under the camera each frame so that
 	// rain and snow particles are always emitted in a volume around the viewer.
@@ -403,6 +386,9 @@ func NewClient() *Client {
 	if save {
 		client.saveUserState()
 	}
+	if UserDataDir == "" {
+		UserDataDir = OS.GetUserDataDir()
+	}
 	client.network.Authentication = UserState.Secret
 	return client
 }
@@ -428,6 +414,14 @@ var UserState struct {
 	// and persists the new ranking.
 	AuthorPreferences []string
 }
+
+// UserDataDir is the value of OS.GetUserDataDir() captured once early on the
+// main thread (see main.go). Code that runs on background goroutines (such as
+// the musical server goroutines that call Storage.Open for loading .mus3 logs,
+// or resource loader thread, or upload goroutines) must use this string for
+// constructing user data paths instead of calling OS.GetUserDataDir directly;
+// the latter performs cgo into Godot which is not safe off the main thread.
+var UserDataDir string
 
 func NewClientJoining() *Client {
 	var client = NewClient()
@@ -509,6 +503,15 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
+	if UserDataDir == "" {
+		UserDataDir = OS.GetUserDataDir()
+	}
+	// Register the cloud-shadow global uniforms up front, before any terrain tile (and
+	// its shader) is created and compiled — otherwise terrain.gdshader compiles first and
+	// Godot errors "Global uniform 'cloud_shadow_sun_dir' does not exist" until the lazy
+	// registration catches up. (terrain.gdshader is the only editor/early-compiled shader
+	// that reads these; grass is spawned later, after the grass globals register.)
+	clouds.EnsureShadowGlobals()
 	world.editors = map[string]Editor{
 		"terrain": world.TerrainEditor,
 		"scenery": world.SceneryEditor,
@@ -593,21 +596,13 @@ func (world *Client) Ready() {
 		SetSkyMode(DirectionalLight3D.SkyModeLightAndSky).
 		AsLight3D().
 		SetLightEnergy(1).
-		SetShadowEnabled(true).
-		SetShadowBias(0.015).
-		SetShadowNormalBias(0).
+		// Shadow enable + bias (depth + normal) are NOT set here: both are
+		// quality-dependent (Toaster casts none; the small low-tier atlas needs
+		// more, mostly-normal, bias) and applied by applyShadowQuality below.
 		SetShadowBlur(2.0)
 	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
-	// Drive the volumetric cloud layer harder than the default 1.0 so the sunlit
-	// faces read as bright cumulus rather than flat grey. With single-scatter fog
-	// (no multiple-scattering brightening) this energy is the WHOLE layer's
-	// brightness, so it is a knife-edge: 3.0 blew it to a flat neon white, but 2.0
-	// dimmed the entire layer to uniform rain-cloud grey. 2.8 keeps the sunlit tops
-	// bright; the not-neon look is recovered instead from the off-white albedo and
-	// the lowered ambient inject below (which darkens the bases for real cumulus
-	// form). Only affects volumetric fog (the Highest-tier clouds); surface lighting
-	// is unchanged.
-	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamVolumetricFogEnergy, 2.8)
+	// (The sun's ParamVolumetricFogEnergy, which only affects the FogVolume cloud
+	// layer, is set inside clouds.New together with the rest of the cloud wiring.)
 
 	// The moon: a second directional that lights the night from opposite the sun.
 	// SkyModeLightOnly keeps it OUT of the sky shader's LIGHTn slots (the sun is
@@ -619,25 +614,16 @@ func (world *Client) Ready() {
 		SetSkyMode(DirectionalLight3D.SkyModeLightOnly).
 		AsLight3D().
 		SetLightEnergy(0).
-		SetShadowEnabled(true).
-		SetShadowBias(0.015).
-		SetShadowNormalBias(0).
+		// Shadow enable + bias applied per quality tier by applyShadowQuality
+		// (see the sun above).
 		SetShadowBlur(2.0)
 	Light3D.Advanced(world.Moon.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
 
-	// Procedural sky with drifting clouds. The shader reacts to the directional
-	// light (LIGHT0); only the cloud coverage is pushed in, by the Clouds slider.
-	skyMaterial := ShaderMaterial.New()
-	skyMaterial.SetShader(LoadSync[Shader.Instance]("res://shader/sky.gdshader"))
-	skyMaterial.SetShaderParameter("coverage", 0.0)
-	world.sky = skyMaterial
-	sky := Sky.New()
-	sky.SetSkyMaterial(skyMaterial.AsMaterial())
-	sky.SetRadianceSize(Sky.RadianceSize256)
-
+	// World Environment: ambient + tonemap + glow are scene-global (they reshape
+	// every surface), so they live here; the procedural sky, the volumetric-fog
+	// cloud params, and the SunshineClouds2 wiring are all set up by clouds.New
+	// below, which borrows this Environment.
 	env := Environment.New().
-		SetBackgroundMode(Environment.BgSky).
-		SetSky(sky).
 		SetAmbientLightColor(Color.X11.White).
 		SetAmbientLightSkyContribution(0).
 		SetAmbientLightSource(Environment.AmbientSourceColor).
@@ -661,6 +647,16 @@ func (world *Client) Ready() {
 		SetTonemapWhite(8.0).
 		SetGlowEnabled(true)
 
+	// SDFGI (real-time GI, QualityHighest only — see ApplyEnvironmentQuality) reads
+	// the sky for its environmental light, so the saturated blue sky bleeds a blue
+	// cast across the whole scene that the lower (GI-less) tiers don't have. Halve
+	// the GI energy to pull that back toward the Refined look: it tones the whole
+	// indirect contribution down, and the sky is the dominant one outdoors, so it
+	// mostly takes the blue with it. Harmless when SDFGI is off (lower tiers). If
+	// the blue still dominates, the targeted lever is env.SetSdfgiReadSkyLight(false),
+	// which drops the sky's contribution entirely while keeping surface colour bleed.
+	env.SetSdfgiEnergy(0.5)
+
 	worldenv := WorldEnvironment.New().SetEnvironment(env)
 
 	world.AsNode().AddChild(worldenv.AsNode())
@@ -680,112 +676,30 @@ func (world *Client) Ready() {
 	camAttrs := CameraAttributesPractical.New()
 	worldenv.SetCameraAttributes(camAttrs.AsCameraAttributes())
 
-	// Volumetric cloud layer for the Highest tier. A box-shaped FogVolume sitting
-	// at the cloud altitude geometrically confines the fog to its bounds, so it
-	// can never fog the terrain below it — that confinement is the box, not the
-	// shader (the boundless "world" shape gave no reliable per-froxel world Y, so
-	// a shader height-band leaked fog everywhere). The box is thin in Y (the cloud
-	// layer) and wide in XZ, and follows the camera horizontally in Process so the
-	// layer feels endless; the shader's UVW.y gives the soft top/bottom fade and
-	// world-space noise keeps the puffs anchored as the box slides. Base volumetric
-	// density stays 0 so these clouds are the only fog; anisotropy gives a forward
-	// silver lining and a little ambient inject keeps undersides off pure black.
-	// applyCloudQuality toggles VolumetricFogEnabled per tier (off unless Highest).
-	env.SetVolumetricFogDensity(0)
-	// Keep the region small: the froxel buffer is spread across this length, so a
-	// shorter reach packs the froxels denser = sharper clouds. The trade-off is the
-	// clouds form a contained layer around the camera and fade out at this radius
-	// rather than stretching (blurrily) to the horizon — by design here. The
-	// shader's horizon_fade default (≈ length/span) tapers density to nothing just
-	// inside this so the fog-length cut-off isn't visible.
-	env.SetVolumetricFogLength(80)
-	// Strong forward scattering (like real clouds) so the sun-facing side glows /
-	// gets a bright silver lining instead of reading as uniform grey.
-	env.SetVolumetricFogAnisotropy(0.5)
-	// Lift the shadowed bases with sky ambient so they're cumulus-grey, not dark
-	// grey — the single-scatter fog has no multiple-scattering brightening, so this
-	// stands in for it. Too high would flatten them (everything reads white), too
-	// low leaves them dim. 0.7 (was 0.9) keeps a touch more sun->shadow contrast so
-	// the clouds have form rather than a uniform bright wash.
-	env.SetVolumetricFogAmbientInject(0.7)
-	env.SetVolumetricFogGiInject(0.0)
-	// Enlarge the volumetric-fog froxel buffer (default 64×64×64) so the clouds
-	// aren't a low-res blur: more width/height sharpens them across the screen,
-	// more depth sharpens them into the distance. The small cloud region (short fog
-	// length) means each froxel covers little space, so a dense grid is affordable.
-	// Global RenderingServer state, only paid when volumetric fog is on (Highest
-	// tier); dial back toward 128 if the froxel pass costs too much.
-	RenderingServer.EnvironmentSetVolumetricFogVolumeSize(256, 256)
-	cloudFog := ShaderMaterial.New()
-	cloudFog.SetShader(LoadSync[Shader.Instance]("res://shader/clouds_fog.gdshader"))
-	cloudFog.SetShaderParameter("coverage", 0.0)
-	world.cloudFog = cloudFog
-	cloudVolume := FogVolume.New()
-	cloudVolume.SetShape(RenderingServer.FogVolumeShapeBox)
-	// Full box size: a thin Y slab (the cloud layer + soft-edge margin) over a
-	// wide XZ footprint. Centred at cloudLayerY, so it spans Y ∈ [cloudLayerY±7].
-	cloudVolume.SetSize(Vector3.New(cloudLayerSpanXZ, cloudLayerThickness, cloudLayerSpanXZ))
-	cloudVolume.SetMaterial(cloudFog.AsMaterial())
-	cloudVolume.AsNode().SetName("CloudLayer")
-	cloudVolume.AsNode3D().SetPosition(Vector3.New(0, cloudLayerY, 0))
-	world.AsNode().AddChild(cloudVolume.AsNode())
-	world.cloudVolume = cloudVolume
+	// All cloud rendering (procedural sky + BgSky background, the world-space
+	// volumetric-fog cloud layer, and the SunshineClouds2 compositor) lives in the
+	// clouds package. New borrows the Environment — which is already wrapped in the
+	// in-tree WorldEnvironment above, a precondition: the SunshineClouds2 driver
+	// attaches its CompositorEffect by walking the tree for a WorldEnvironment the
+	// moment its resource is assigned inside New. It tracks world.Light as the sun.
+	// The four resources are loaded here, on the loader thread (LoadSync is
+	// package-private to internal), and handed in.
+	world.clouds = clouds.New(world.AsNode(), env, world.Light, clouds.Resources{
+		SkyShader:    LoadSync[Shader.Instance]("res://shader/sky.gdshader"),
+		FogShader:    LoadSync[Shader.Instance]("res://shader/clouds_fog.gdshader"),
+		DriverScript: LoadSync[Script.Instance]("res://addons/SunshineClouds2/SunshineCloudsDriver.gd"),
+		Effect:       LoadSync[Resource.Instance]("res://addons/SunshineClouds2/aviary_clouds.tres"),
+	})
 
-	// Highest-tier volumetric clouds: the vendored SunshineClouds2 addon (MIT,
-	// graphics/addons/SunshineClouds2). It is a GDScript CompositorEffect driver
-	// with no Go bindings, so it is instanced by attaching its script to a bare
-	// Node and driven generically with Object.Set/Call. The driver self-attaches
-	// its CompositorEffect to the WorldEnvironment's compositor the moment the
-	// clouds_resource is assigned — and it must already be in the tree for that —
-	// so we AddChild BEFORE assigning the resource. Tracking world.Light makes the
-	// clouds follow the sun (day/night + golden hour) automatically. The effect is
-	// only kept attached at QualityHighest; applyCloudQuality (called just below)
-	// detaches it on every other tier.
-	cloudsDriver := Node.New()
-	Object.Instance(cloudsDriver.AsObject()).SetScript(LoadSync[Script.Instance]("res://addons/SunshineClouds2/SunshineCloudsDriver.gd"))
-	cloudsDriver.SetName("SunshineClouds")
-	Object.Set(cloudsDriver, "ambience_sample_environment", env)
-	// Light the clouds with the scene's actual sun energy (multiplier 1.0). The
-	// cloud shader feeds this energy into BOTH the direct term (pow(energy,2.2),
-	// which blows out fast) AND the ambient/shadow-fill floor (ambientLightColor *
-	// totalLightPower) — so over-driving it (an earlier 8x) flooded the shadows
-	// brighter than white and erased all shading, leaving a flat white blob. Keep
-	// it at the real energy; tune the LOOK via the resource's hot-reloadable
-	// cloud_ambient_color (shadow darkness), lighting_density and clouds_density.
-	Object.Set(cloudsDriver, "directional_light_power_multiplier", 1.0)
-	// Set the tracked sun through a GDScript helper rather than assigning the
-	// Array[DirectionalLight3D] property directly: a Go slice / Array through the
-	// generic Object.Set arrived as an untyped Variant array that the typed property
-	// rejected, leaving it empty (no lights → pitch-black clouds). aviary_set_sun
-	// takes one DirectionalLight3D (single-object Call marshals reliably) and builds
-	// the typed array on the GDScript side. See SunshineCloudsDriver.gd.
-	Object.Call(cloudsDriver, "aviary_set_sun", world.Light)
-	world.AsNode().AddChild(cloudsDriver)
-	world.cloudsDriver = cloudsDriver
-	world.cloudsEffect = LoadSync[Resource.Instance]("res://addons/SunshineClouds2/aviary_clouds.tres")
-	// Assigning clouds_resource runs the driver's setter, attaching the effect to
-	// the compositor (creating one if absent). applyCloudQuality then detaches it
-	// unless the launch tier is Highest.
-	Object.Set(cloudsDriver, "clouds_resource", world.cloudsEffect)
-	// Enable per-frame updates ONLY now — after the node is in the tree AND the
-	// resource is assigned. The driver's _ready (which ran synchronously during
-	// AddChild above) force-disables update_continuously whenever clouds_resource is
-	// still null at that moment, so enabling it any earlier silently sticks at false:
-	// _process then never runs the light-tracking block and the clouds freeze on the
-	// resource's placeholder directional light — never following the real sun (white
-	// even at night, unaffected by Time of Day). Setting it here, with the resource
-	// and sun both present, re-runs retrieve_texture_data so the clouds track the
-	// day/night cycle.
-	Object.Set(cloudsDriver, "update_continuously", true)
-
-	// Seed cloud + SSAO state from the launch quality tier (persisted or default).
-	// The UI's launch-time Apply ran during editor.Setup above, before this
-	// Environment/sky/FogVolume existed, so these per-resource flags have to be
+	// Seed cloud + SSAO/SDFGI state from the launch quality tier (persisted or
+	// default). The UI's launch-time Apply ran during editor.Setup above, before
+	// this Environment/sky/clouds existed, so these per-resource flags have to be
 	// applied here; the settings slider re-applies them on every move (see
 	// buildSettingsMenu).
-	UserState.GraphicsQuality.ApplyAmbientOcclusion(env)
+	UserState.GraphicsQuality.ApplyEnvironmentQuality(env)
 	world.applyCloudQuality(UserState.GraphicsQuality)
 	world.applyWaterQuality(UserState.GraphicsQuality)
+	world.applyShadowQuality(UserState.GraphicsQuality)
 
 	// Start the world in daytime. Driving the initial look through the same
 	// friendly path the rolldown uses keeps lightingMenuState authoritative,
@@ -842,24 +756,6 @@ const speed = 8
 // view from burrowing through hills while still letting it drop below the water
 // surface (water is not terrain), so a small clearance keeps it just clear.
 const cameraTerrainClearance Float.X = 0.5
-
-// Cloud layer geometry for the Highest-tier volumetric FogVolume. The box must
-// be TALL (centred at cloudLayerY, cloudLayerThickness tall) so the camera is
-// always inside it: a thin box sitting above the camera gets frustum-culled the
-// moment you pitch down to look away from it, popping the whole cloud layer in/out
-// as you rotate. With the camera inside, the volume is never culled and the layer
-// renders smoothly at every view angle. The clouds' actual altitude is NOT the
-// box — it's confined to a world-Y band in the shader (cloud_base/cloud_top), so
-// the box can be tall without fog reaching the ground. The box follows the camera
-// in XZ each frame (see Process) so the cloudLayerSpanXZ footprint feels endless.
-const (
-	cloudLayerY         Float.X = 16
-	cloudLayerThickness Float.X = 120
-	// Wider than 2× the fog length so the layer's footprint always outruns the
-	// volumetric-fog reach — the clouds fade out smoothly (via the shader's radial
-	// horizon_fade) well inside the box, never at a hard box edge.
-	cloudLayerSpanXZ Float.X = 200
-)
 
 func (world *Client) Process(dt Float.X) {
 	world.time.Process(dt)
@@ -923,15 +819,12 @@ func (world *Client) Process(dt Float.X) {
 		}
 	}
 
-	// Slide the cloud-layer FogVolume to stay centred on the camera in XZ (Y is
-	// pinned to the layer altitude), so the finite box feels like an endless layer
-	// as the player pans. The clouds themselves are sampled in world space, so
-	// they stay put in the world while the box slides beneath them.
-	if world.cloudVolume != FogVolume.Nil {
-		if cam := Viewport.Get(world.AsNode()).GetCamera3d(); cam != Camera3D.Nil {
-			cp := cam.AsNode3D().GlobalPosition()
-			world.cloudVolume.AsNode3D().SetGlobalPosition(Vector3.New(cp.X, cloudLayerY, cp.Z))
-		}
+	// Slide the cloud-layer FogVolume to stay centred on the camera in XZ so the
+	// finite box feels like an endless layer as the player pans (see clouds
+	// .FollowCamera; the clouds are sampled in world space, so they stay put while
+	// the box slides beneath them).
+	if cam := Viewport.Get(world.AsNode()).GetCamera3d(); cam != Camera3D.Nil {
+		world.clouds.FollowCamera(cam)
 	}
 
 	if world.member && time.Since(world.last_lookAt_time) > time.Second/10 && world.space != nil {
@@ -1324,7 +1217,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			AnimateTheSceneBeingSaved(world, world.record)
 			go func() {
 				name := base64.RawURLEncoding.EncodeToString(world.record[:])
-				file, err := os.Open(OS.GetUserDataDir() + "/snaps/" + name + ".png")
+				file, err := os.Open(UserDataDir + "/snaps/" + name + ".png")
 				if err != nil {
 					Engine.Raise(fmt.Errorf("failed to open snapshot for upload: %w", err))
 					return
@@ -1577,6 +1470,21 @@ func (world *Client) applyLightingState(azimuth, elevation, energy, fogDensity F
 			A: 1,
 		})
 	}
+	// Feed the sun direction to the cloud system, which pushes it to the terrain
+	// cloud-shadow term (terrain.gdshader). Direction TOWARD the sun in world
+	// space, matching the sky shader's sun_dir: the light points along its local
+	// -Z, the sun is opposite. With Euler YXZ (X=elevation, Y=azimuth) the
+	// toward-sun vector is the following — its .y is -sin(elevation) = the
+	// sunHeight used above, so day/night gating agrees. (If shadows ever offset
+	// toward the wrong compass direction, flip the sign on the X/Z components —
+	// only the horizontal direction is convention-sensitive.) The angle convention
+	// stays here; the clouds package takes the finished vector.
+	el, az := float64(elevation), float64(azimuth)
+	world.clouds.SetSunDirection(Vector3.New(
+		Float.X(math.Sin(az)*math.Cos(el)),
+		Float.X(-math.Sin(el)),
+		Float.X(math.Cos(az)*math.Cos(el)),
+	))
 	if world.Environment != Environment.Nil {
 		world.Environment.SetFogEnabled(fogDensity > 0.0001)
 		world.Environment.SetFogDensity(fogDensity)
@@ -1765,67 +1673,70 @@ func (world *Client) applyMoonState(sunAzimuth, sunElevation, phase Float.X) {
 		world.Moon.AsNode3D().SetVisible(moonGate > 0.001)
 	}
 	// Hand the phase to the sky so it can carve the crescent on the moon disk.
-	if world.sky != (ShaderMaterial.Instance{}) {
-		world.sky.SetShaderParameter("moon_phase", phase)
-	}
+	world.clouds.SetMoonPhase(phase)
 }
 
-// applyCloudDensity pushes the cloud coverage (0 = clear, 1 = overcast) into
-// all three cloud systems — the procedural sky shader, the world-space cloud
-// FogVolume, and the SunshineClouds2 effect — so the Clouds slider drives
-// whichever one the active quality tier is showing. Safe to call before any of
-// them exist.
+// applyCloudDensity pushes the cloud coverage (0 = clear, 1 = overcast) into the
+// cloud system, which drives whichever renderer the active Mode is showing plus
+// the terrain cloud-shadow density. Safe before the system exists.
 func (world *Client) applyCloudDensity(clouds Float.X) {
-	if world.sky != (ShaderMaterial.Instance{}) {
-		world.sky.SetShaderParameter("coverage", clouds)
-	}
-	if world.cloudFog != (ShaderMaterial.Instance{}) {
-		world.cloudFog.SetShaderParameter("coverage", clouds)
-	}
-	if world.cloudsEffect != (Resource.Instance{}) {
-		Object.Set(world.cloudsEffect, "clouds_coverage", clouds)
-	}
+	world.clouds.SetDensity(clouds)
 }
 
-// applyCloudQuality switches the cloud system to match the graphics-quality
-// tier. There is one distinct system per tier (cheapest first): Toaster's flat
-// sky projection, Average's sky-shader march (both via cloud_steps), Refined's
-// world-space FogVolume (the Environment's volumetric fog), and Highest's
-// SunshineClouds2 compositor effect. So this pushes cloud_steps, toggles the
-// FogVolume, and attaches/detaches the SunshineClouds effect. Kept on the Client
-// because it spans the sky material, the Environment, and the clouds driver, all
-// created here after the UI's launch-time GraphicsQuality.Apply has already run.
-// Safe before those exist (each branch guards its resource).
+// applyCloudQuality switches the cloud renderer to match the graphics-quality
+// tier (see GraphicsQuality.cloudMode for the policy mapping). Safe before the
+// cloud system exists.
 func (world *Client) applyCloudQuality(q GraphicsQuality) {
-	if world.sky != (ShaderMaterial.Instance{}) {
-		world.sky.SetShaderParameter("cloud_steps", q.cloudSteps())
-	}
-	if world.Environment != Environment.Nil {
-		world.Environment.SetVolumetricFogEnabled(q.fogVolumeClouds())
-	}
-	// SunshineClouds2 (Highest only). The driver attaches/detaches its
-	// CompositorEffect through these two methods; a remove-before-add keeps
-	// re-enabling idempotent, so repeated applies (every settings-slider move)
-	// never stack duplicate effects on the compositor.
-	if world.cloudsDriver != (Node.Instance{}) {
-		Object.Call(world.cloudsDriver, "clouds_res_removed")
-		if q.sunshineClouds() {
-			Object.Call(world.cloudsDriver, "clouds_res_added")
-		}
-	}
+	world.clouds.SetMode(q.cloudMode())
 }
 
-// applyWaterQuality toggles the water's screen-space reflections to match the
-// graphics-quality tier by pushing the reflection_strength uniform into the
-// shared water material. The water is transparent (blend_mix), so Godot's
-// Environment SSR can't reach it; the water shader ray-marches its own
-// reflections, gated on this uniform — off below the Highest tier, where the
-// per-pixel depth march would cost too much. Kept on the Client alongside
-// applyCloudQuality since it reaches into the TerrainEditor's material; safe
-// before that material exists (the guard no-ops during the launch window).
+// applyWaterQuality matches the water to the graphics-quality tier in two ways.
+// First it binds the right Shader onto the shared water material: the lowest tier
+// (GraphicsQuality.simpleWater) gets water_simple.gdshader — a flat blue
+// transparent surface with basic scrolling normals and none of the per-pixel
+// depth/screen fetches, foam, swell, or reflections — while every higher tier
+// gets the full water.gdshader. Both shaders share the geometry contract and
+// brush-preview uniforms, so the swap is invisible to the rest of the water code.
+// Second it pushes reflection_strength: the water is transparent (blend_mix), so
+// Godot's Environment SSR can't reach it and the full shader ray-marches its own
+// reflections, gated on this uniform — off below the Highest tier (and inert on
+// the simple shader), where the per-pixel depth march would cost too much. Kept
+// on the Client alongside applyCloudQuality since it reaches into the
+// TerrainEditor's material; safe before that material exists (the guard no-ops
+// during the launch window). The water meshes all share this one material, so a
+// single SetShader rebinds every tile at once.
 func (world *Client) applyWaterQuality(q GraphicsQuality) {
-	if world.TerrainEditor != nil && world.TerrainEditor.water_shader != (ShaderMaterial.Instance{}) {
-		world.TerrainEditor.water_shader.SetShaderParameter("reflection_strength", q.reflectionStrength())
+	te := world.TerrainEditor
+	if te == nil || te.water_shader == (ShaderMaterial.Instance{}) {
+		return
+	}
+	shader := te.waterShaderFull
+	if q.simpleWater() {
+		shader = te.waterShaderSimple
+	}
+	if shader != (Shader.Instance{}) {
+		te.water_shader.SetShader(shader)
+	}
+	te.water_shader.SetShaderParameter("reflection_strength", q.reflectionStrength())
+}
+
+// applyShadowQuality pushes the per-tier directional-shadow settings (whether
+// the lights cast shadows at all — see GraphicsQuality.shadowsEnabled — plus the
+// depth + normal bias — see GraphicsQuality.shadowBias) into both the sun and
+// moon lights. It is split out from light creation because all three depend on
+// the shadow atlas resolution, which is quality-dependent: Toaster casts no
+// shadows, and the small low-tier atlas spreads each texel over more world
+// space, so it needs a larger (mostly normal) bias to suppress the self-shadow
+// banding / peter-panning that the dense high-tier atlas never shows. Both
+// lights share one atlas, so both get the same settings.
+func (world *Client) applyShadowQuality(q GraphicsQuality) {
+	enabled := q.shadowsEnabled()
+	bias, normalBias := q.shadowBias()
+	for _, light := range []DirectionalLight3D.Instance{world.Light, world.Moon} {
+		l := light.AsLight3D()
+		l.SetShadowEnabled(enabled)
+		l.SetShadowBias(Float.X(bias))
+		l.SetShadowNormalBias(Float.X(normalBias))
 	}
 }
 
@@ -2046,39 +1957,8 @@ func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
 		}
 	}
 
-	// Sky cloud drift speed scales with wind (base wind in shader is gentle).
-	if world.sky != (ShaderMaterial.Instance{}) {
-		base := Vector2.New(0.045, 0.014)
-		w := Float.X(wind)
-		world.sky.SetShaderParameter("cloud_wind", Vector2.New(
-			float64(base.X*(1+1.8*w)),
-			float64(base.Y*(1+1.8*w)),
-		))
-	}
-
-	// The world-space cloud FogVolume drifts with the same wind (its noise space
-	// is in world units, so the base speed is much smaller than the sky's).
-	if world.cloudFog != (ShaderMaterial.Instance{}) {
-		base := Vector2.New(0.03, 0.01)
-		w := Float.X(wind)
-		world.cloudFog.SetShaderParameter("cloud_wind", Vector2.New(
-			float64(base.X*(1+1.8*w)),
-			float64(base.Y*(1+1.8*w)),
-		))
-	}
-
-	// SunshineClouds2 advances each noise octave by its own structure wind speed
-	// (world units/sec). The upstream defaults are km-scale (140/100/40/12); these
-	// are scaled ~100x down to this world and ramped by the Wind slider with the
-	// same 1+1.8*w shape as the other two systems, so a gentle drift persists at
-	// wind 0. wind_direction keeps the resource default (1,0,1).
-	if world.cloudsDriver != (Node.Instance{}) {
-		w := float64(1 + 1.8*Float.X(wind))
-		Object.Set(world.cloudsDriver, "extra_large_structures_wind_speed", 1.4*w)
-		Object.Set(world.cloudsDriver, "large_structures_wind_speed", 1.0*w)
-		Object.Set(world.cloudsDriver, "medium_structures_wind_speed", 0.4*w)
-		Object.Set(world.cloudsDriver, "small_structures_wind_speed", 0.12*w)
-	}
+	// Drift every cloud system (and the terrain cloud-shadow term) with the wind.
+	world.clouds.SetWind(wind)
 
 	// Foliage editor preview wind (if active).
 	if world.FoliageEditor != nil && world.FoliageEditor.leafletMaterial != (ShaderMaterial.Instance{}) {
@@ -2109,6 +1989,7 @@ func (world *Client) updateWeatherIntensity(rain, snow, wind Float.X) {
 	// travelling waves, and only the top of the slider becomes the steady
 	// hard-pull-in-one-direction hurricane look.
 	RenderingServer.GlobalShaderParameterSet("grass_wind_bias", wf*wf)
+	// (The cloud-shadow drift moved into world.clouds.SetWind above.)
 
 	// Ocean swell scales with wind: no wind ⇒ glassy water (wave_height 0), up
 	// to heavy hurricane swell at the top. The shader fades these long swells

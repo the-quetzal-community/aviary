@@ -18,7 +18,6 @@ import (
 	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Node"
-	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextEdit"
@@ -92,7 +91,7 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		if _, ok := fl.processed[string(save)+".png"]; ok {
 			continue
 		}
-		stat, err := os.Stat(OS.GetUserDataDir() + "/snaps/" + string(save) + ".png")
+		stat, err := os.Stat(UserDataDir + "/snaps/" + string(save) + ".png")
 		if err == nil && stat.Size() > 0 {
 			continue
 		}

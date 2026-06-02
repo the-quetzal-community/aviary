@@ -130,6 +130,19 @@ var depth_write_shader : RID = RID()
 var depth_write_pipeline : RID = RID()
 var depth_uniform_sets : Array[RID] = []
 
+# AVIARY: cloud shadow map — coarse cloud coverage rendered top-down into a world-XZ
+# texture (SunshineCloudsShadowMap.glsl) and exposed as the global 'cloud_shadow_map',
+# so ground shaders cast shadows that match the clouds. View-independent, fixed size,
+# centred on the camera each frame.
+var shadow_map_shader : RID = RID()
+var shadow_map_pipeline : RID = RID()
+var shadow_map_texture : RID = RID()
+var shadow_map_params_buffer : RID = RID()
+var shadow_map_uniform_set : RID = RID()
+var shadow_map_global_tex : Texture2DRD = null
+const SHADOW_MAP_SIZE : int = 256
+const SHADOW_MAP_EXTENT : float = 256.0 # half-extent in world units (covers ±256 around the camera)
+
 var framebuffer_format : int
 
 var nearest_sampler : RID = RID()
@@ -236,6 +249,21 @@ func clear_compute():
 		if depth_write_shader.is_valid():
 			rd.free_rid(depth_write_shader)
 		depth_write_shader = RID()
+
+		# AVIARY: cloud shadow map
+		if shadow_map_pipeline.is_valid():
+			rd.free_rid(shadow_map_pipeline)
+		shadow_map_pipeline = RID()
+		if shadow_map_shader.is_valid():
+			rd.free_rid(shadow_map_shader)
+		shadow_map_shader = RID()
+		if shadow_map_texture.is_valid():
+			rd.free_rid(shadow_map_texture)
+		shadow_map_texture = RID()
+		if shadow_map_params_buffer.is_valid():
+			rd.free_rid(shadow_map_params_buffer)
+		shadow_map_params_buffer = RID()
+		shadow_map_uniform_set = RID() # auto-invalidated with its deps; rebuilt in _render_callback
 
 		if display_vertex_array.is_valid():
 			rd.free_rid(display_vertex_array)
@@ -409,6 +437,31 @@ func initialize_compute():
 		printerr("Depth-write Shader failed to compile.")
 		clear_compute()
 		return
+
+	# AVIARY: cloud shadow map compute — coarse coverage rendered into a world-XZ texture
+	# and exposed as the global 'cloud_shadow_map'. Non-fatal: on failure the ground
+	# shaders just fall back to their procedural cloud-shadow noise.
+	var shadow_map_shader_file : RDShaderFile = ResourceLoader.load("res://addons/SunshineClouds2/SunshineCloudsShadowMap.glsl")
+	if shadow_map_shader_file:
+		shadow_map_shader = rd.shader_create_from_spirv(shadow_map_shader_file.get_spirv())
+		if shadow_map_shader.is_valid():
+			shadow_map_pipeline = rd.compute_pipeline_create(shadow_map_shader)
+	if shadow_map_pipeline.is_valid():
+		var sm_format := RDTextureFormat.new()
+		sm_format.width = SHADOW_MAP_SIZE
+		sm_format.height = SHADOW_MAP_SIZE
+		sm_format.format = RenderingDevice.DATA_FORMAT_R32_SFLOAT
+		sm_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+		shadow_map_texture = rd.texture_create(sm_format, RDTextureView.new())
+		shadow_map_params_buffer = rd.uniform_buffer_create(16) # one vec4
+		shadow_map_global_tex = Texture2DRD.new()
+		shadow_map_global_tex.texture_rd_rid = shadow_map_texture
+		# The 'cloud_shadow_map' global is registered Go-side (with a placeholder) before any
+		# shader compiles; here we just point it at our live RD texture.
+		RenderingServer.global_shader_parameter_set("cloud_shadow_map", shadow_map_global_tex)
+		shadow_map_uniform_set = RID()
+	else:
+		printerr("Cloud shadow map shader failed to compile; ground shadows fall back to noise.")
 
 
 	var display_vertex_attributes : Array[RDVertexAttribute] = [RDVertexAttribute.new()]
@@ -894,6 +947,60 @@ func _render_callback(effect_callback_type, render_data):
 					rd.draw_list_bind_vertex_array(display_list, display_vertex_array)
 					rd.draw_list_draw(display_list, false, 1)
 				rd.draw_list_end()
+
+			# AVIARY: render the cloud shadow map (coarse world-XZ coverage) once per frame,
+			# centred on the camera. Ground shaders sample the 'cloud_shadow_map' global,
+			# projected along the sun, so their shadows match where the clouds actually are.
+			# (Runs at PRE_TRANSPARENT, after opaque, so terrain reads last frame's map — a
+			# one-frame lag that's invisible on drifting clouds.)
+			if shadow_map_pipeline.is_valid() and shadow_map_texture.is_valid() and general_data_buffer.is_valid():
+				if not shadow_map_uniform_set.is_valid():
+					var sm_uniforms : Array[RDUniform] = []
+					var sm_u0 = RDUniform.new()
+					sm_u0.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					sm_u0.binding = 0
+					sm_u0.add_id(linear_sampler)
+					sm_u0.add_id(RenderingServer.texture_get_rd_texture(extra_large_noise_patterns.get_rid()))
+					sm_uniforms.append(sm_u0)
+					var sm_u1 = RDUniform.new()
+					sm_u1.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					sm_u1.binding = 1
+					sm_u1.add_id(linear_sampler)
+					sm_u1.add_id(RenderingServer.texture_get_rd_texture(large_scale_noise.get_rid()))
+					sm_uniforms.append(sm_u1)
+					var sm_u2 = RDUniform.new()
+					sm_u2.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					sm_u2.binding = 2
+					sm_u2.add_id(linear_sampler_no_repeat)
+					sm_u2.add_id(RenderingServer.texture_get_rd_texture(height_gradient.get_rid()))
+					sm_uniforms.append(sm_u2)
+					var sm_u3 = RDUniform.new()
+					sm_u3.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					sm_u3.binding = 3
+					sm_u3.add_id(general_data_buffer)
+					sm_uniforms.append(sm_u3)
+					var sm_u4 = RDUniform.new()
+					sm_u4.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+					sm_u4.binding = 4
+					sm_u4.add_id(shadow_map_texture)
+					sm_uniforms.append(sm_u4)
+					var sm_u5 = RDUniform.new()
+					sm_u5.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					sm_u5.binding = 5
+					sm_u5.add_id(shadow_map_params_buffer)
+					sm_uniforms.append(sm_u5)
+					shadow_map_uniform_set = rd.uniform_set_create(sm_uniforms, shadow_map_shader, 0)
+				var sm_params : PackedByteArray = PackedFloat32Array([cameraTR.origin.x, cameraTR.origin.z, SHADOW_MAP_EXTENT, float(SHADOW_MAP_SIZE)]).to_byte_array()
+				rd.buffer_update(shadow_map_params_buffer, 0, sm_params.size(), sm_params)
+				var sm_groups = (SHADOW_MAP_SIZE - 1) / 8 + 1
+				var sm_list = rd.compute_list_begin()
+				rd.compute_list_bind_compute_pipeline(sm_list, shadow_map_pipeline)
+				rd.compute_list_bind_uniform_set(sm_list, shadow_map_uniform_set, 0)
+				rd.compute_list_dispatch(sm_list, sm_groups, sm_groups, 1)
+				rd.compute_list_end()
+				RenderingServer.global_shader_parameter_set("cloud_shadow_map_center", Vector2(cameraTR.origin.x, cameraTR.origin.z))
+				RenderingServer.global_shader_parameter_set("cloud_shadow_map_extent", SHADOW_MAP_EXTENT)
+				RenderingServer.global_shader_parameter_set("cloud_shadow_map_active", 1.0)
 
 			if (!positionResetting && positionQuerying):
 				positionResetting = true

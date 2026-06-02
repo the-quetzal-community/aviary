@@ -52,6 +52,91 @@ varying vec3 world;
 varying flat vec4 texture;
 varying vec4 weights;
 
+// --- Cloud shadows (AVIARY) --------------------------------------------------
+// Dappled, drifting shadows from the cloud layer. Driven by globals shared with
+// the cloud appearance (the Clouds slider + wind) and the sun direction, so they
+// track the overcast level and move with the weather. Each ground point is
+// projected ALONG the sun up to the cloud altitude and a scrolling fBm coverage
+// is sampled there, so the shadow offsets correctly with sun angle (straight
+// down at noon, long across the ground near sunset). This APPROXIMATES the
+// visible clouds — it shares coverage/wind/sun, not the exact density field —
+// but fine detail never reads in a soft ground shadow anyway.
+global uniform vec3  cloud_shadow_sun_dir; // world-space direction TOWARD the sun
+global uniform float cloud_coverage;       // 0..1, the Clouds slider
+global uniform vec2  cloud_shadow_wind;    // world units/sec drift of the cloud field
+global uniform float cloud_shadow_enabled; // >0.5 = draw ground cloud shadows; 0 = off (cheapest mode)
+// Matched cloud shadow map: SunshineClouds2 (Highest tier) renders its actual coarse
+// coverage top-down into this texture each frame (SunshineCloudsShadowMap.glsl). When
+// active we sample it so shadows match the real clouds; else fall back to the noise above.
+global uniform sampler2D cloud_shadow_map;
+global uniform vec2  cloud_shadow_map_center; // world XZ centre of the map window
+global uniform float cloud_shadow_map_extent; // half-extent of the map in world units
+global uniform float cloud_shadow_map_active; // >0.5 = map live; else procedural fallback
+const float CLOUD_SHADOW_ALT    = 21.0;    // cloud-layer mid altitude (SunshineClouds2 floor 14 / ceiling 28)
+const float CLOUD_SHADOW_SCALE  = 0.03;    // fallback-noise frequency (lower = bigger patches)
+const float CLOUD_SHADOW_DARKEN = 0.3;     // deepest shadow (0 = black, 1 = no darkening)
+const float CLOUD_SHADOW_DEBUG  = 0.0;     // DIAGNOSTIC: 1.0 = moving stripes (plumbing test,
+                                           // ignores globals); 2.0 = show raw coverage (dark = cloud).
+
+float cs_hash(vec2 p) {
+    p = fract(p * vec2(123.34, 345.45));
+    p += dot(p, p + 34.345);
+    return fract(p.x * p.y);
+}
+float cs_noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = cs_hash(i);
+    float b = cs_hash(i + vec2(1.0, 0.0));
+    float c = cs_hash(i + vec2(0.0, 1.0));
+    float d = cs_hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+// Returns a multiplier in [CLOUD_SHADOW_DARKEN, 1]: 1 in full sun, darker under cloud.
+float cloud_shadow_factor(vec3 world_pos) {
+    // DIAGNOSTIC: with DEBUG on, ignore ALL globals and draw obvious moving stripes
+    // from world position + TIME. If these stripes appear and move, the shader path
+    // and the ALBEDO multiply work — so any "no shadows" problem is the globals not
+    // feeding (rebuild the Go side; check the log for "global uniform ... does not
+    // exist"). If you see nothing even here, the shader edit isn't live.
+    if (CLOUD_SHADOW_DEBUG > 0.5 && CLOUD_SHADOW_DEBUG < 1.5) {
+        return mix(0.25, 1.0, step(0.5, fract((world_pos.x + world_pos.z + TIME * 6.0) * 0.05)));
+    }
+    // Cloud shadows can be disabled entirely (the cheapest cloud mode / Toaster
+    // tier skips the ground cloud-shadow term). Driven by the cloud system's
+    // SetMode via the cloud_shadow_enabled global.
+    if (cloud_shadow_enabled < 0.5) {
+        return 1.0;
+    }
+    // No sun below the horizon -> no cloud shadow (night is lit by ambient only).
+    float day = smoothstep(0.02, 0.12, cloud_shadow_sun_dir.y);
+    if (day <= 0.0) {
+        return 1.0;
+    }
+    // Project the ground point up along the sun to the cloud layer.
+    float t = (CLOUD_SHADOW_ALT - world_pos.y) / max(cloud_shadow_sun_dir.y, 0.05);
+    vec2 sxz = world_pos.xz + cloud_shadow_sun_dir.xz * t;
+
+    float cloud;
+    if (cloud_shadow_map_active > 0.5) {
+        // MATCHED: sample the SunshineClouds2-derived coverage map (drift is already baked
+        // into the map by the addon's wind-driven noise positions, so no TIME term here).
+        vec2 uv = (sxz - cloud_shadow_map_center) / (2.0 * cloud_shadow_map_extent) + 0.5;
+        uv = clamp(uv, vec2(0.001), vec2(0.999));
+        cloud = texture(cloud_shadow_map, uv).r;
+    } else {
+        // FALLBACK: independent drifting noise — doesn't match the clouds, but reads fine.
+        if (cloud_coverage <= 0.001) { return 1.0; }
+        vec2 p = (sxz + cloud_shadow_wind * TIME) * CLOUD_SHADOW_SCALE;
+        float n = cs_noise(p) * 0.6 + cs_noise(p * 2.3) * 0.3 + cs_noise(p * 5.1) * 0.1;
+        float thresh = mix(0.9, 0.45, cloud_coverage);
+        cloud = smoothstep(thresh, thresh + 0.18, n);
+    }
+    if (CLOUD_SHADOW_DEBUG > 1.5) { return clamp(1.0 - cloud, 0.0, 1.0); } // viz: dark = cloud
+    return mix(1.0, mix(1.0, CLOUD_SHADOW_DARKEN, cloud), day);
+}
+
 void vertex() {
     UV = UV * uv1_scale.xy + uv1_offset.xy;
 
@@ -204,6 +289,9 @@ void fragment() {
     }
 
     ALBEDO = albedo_final;
+
+    // Cloud shadows: dim the ground under the drifting cloud layer (AVIARY).
+    ALBEDO *= cloud_shadow_factor(world);
 
     if (selection_active) {
         float sdx = (world.x - selection.x);

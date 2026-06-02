@@ -92,6 +92,15 @@ type TerrainEditor struct {
 	// the terrain.
 	water_shader ShaderMaterial.Instance
 
+	// The two Shader resources water_shader can be bound to, swapped by
+	// Client.applyWaterQuality per graphics tier (see GraphicsQuality.simpleWater):
+	// waterShaderFull is water.gdshader (foam, refraction, swell, reflections);
+	// waterShaderSimple is water_simple.gdshader (flat blue + basic normals) for
+	// the lowest tier. Both honour the same geometry contract and brush-preview
+	// uniforms, so the swap is invisible to every other water code path.
+	waterShaderFull   Shader.Instance
+	waterShaderSimple Shader.Instance
+
 	// WaterLevel is the world-space Y of the water surface. The default of
 	// -2 matches the bottom of the terrain skirt, so by default the water
 	// sits hidden under flat terrain (i.e. there is no visible water until
@@ -936,9 +945,14 @@ func (tr *TerrainEditor) Ready() {
 	// shader drives both water surfaces (plane + side walls); the side walls
 	// share the plane edge's world XZ so they get the identical Gerstner
 	// displacement and stay connected to the plane.
-	water := LoadSync[Shader.Instance]("res://shader/water.gdshader")
+	// Load both water shaders; applyWaterQuality binds the one matching the
+	// active tier onto the shared material. Default to the full shader — startup
+	// applyWaterQuality (and any later Settings move) swaps in the simple one for
+	// the lowest tier.
+	tr.waterShaderFull = LoadSync[Shader.Instance]("res://shader/water.gdshader")
+	tr.waterShaderSimple = LoadSync[Shader.Instance]("res://shader/water_simple.gdshader")
 	tr.water_shader = ShaderMaterial.New().
-		SetShader(water).
+		SetShader(tr.waterShaderFull).
 		SetShaderParameter("normalmap_a_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_N_A.png")).
 		SetShaderParameter("normalmap_b_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_N_B.png")).
 		SetShaderParameter("uv_sampler", LoadSync[Texture2D.Instance]("res://terrain/water/Water_UV.png")).

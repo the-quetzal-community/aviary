@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"graphics.gd/classdb/Engine"
-	"graphics.gd/classdb/OS"
 	"runtime.link/api/xray"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
@@ -49,12 +48,12 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 
-	if err := os.MkdirAll(OS.GetUserDataDir()+"/saves/"+name, 0777); err != nil {
+	if err := os.MkdirAll(UserDataDir+"/saves/"+name, 0777); err != nil {
 		cancel()
 		return nil, err
 	}
 
-	file, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
+	file, err := os.OpenFile(UserDataDir+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -133,7 +132,7 @@ type cloudReader struct {
 
 func (cr *cloudReader) Read(p []byte) (n int, err error) {
 	if !cr.open {
-		stat, err := os.Stat(OS.GetUserDataDir() + "/" + string(cr.work) + "/" + string(cr.part) + ".mus3")
+		stat, err := os.Stat(UserDataDir + "/" + string(cr.work) + "/" + string(cr.part) + ".mus3")
 		if err != nil || stat.ModTime().Before(cr.time) || stat.Size() != cr.size {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			file, err := cr.community.LookupSave(ctx, cr.work, cr.part)
@@ -141,7 +140,7 @@ func (cr *cloudReader) Read(p []byte) (n int, err error) {
 				cancel()
 				return 0, err
 			}
-			cache, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+			cache, err := os.OpenFile(UserDataDir+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 			if err != nil {
 				cancel()
 				return 0, err
@@ -165,7 +164,7 @@ func (cr *cloudReader) Read(p []byte) (n int, err error) {
 			}
 			cr.open = true
 		} else {
-			local, err := os.OpenFile(OS.GetUserDataDir()+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_RDONLY, 0666)
+			local, err := os.OpenFile(UserDataDir+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_RDONLY, 0666)
 			if err != nil {
 				return 0, err
 			}
@@ -212,7 +211,7 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 	fw.lock.Lock()
 	n, err = fw.writer.Write(p)
 	if fw.sync.CompareAndSwap(false, true) {
-		savePath := OS.GetUserDataDir() + "/saves/" + fw.name + "/" + UserState.Device + ".mus3"
+		savePath := UserDataDir + "/saves/" + fw.name + "/" + UserState.Device + ".mus3"
 		device := UserState.Device
 		PendingSaves.Go(func() {
 			defer fw.sync.Store(false)
