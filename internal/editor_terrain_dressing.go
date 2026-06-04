@@ -357,22 +357,37 @@ func (vr *TerrainEditor) scatterGrass(brush musical.Sculpt) {
 	vr.buildGrassPatch(brush, asset)
 }
 
-// retryPendingGrass re-attempts any dressing strokes whose mesh wasn't
-// loaded when they first arrived. Called once per frame from Process.
+// retryPendingGrass re-attempts dressing strokes whose mesh wasn't loaded when
+// they first folded. Called once per frame from Process.
+//
+// It deliberately does NOT build the parked strokes one-by-one: doing so
+// scatters them OUT of grassHistory order, which silently drops any erase that
+// followed a parked scatter in the log (eraseGrass can only filter already-built
+// patches — it can't cancel a not-yet-scattered stroke, and it no-ops entirely
+// when its own design mesh is absent). Both leave the grass diverged from a
+// clean in-order fold once the mesh finally arrives.
+//
+// Instead, as soon as at least one parked mesh is actually available, re-fold the
+// whole grass set from grassHistory (recomputeGrass): that builds the now-
+// loadable strokes, applies the erases around them in order, and re-parks any
+// still-missing meshes (clearGrass resets pendingGrass first). With no progress
+// (every parked mesh still absent) we leave it for a later frame — so this
+// self-limits to one re-fold per newly-loaded mesh and converges to the exact
+// fold the load would have produced had every mesh been present up front.
 func (vr *TerrainEditor) retryPendingGrass() {
 	if len(vr.pendingGrass) == 0 {
 		return
 	}
-	remaining := vr.pendingGrass[:0]
+	progress := false
 	for _, brush := range vr.pendingGrass {
-		asset, ok := vr.grassMeshFor(brush.Design, brush.Slider)
-		if !ok {
-			remaining = append(remaining, brush)
-			continue
+		if _, ok := vr.grassMeshFor(brush.Design, brush.Slider); ok {
+			progress = true
+			break
 		}
-		vr.buildGrassPatch(brush, asset)
 	}
-	vr.pendingGrass = remaining
+	if progress {
+		vr.recomputeGrass()
+	}
 }
 
 // fillPatch (re)samples the deterministic scatter for `brush` into `patch`,
