@@ -5,6 +5,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"time"
 
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Material"
@@ -127,6 +128,10 @@ func StartResourceThread() {
 // called from within the loader thread itself it loads inline to avoid
 // self-deadlock.
 func LoadSync[T Resource.Any, P string | Path.ToResource](path P) T {
+	if loadProfileOn {
+		start := time.Now()
+		defer func() { recordLoad(fmt.Sprint(path), time.Since(start)) }()
+	}
 	if onLoaderThread || !loaderRunning {
 		return Resource.Load[T](path)
 	}

@@ -599,18 +599,28 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				var path = preview_path + "/" + tab + "/" + resource
 				switch ext {
 				case glb:
-					preview := LoadSync[Texture2D.Instance](path)
-					if preview == Texture2D.Nil {
-						continue
-					}
 					resource := library_path + "/" + tab + "/" + strings.TrimSuffix(string(resource), ".png")
 					if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
 						resource = tscn
 					}
+					// Load the thumbnail off the main thread: the palette has
+					// hundreds of these and they aren't needed for the world to
+					// render, so blocking on each one stalled the whole load. The
+					// tile exists immediately; its texture pops in when ready.
 					tile := TextureButton.New().
-						SetTextureNormal(preview).
 						SetIgnoreTextureSize(true).
 						SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					tileID := tile.ID()
+					var preview Texture2D.Instance
+					LoadAsync(path, func(tex Texture2D.Instance) {
+						preview = tex
+						if tex == Texture2D.Nil {
+							return
+						}
+						if b, ok := tileID.Instance(); ok {
+							b.SetTextureNormal(tex)
+						}
+					})
 					tile.AsBaseButton().OnButtonDown(func() {
 						ui.armDrag(mode, resource, preview)
 					})
@@ -622,7 +632,6 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					elements.AsNode().AddChild(tile.AsNode())
 					ui.tile_for_resource[resource] = tile.ID()
 				case png:
-					texture := LoadSync[Texture2D.Instance](path)
 					// Prefer a .region sidecar over a raw .png when both
 					// exist — the sidecar describes a sub-region of a
 					// shared atlas material, while the raw .png is the
@@ -633,10 +642,21 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					if FileAccess.FileExists(region_path) {
 						resource = region_path
 					}
+					// Thumbnail loaded off the main thread (see the glb case).
 					tile := TextureButton.New().
-						SetTextureNormal(texture).
 						SetIgnoreTextureSize(true).
 						SetStretchMode(TextureButton.StretchKeepAspectCentered)
+					tileID := tile.ID()
+					var texture Texture2D.Instance
+					LoadAsync(path, func(tex Texture2D.Instance) {
+						texture = tex
+						if tex == Texture2D.Nil {
+							return
+						}
+						if b, ok := tileID.Instance(); ok {
+							b.SetTextureNormal(tex)
+						}
+					})
 					tile.AsBaseButton().OnButtonDown(func() {
 						ui.armDrag(mode, resource, texture)
 					})

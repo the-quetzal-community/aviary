@@ -46,7 +46,9 @@ func (fe *BoulderEditor) Views() []string       { return nil }
 func (*BoulderEditor) SwitchToView(view string) {}
 
 func (fe *BoulderEditor) Ready() {
-	fe.rock = Object.Leak(NewRock())
+	// Kept alive by this field (BoulderEditor is a root, walked by keepalive) and freed
+	// in ExitTree — not Object.Leak'd, which would make that Object.Free a no-op.
+	fe.rock = NewRock()
 	fe.Mesh.SetMesh(fe.rock.AsMesh())
 
 	fe.mineralMaterial = StandardMaterial3D.New().

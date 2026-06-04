@@ -57,7 +57,15 @@ func registerEntity(designToEntity map[musical.Design][]Node3D.ID, entityToObjec
 	entityToObject[entity] = node.ID()
 	objectToEntity[node.ID()] = entity
 	designToEntity[design] = append(designToEntity[design], node.ID())
+	if loadProfileOn {
+		debugEverCreated[design] = true
+	}
 }
+
+// debugEverCreated records every Design that was ever instantiated (created or
+// re-designed), so debugResourceUsage can distinguish dead designs that were
+// never placed (lazy-load would skip them) from placed-then-removed ones.
+var debugEverCreated = map[musical.Design]bool{}
 
 // removeEntity prunes a node from all three maps and frees it. It fixes
 // two bugs the inline copies shared: the design_to_entity prune used

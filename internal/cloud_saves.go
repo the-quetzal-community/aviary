@@ -39,84 +39,113 @@ var PendingSaves sync.WaitGroup
 func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 	name := base64.RawURLEncoding.EncodeToString(work[:])
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	parts, err := community.CloudParts(ctx, signalling.WorkID(name))
-	if err != nil {
-		Engine.Raise(err) // not fatal.
-	}
-	cancel()
-
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-
 	if err := os.MkdirAll(UserDataDir+"/saves/"+name, 0777); err != nil {
-		cancel()
 		return nil, err
 	}
 
 	file, err := os.OpenFile(UserDataDir+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	var size int64
-	var total_size int64
 	if stat, err := file.Stat(); err == nil {
 		size = stat.Size()
-		total_size += stat.Size()
 	}
 
-	var readers []io.Reader
-	readers = append(readers, strings.NewReader(musical.MagicHeader))
-	readers = append(readers, file)
-
-	var other_parts int
-	for part, stat := range parts {
-		if part == signalling.PartID(UserState.Device) {
-			continue
-		}
-		other_parts++
-		readers = append(readers, &cloudReader{
-			community: community,
-			work:      signalling.WorkID(name),
-			part:      part,
-			size:      stat.Size,
-			time:      stat.Time,
-		})
-		total_size += stat.Size
-	}
-
-	if size == 0 && other_parts > 0 {
-		if _, err := file.Write([]byte(musical.MagicHeader)); err != nil {
-			cancel()
-			return nil, xray.New(err)
-		}
-		total_size++
-	} else if size > 0 {
+	// The local device part decodes immediately; validate + skip its embedded
+	// magic header here (local file, no network). The OTHER devices' parts — and
+	// the CloudParts network round-trip needed to discover them — are resolved
+	// lazily by lazyCloudReader, which io.MultiReader only reaches once the whole
+	// local part has been read. By then the main thread has a deep replay
+	// backlog, so the ~2s round-trip overlaps that work instead of blocking the
+	// start of the load.
+	if size > 0 {
 		var header = make([]byte, len(musical.MagicHeader))
 		if _, err := io.ReadFull(file, header); err != nil {
-			cancel()
+			file.Close()
 			return nil, xray.New(err)
 		}
 		if string(header) != musical.MagicHeader {
-			cancel()
+			file.Close()
 			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
 		}
 	}
 
+	lazy := &lazyCloudReader{community: community, work: name, file: file, localSize: size}
+
 	return &CloudBacked{
-		name:   name,
-		size:   total_size,
+		name: name,
+		// Bytes known up front = synthetic header + local part; cloud parts are
+		// discovered lazily, so the loading bar fills on the local part and any
+		// cloud catch-up (usually small / already cached) streams in after.
+		size:   int64(len(musical.MagicHeader)) + size,
 		writer: file,
-		reader: io.MultiReader(readers...),
+		reader: io.MultiReader(strings.NewReader(musical.MagicHeader), file, lazy),
 		closer: func() error {
-			cancel()
-			if err := file.Close(); err != nil {
-				return err
-			}
-			return nil
+			return file.Close()
 		},
 		community: community,
 	}, nil
+}
+
+// lazyCloudReader defers the CloudParts network round-trip (and the per-part
+// cloud readers it builds) until the decode first reads past the local part.
+// io.MultiReader exhausts the local file before it, so by the time init runs the
+// local mutations are already streaming through the main-thread replay queue and
+// the round-trip overlaps that backlog. The per-part downloads stay lazy too
+// (see cloudReader). Read on a single goroutine (the musical decode), no locking.
+type lazyCloudReader struct {
+	community signalling.API
+	work      string
+	file      *os.File
+	localSize int64
+
+	once sync.Once
+	r    io.Reader
+	err  error
+}
+
+func (l *lazyCloudReader) Read(p []byte) (int, error) {
+	l.once.Do(l.init)
+	if l.err != nil {
+		return 0, l.err
+	}
+	return l.r.Read(p)
+}
+
+func (l *lazyCloudReader) init() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	parts, err := l.community.CloudParts(ctx, signalling.WorkID(l.work))
+	cancel()
+	if err != nil {
+		Engine.Raise(err) // not fatal: fall through with whatever parts we got.
+	}
+	var readers []io.Reader
+	var other int
+	for part, stat := range parts {
+		if part == signalling.PartID(UserState.Device) {
+			continue
+		}
+		other++
+		readers = append(readers, &cloudReader{
+			community: l.community,
+			work:      signalling.WorkID(l.work),
+			part:      part,
+			size:      stat.Size,
+			time:      stat.Time,
+		})
+	}
+	// Local part empty but other devices have data: seed the local file with the
+	// magic header so future saves append to a valid file. Safe here — the local
+	// reader has already EOF'd (empty), and no save can happen until the load
+	// finishes (well after this runs).
+	if l.localSize == 0 && other > 0 {
+		if _, werr := l.file.Write([]byte(musical.MagicHeader)); werr != nil {
+			l.err = xray.New(werr)
+			return
+		}
+	}
+	l.r = io.MultiReader(readers...)
 }
 
 type cloudReader struct {

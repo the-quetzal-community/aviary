@@ -290,7 +290,7 @@ func (editor *CoasterEditor) Change(change musical.Change) error {
 		return nil
 	}
 	var node Node3D.Instance
-	scene, ok := editor.client.packed_scenes[change.Design].Instance()
+	scene, ok := editor.client.sceneFor(change.Design)
 	if ok {
 		node = Object.To[Node3D.Instance](scene.Instantiate())
 	} else {

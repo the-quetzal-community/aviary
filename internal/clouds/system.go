@@ -73,6 +73,7 @@ type System struct {
 	cloudFog     ShaderMaterial.Instance // FogVolume material
 	cloudVolume  FogVolume.Instance      // the box that follows the camera
 	cloudsDriver Node.Instance           // SunshineClouds2 GDScript driver (Object.Set/Call)
+	driverScript Script.Instance         // SunshineCloudsDriver.gd; held so Free can release it
 	cloudsEffect Resource.Instance       // aviary_clouds.tres CompositorEffect
 	env          Environment.Instance    // borrowed; owned by the importer
 }
@@ -197,6 +198,7 @@ func New(parent Node.Instance, env Environment.Instance, sun DirectionalLight3D.
 	Object.Call(cloudsDriver, "aviary_set_sun", sun)
 	parent.AddChild(cloudsDriver)
 	s.cloudsDriver = cloudsDriver
+	s.driverScript = res.DriverScript
 	s.cloudsEffect = res.Effect
 	// Assigning clouds_resource runs the driver's setter, attaching the effect to
 	// the compositor (creating one if absent). SetMode then detaches it unless the
@@ -214,6 +216,25 @@ func New(parent Node.Instance, env Environment.Instance, sun DirectionalLight3D.
 	Object.Set(cloudsDriver, "update_continuously", true)
 
 	return s
+}
+
+// Free releases the cloud resources this System owns so they don't report as leaks at
+// exit. The FogVolume and driver NODES are freed with the scene tree; here we drop our
+// refs on the two materials and the compositor effect. Freeing the effect releases its
+// noise textures, compute shaders and the SunshineClouds2 scripts once the compositor and
+// driver release theirs during teardown. env is borrowed (the importer owns it) and is
+// left alone. Object.Free only decrements, so anything still in use at this point — the
+// effect is still held by the compositor and driver — survives until teardown.
+func (s *System) Free() {
+	if s == nil {
+		return
+	}
+	Object.Free(s.sky)
+	Object.Free(s.cloudFog)
+	Object.Free(s.cloudsEffect)
+	// The driver node frees with the scene tree; dropping our Go ref on its script lets
+	// it (and its only parse dependency, SunshineCloudEffector.gd) be released too.
+	Object.Free(s.driverScript)
 }
 
 // SetDensity pushes the cloud coverage (0 = clear, 1 = overcast) into all cloud

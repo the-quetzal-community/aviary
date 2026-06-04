@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/GPUParticles3D"
 	"graphics.gd/classdb/GeometryInstance3D"
+	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
@@ -53,6 +55,7 @@ import (
 	"graphics.gd/classdb/SubViewport"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
+	"graphics.gd/classdb/ViewportTexture"
 	"graphics.gd/classdb/WorldEnvironment"
 	"graphics.gd/classdb/XRCamera3D"
 	"graphics.gd/classdb/XRController3D"
@@ -381,7 +384,7 @@ func NewClient() *Client {
 		authors: make(map[musical.Author]Node3D.ID),
 
 		load_last_save: true,
-		queue:          make(chan func(), 1000),
+		queue:          make(chan func(), queueCapFromEnv()),
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
@@ -523,6 +526,8 @@ func (world *Client) apiHost() (networking.Code, error) {
 
 // Ready does a bunch of dependency injection and setup.
 func (world *Client) Ready() {
+	profMark("Client.Ready: begin")
+	defer profMark("Client.Ready: end (returning to engine)")
 	if UserDataDir == "" {
 		UserDataDir = OS.GetUserDataDir()
 	}
@@ -601,6 +606,7 @@ func (world *Client) Ready() {
 	world.CitizenEditor.client = world
 	world.CritterEditor.client = world
 	world.CoasterEditor.client = world
+	profMark("Ready: loading editor.tscn")
 	editor_scene := LoadSync[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()
 	editor, ok := Object.As[*UI](first)
@@ -611,6 +617,7 @@ func (world *Client) Ready() {
 		world.AsNode().AddChild(editor.AsNode())
 		editor.Setup()
 	}
+	profMark("Ready: editor UI set up")
 	world.FocalPoint.Lens.Camera.AsNode3D().
 		SetPosition(Vector3.New(0, 1, 3)).
 		LookAt(Vector3.Zero)
@@ -710,12 +717,16 @@ func (world *Client) Ready() {
 	// moment its resource is assigned inside New. It tracks world.Light as the sun.
 	// The four resources are loaded here, on the loader thread (LoadSync is
 	// package-private to internal), and handed in.
+	profMark("Ready: clouds.New begin (loads sky/fog shaders + SunshineClouds driver)")
 	world.clouds = clouds.New(world.AsNode(), env, world.Light, clouds.Resources{
 		SkyShader:    LoadSync[Shader.Instance]("res://shader/sky.gdshader"),
 		FogShader:    LoadSync[Shader.Instance]("res://shader/clouds_fog.gdshader"),
 		DriverScript: LoadSync[Script.Instance]("res://addons/SunshineClouds2/SunshineCloudsDriver.gd"),
 		Effect:       LoadSync[Resource.Instance]("res://addons/SunshineClouds2/aviary_clouds.tres"),
 	})
+	profMark("Ready: clouds.New done")
+	// Release the cloud system's resources at shutdown so they don't report as leaks.
+	OnShutdown(world.clouds.Free)
 
 	// Seed cloud + SSAO/SDFGI state from the launch quality tier (persisted or
 	// default). The UI's launch-time Apply ran during editor.Setup above, before
@@ -753,6 +764,8 @@ func (world *Client) Ready() {
 	// Rock texture for the "buried" fill — the same mineral the terrain sides use.
 	underwater.SetShaderParameter("rock_sampler", LoadSync[Texture2D.Instance]("res://default/mineral.jpg"))
 	world.underwater = underwater
+	// Free the post-process material (and thus its shader + rock texture) at shutdown.
+	OnShutdown(func() { Object.Free(world.underwater) })
 	world.applyCoverDefault()
 
 	fmt.Println("Client setup complete")
@@ -780,7 +793,35 @@ func (world *Client) applyCoverDefault() {
 // and the window stays responsive. The decode goroutine produces faster than we
 // apply, so this is effectively a continuous-drain duty cycle: larger ⇒ faster
 // build, choppier splash.
-const loadDrainBudget = 30 * time.Millisecond
+var loadDrainBudget = drainBudgetFromEnv()
+
+// drainBudgetFromEnv reads AVIARY_DRAIN_MS (milliseconds) so the per-frame
+// replay drain budget can be tuned for profiling without recompiling. Defaults
+// to 30ms. 3D rendering is disabled under the splash, so a larger value drains
+// the replay queue faster at the cost of a choppier 2D splash — but only helps
+// if the main-thread apply is the bottleneck (see loadprofile.go's verdict).
+func drainBudgetFromEnv() time.Duration {
+	if v := os.Getenv("AVIARY_DRAIN_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 30 * time.Millisecond
+}
+
+// queueCapFromEnv reads AVIARY_QUEUE_CAP so the replay queue's buffer size can be
+// tuned for profiling without recompiling. Defaults to 1000. A larger cap lets the
+// decode goroutine run ahead instead of blocking on a full queue, so (paired with a
+// larger AVIARY_DRAIN_MS) the main thread can apply many more buffered mutations per
+// frame — testing whether the load is throttled by the queue cap rather than CPU.
+func queueCapFromEnv() int {
+	if v := os.Getenv("AVIARY_QUEUE_CAP"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1000
+}
 
 // joinLoadGrace is how long the queue must stay idle (after author assignment)
 // before the splash is dismissed on the join path, where the host streams
@@ -796,7 +837,16 @@ const loadStallTimeout = 30 * time.Second
 // duration of the initial replay. Called at the top of Ready (before
 // musical.Host) for both single-player loads and multiplayer joins.
 func (world *Client) beginLoading() {
+	profMark("beginLoading: splash up, 3D disabled, replay starts")
+	startLoadCPUProfile()
 	world.loading = true
+	// Suppress per-frame terrain rebuilds for the duration of the replay; the
+	// touched tiles are rebuilt once each in finishLoading (flushBulkReloads).
+	// Folding ~61k sculpts one rebuild-per-frame at a time dominated load time.
+	// AVIARY_DEFER_TERRAIN=0 disables it (for A/B comparison).
+	if world.TerrainEditor != nil && os.Getenv("AVIARY_DEFER_TERRAIN") != "0" {
+		world.TerrainEditor.bulkReplay = true
+	}
 	world.loadProgressArmed.Store(true)
 	world.loadLastProgress = time.Now()
 	overlay := LoadSync[PackedScene.Instance]("res://ui/scene_loader.tscn").Instantiate()
@@ -816,11 +866,20 @@ func (world *Client) finishLoading() {
 		return
 	}
 	world.loading = false
+	// Rebuild every terrain tile touched during the replay, once each, BEFORE we
+	// re-enable 3D — so the finished world is shown, not a half-built one.
+	if world.TerrainEditor != nil {
+		profMark("finishLoading: flushing bulk terrain reloads")
+		world.TerrainEditor.flushBulkReloads()
+	}
 	Viewport.Get(world.AsNode()).SetDisable3d(false)
 	if world.loadingOverlay != nil {
 		world.loadingOverlay.AsNode().QueueFree()
 		world.loadingOverlay = nil
 	}
+	profMark("finishLoading: splash down, 3D re-enabled — world fully built")
+	stopLoadCPUProfile()
+	reportLoadProfile(world.loadEnqueued.Load(), world.loadDequeued.Load())
 }
 
 // processLoading fast-drains the replay queue under the splash. It applies as
@@ -834,13 +893,16 @@ func (world *Client) processLoading(dt Float.X) {
 	// this, time.Now() stays 0 and the movement interpolation extrapolates to
 	// non-finite/astronomical transforms (look_at + is_finite engine errors).
 	world.time.Process(dt)
+	markMaxQueueDepth(int64(len(world.queue)))
 	deadline := time.Now().Add(loadDrainBudget)
+	hitBudget := false
 	for {
 		select {
 		case fn := <-world.queue:
 			fn()
 			world.loadDequeued.Add(1)
 			if !time.Now().Before(deadline) {
+				hitBudget = true
 				goto progress
 			}
 		default:
@@ -848,6 +910,15 @@ func (world *Client) processLoading(dt Float.X) {
 		}
 	}
 progress:
+	if loadProfileOn {
+		// hitBudget ⇒ we still had queued work at the deadline (apply-bound this
+		// frame); else we drained to empty and yielded early (not apply-bound).
+		if hitBudget {
+			loadFramesBudgetHit.Add(1)
+		} else {
+			loadFramesQueueEmpty.Add(1)
+		}
+	}
 	world.updateLoadProgress()
 	if world.loadingComplete() {
 		world.finishLoading()
@@ -911,6 +982,88 @@ func (world *Client) loadingComplete() bool {
 	return time.Since(world.loadIdleSince) > joinLoadGrace
 }
 
+// Opt-in viewport screenshot for headless verification: when AVIARY_SHOTPATH is
+// set, save one PNG of the rendered viewport a short while after loading ends
+// (the native Wayland window can't be grabbed by X11 tools / the COSMIC portal).
+var (
+	shotPath   = os.Getenv("AVIARY_SHOTPATH")
+	shotFrames int
+	shotDone   bool
+)
+
+func (world *Client) maybeCaptureScreenshot() {
+	if shotPath == "" || shotDone {
+		return
+	}
+	shotFrames++
+	if shotFrames < 90 { // ~1.5s of rendered frames so the world settles
+		return
+	}
+	shotDone = true
+	tex := Viewport.Get(world.AsNode()).GetTexture()
+	if tex == (ViewportTexture.Instance{}) {
+		profMark("screenshot: nil viewport texture")
+		return
+	}
+	img := tex.AsTexture2D().GetImage()
+	if img == (Image.Instance{}) {
+		profMark("screenshot: nil image")
+		return
+	}
+	if err := img.SavePng(shotPath); err != nil {
+		profMark("screenshot save failed: %v", err)
+		return
+	}
+	profMark("screenshot saved to %s", shotPath)
+	world.debugResourceUsage()
+	if world.TerrainEditor != nil {
+		world.TerrainEditor.debugTerrainSignature()
+	}
+}
+
+// debugResourceUsage reports how many imported scenery Designs (packed scenes)
+// still have a live entity vs. how many were loaded but have no surviving entity
+// (removed or superseded) — i.e. resources we paid to load but that aren't in
+// the final scene. Sums the LoadSync time attributed to each bucket.
+func (world *Client) debugResourceUsage() {
+	if !loadProfileOn {
+		return
+	}
+	liveScenes, deadScenes, deadNeverPlaced := 0, 0, 0
+	var liveMs, deadMs, deadNeverPlacedMs float64
+	var deadURIs []string
+	for design := range world.packed_scenes {
+		uri := world.design_to_string[design]
+		ms := loadPathMs(boulderCompatPath(uri))
+		live := false
+		for _, id := range world.design_to_entity[design] {
+			if _, ok := id.Instance(); ok {
+				live = true
+				break
+			}
+		}
+		if live {
+			liveScenes++
+			liveMs += ms
+		} else {
+			deadScenes++
+			deadMs += ms
+			if !debugEverCreated[design] {
+				deadNeverPlaced++
+				deadNeverPlacedMs += ms
+			}
+			if len(deadURIs) < 12 {
+				deadURIs = append(deadURIs, uri)
+			}
+		}
+	}
+	profMark("[res] packed_scenes live=%d (%.0fms) dead=%d (%.0fms; never-placed=%d/%.0fms) textures=%d loaded=%d",
+		liveScenes, liveMs, deadScenes, deadMs, deadNeverPlaced, deadNeverPlacedMs, len(world.textures), len(world.loaded))
+	for _, u := range deadURIs {
+		profMark("[res] dead scene: %s (%.0fms)", u, loadPathMs(boulderCompatPath(u)))
+	}
+}
+
 const speed = 8
 
 // cameraTerrainClearance is how far above the terrain the camera is held when it
@@ -920,6 +1073,11 @@ const speed = 8
 const cameraTerrainClearance Float.X = 0.5
 
 func (world *Client) Process(dt Float.X) {
+	// Honour an externally-requested clean quit (SIGUSR1 → quitIfRequested) before
+	// any per-frame work, so the window-close teardown path runs even mid-load.
+	if quitIfRequested(world.AsNode()) {
+		return
+	}
 	// While the world is still replaying, fast-drain the mutation queue under
 	// the loading splash (3D rendering is disabled) instead of running the
 	// normal per-frame world logic. processLoading still advances the timing
@@ -932,6 +1090,7 @@ func (world *Client) Process(dt Float.X) {
 		return
 	}
 	world.time.Process(dt)
+	world.maybeCaptureScreenshot()
 
 	// Keep the underwater post-process in sync with the water surface AND terrain
 	// floor under the camera: the LOCAL river surface where one is carved (else

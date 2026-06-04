@@ -273,7 +273,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	design := editor.client.design_to_string[change.Design]
 	if FileAccess.FileExists(strings.TrimSuffix(design, path.Ext(design)) + "_cut.glb.import") {
 		node = Node3D.New()
-		scene, ok := editor.client.packed_scenes[change.Design].Instance()
+		scene, ok := editor.client.sceneFor(change.Design)
 		if ok {
 			full := Object.To[Node3D.Instance](scene.Instantiate())
 			full.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
@@ -285,7 +285,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			node.AsNode().AddChild(cut.AsNode())
 		}
 	} else {
-		scene, ok := editor.client.packed_scenes[change.Design].Instance()
+		scene, ok := editor.client.sceneFor(change.Design)
 		if ok {
 			node = Object.To[Node3D.Instance](scene.Instantiate())
 		} else {

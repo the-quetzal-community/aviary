@@ -107,7 +107,9 @@ func (fe *FoliageEditor) EnableEditor() {
 func (fe *FoliageEditor) ChangeEditor() {}
 
 func (fe *FoliageEditor) Ready() {
-	fe.tree = Object.Leak(NewTree())
+	// Kept alive by this field (FoliageEditor is a root, walked by keepalive) and freed
+	// in ExitTree — not Object.Leak'd, which would make that Object.Free a no-op.
+	fe.tree = NewTree()
 	fe.Mesh.SetMesh(fe.tree.AsMesh())
 
 	leafletShader := LoadSync[Shader.Instance]("res://shader/foliage_wind.gdshader")
@@ -123,6 +125,10 @@ func (fe *FoliageEditor) Ready() {
 
 func (fe *FoliageEditor) ExitTree() {
 	Object.Free(fe.tree)
+	// Free the editor's preview materials (and thus their foliage-wind shader and
+	// leaflet/timbers textures). Object.Free is a no-op on an already-freed handle.
+	Object.Free(fe.leafletMaterial)
+	Object.Free(fe.timbersMaterial)
 }
 
 // applyMaterials pushes the current materials both onto the ArrayMesh

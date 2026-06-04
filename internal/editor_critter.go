@@ -693,13 +693,16 @@ func (ce *CritterEditor) Sculpt(brush musical.Sculpt) error {
 		}
 	}
 	if strings.HasPrefix(brush.Slider, "bone/") {
+		defer timeIn(&bucketCritterBone)()
 		ce.applyBoneSculpt(brush.Slider, float32(brush.Amount))
 		return nil
 	}
 	if strings.HasPrefix(brush.Slider, "leg/") {
+		defer timeIn(&bucketCritterLeg)()
 		ce.applyLegSculptBrush(brush)
 		return nil
 	}
+	defer timeIn(&bucketCritterSlider)()
 	ce.applySlider(brush.Slider, brush.Amount)
 	return nil
 }
@@ -1851,7 +1854,7 @@ func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
 			setSubtreeOwner(node.AsNode(), node.AsNode())
 			ce.animatedParts[node.ID()] = part
 		default:
-			if s, ok := ce.client.packed_scenes[change.Design].Instance(); ok {
+			if s, ok := ce.client.sceneFor(change.Design); ok {
 				node = ce.body.AttachPart(anchor, s)
 			} else if hasURI && strings.HasSuffix(uri, ".obj") {
 				// MakeHuman-style .obj without a PackedScene

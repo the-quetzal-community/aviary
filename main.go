@@ -47,6 +47,7 @@ func main() {
 	classdb.Register[internal.MaterialSharingDecal]()
 	classdb.Register[internal.DesignExplorer]()
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
+	internal.ProfMark("main: classes registered")
 	startup.LoadingScene()
 	internal.UserDataDir = OS.GetUserDataDir()
 	if Engine.IsEditorHint() {
@@ -61,12 +62,20 @@ func main() {
 	// it (see resource_thread.go) and the community loader's maps are only
 	// ever touched by that one thread.
 	internal.StartResourceThread()
+	internal.ProfMark("main: resource thread started")
 	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
 		SceneTree.Add(internal.LoadSync[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
 	} else {
+		internal.ProfMark("main: preview.pck mounted")
 		SceneTree.Add(internal.NewClient())
 	}
+	internal.ProfMark("main: client added, starting engine scene")
 	startup.Scene()
+	// The main loop has ended; release session-lifetime caches (shared materials,
+	// etc.) while the engine is still up and the scene not yet torn down, so they
+	// don't report as leaks at exit. Free only decrements refcounts, so anything
+	// still bound to a live node is freed for real when that node is finalized.
+	internal.RunShutdownCleanups()
 	close(internal.ShuttingDown)
 	internal.PendingSaves.Wait()
 }

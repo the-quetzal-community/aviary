@@ -34,6 +34,19 @@ type sharingEntry struct {
 
 var cacheAO = make(map[sharingKey]sharingEntry)
 
+func init() {
+	// Release the session-lifetime shared materials at shutdown (each was created
+	// with Object.Leak, so the GC never reclaims them — see shutdown.go). Object.Free
+	// only drops our ref; a material still bound to a live mesh survives until that
+	// node is finalized during teardown. Clearing the map makes OnFree a no-op after.
+	OnShutdown(func() {
+		for key, entry := range cacheAO {
+			Object.Free(entry.Material)
+			delete(cacheAO, key)
+		}
+	})
+}
+
 func (ms *MaterialSharingMeshInstance3D) Ready() {
 	key := sharingKey{
 		Identity: ms.Identity,

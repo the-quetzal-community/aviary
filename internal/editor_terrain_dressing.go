@@ -45,10 +45,11 @@ type grassPatch struct {
 	radius   Float.X
 	category string // dressing tab (grasses/foliage/boulder/...) for params + transform rules
 
-	// One MultiMesh per design sub-mesh (see grassAsset.parts): a library
-	// foliage prop is often several meshes (trunk / canopy / leaf nodes), so a
-	// patch renders a parallel MultiMesh for each. mms[i] corresponds to
-	// grassMeshes[design].parts[i]; all share the per-instance scatter below.
+	// Per-patch MultiMeshes, used ONLY by the transient hover preview
+	// (dressPreview): a single previewed patch renders one MultiMesh per design
+	// sub-mesh (see grassAsset.parts) so it can be torn down independently as the
+	// brush moves. COMMITTED patches leave these empty and render through the
+	// shared per-design grassRender instead (see grassRenders / repopulateDesign).
 	mms     []MultiMesh.Instance
 	mmNodes []MultiMeshInstance3D.Instance
 
@@ -58,6 +59,30 @@ type grassPatch struct {
 	bases  []Vector3.XYZ
 	yaws   []Angle.Radians
 	scales []Float.X
+}
+
+// grassRender is the merged, per-design rendering of all committed dressing
+// instances of one Design. It holds one MultiMesh (plus its node) per asset
+// sub-mesh part; every grassPatch sharing the design feeds its visible
+// instances into these buffers (see repopulateDesign). Aggregating across
+// patches means the scene renders one MultiMeshInstance3D per (design, part)
+// rather than one per (patch, part), collapsing hundreds of patch nodes into a
+// handful and cutting the draw-call count to match.
+type grassRender struct {
+	mms     []MultiMesh.Instance
+	mmNodes []MultiMeshInstance3D.Instance
+}
+
+// free queues every node of the merged render for deletion and clears its
+// slices. The MultiMeshes themselves finalize with their bound nodes.
+func (r *grassRender) free() {
+	for _, n := range r.mmNodes {
+		if n != MultiMeshInstance3D.Nil {
+			n.AsNode().QueueFree()
+		}
+	}
+	r.mms = r.mms[:0]
+	r.mmNodes = r.mmNodes[:0]
 }
 
 // grassMeshPart is one renderable sub-mesh of a dressing design plus the
@@ -118,11 +143,128 @@ var dressingDefaults = map[string]dressingParams{
 	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
 }
 
-// populateGrassMM rebuilds the MultiMesh for a grassPatch so that it only
-// contains the instances whose terrain tile is currently revealed. The
-// patch keeps its full bases/yaws/scales (the complete sculpt data) so that
-// later reveals can add the omitted instances without re-sampling RNG.
-// Called from build/erase/reproject and when tiles change revealed state.
+// ensureGrassRender returns (building on first use) the merged render for a
+// design: one MultiMesh + MultiMeshInstance3D per asset sub-mesh part, parented
+// under the editor. Rebuilt if the design's part count ever changes. The
+// instance buffers are filled separately by repopulateDesign.
+func (vr *TerrainEditor) ensureGrassRender(design musical.Design, asset grassAsset) *grassRender {
+	if r, ok := vr.grassRenders[design]; ok && len(r.mms) == len(asset.parts) {
+		return r
+	} else if ok {
+		r.free()
+	}
+	r := &grassRender{}
+	for _, part := range asset.parts {
+		mm := MultiMesh.New()
+		mm.SetTransformFormat(MultiMesh.Transform3d)
+		mm.SetMesh(part.mesh)
+		mmi := MultiMeshInstance3D.New()
+		mmi.SetMultimesh(mm)
+		// Keep scattered dressing OUT of any VoxelGI/SDFGI bake: thousands of
+		// instances feeding the GI voxelisation tanks the frame-rate the moment GI
+		// is enabled, for negligible bounce. GiModeDisabled skips them in the GI pass.
+		mmi.AsGeometryInstance3D().SetGiMode(GeometryInstance3D.GiModeDisabled)
+		vr.AsNode().AddChild(mmi.AsNode())
+		r.mms = append(r.mms, mm)
+		r.mmNodes = append(r.mmNodes, mmi)
+	}
+	vr.grassRenders[design] = r
+	return r
+}
+
+// repopulateDesign rebuilds the merged MultiMesh buffers for one design from
+// EVERY committed grassPatch sharing it, including only the instances whose
+// terrain tile is currently revealed. Patches keep their full bases/yaws/scales
+// (the complete sculpt data) so a later reveal re-adds the omitted instances
+// without re-sampling RNG. Two passes over the patches (count, then fill) avoid
+// any temporary allocation: SetInstanceCount needs the total up front.
+func (vr *TerrainEditor) repopulateDesign(design musical.Design) {
+	asset, ok := vr.grassMeshes[design]
+	if !ok || len(asset.parts) == 0 {
+		if r, ok := vr.grassRenders[design]; ok {
+			for _, mm := range r.mms {
+				if mm != MultiMesh.Nil {
+					mm.SetInstanceCount(0)
+				}
+			}
+		}
+		return
+	}
+	n := 0
+	for _, p := range vr.grassPatches {
+		if p.design != design {
+			continue
+		}
+		for i := range p.bases {
+			if vr.tileRevealedAt(p.bases[i]) {
+				n++
+			}
+		}
+	}
+	r := vr.ensureGrassRender(design, asset)
+	// Each part's MultiMesh gets the SAME scatter, composed with that part's own
+	// authored sub-mesh transform so trunk / canopy / leaves stay registered.
+	for pi := range r.mms {
+		mm := r.mms[pi]
+		if mm == MultiMesh.Nil || pi >= len(asset.parts) {
+			continue
+		}
+		xform := asset.parts[pi].xform
+		mm.SetInstanceCount(n)
+		k := 0
+		for _, p := range vr.grassPatches {
+			if p.design != design {
+				continue
+			}
+			for i := range p.bases {
+				if vr.tileRevealedAt(p.bases[i]) {
+					mm.SetInstanceTransform(k, vr.grassTransform(p.bases[i], p.yaws[i], p.scales[i], xform))
+					k++
+				}
+			}
+		}
+	}
+}
+
+// markGrassDirty flags a design's merged render for rebuild. Unless rendering is
+// deferred (a bulk replay / multi-patch erase / height-drag reproject batching
+// many marks), it repopulates immediately so a single live stroke shows at once.
+func (vr *TerrainEditor) markGrassDirty(design musical.Design) {
+	vr.grassDirty[design] = true
+	if !vr.grassDeferRender {
+		vr.flushGrassRenders()
+	}
+}
+
+// flushGrassRenders repopulates every design marked dirty, then clears the set.
+func (vr *TerrainEditor) flushGrassRenders() {
+	for d := range vr.grassDirty {
+		vr.repopulateDesign(d)
+		delete(vr.grassDirty, d)
+	}
+}
+
+// deferGrassRender coalesces a burst of markGrassDirty calls into one flush. It
+// sets grassDeferRender and returns a restore func that, only if it owned the
+// defer (no outer batch already active), flushes the accumulated dirty designs.
+// Nest-safe: an inner batch inside an outer one is a no-op on restore. Use as
+// `defer vr.deferGrassRender()()`.
+func (vr *TerrainEditor) deferGrassRender() func() {
+	if vr.grassDeferRender {
+		return func() {}
+	}
+	vr.grassDeferRender = true
+	return func() {
+		vr.grassDeferRender = false
+		vr.flushGrassRenders()
+	}
+}
+
+// populateGrassMM rebuilds the per-patch MultiMesh for the hover PREVIEW patch
+// so that it only contains the instances whose terrain tile is currently
+// revealed. The patch keeps its full bases/yaws/scales (the complete sculpt
+// data) so that later reveals can add the omitted instances without re-sampling
+// RNG. Committed patches do NOT use this — they render via repopulateDesign.
 func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
 	asset, ok := vr.grassMeshes[patch.design]
 	if !ok || len(asset.parts) == 0 {
@@ -155,22 +297,26 @@ func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
 	}
 }
 
-// refreshGrassVisibility repopulates every active grass patch's MultiMesh
-// from its full data, filtering to only the instances on revealed tiles.
-// Used after any tile reveal/hide so grasses appear/disappear with their
-// terrain chunk.
+// refreshGrassVisibility repopulates every design's merged render from its
+// patches' full data, filtering to only the instances on revealed tiles. Used
+// after any tile reveal/hide so grasses appear/disappear with their terrain
+// chunk. The dirty set dedupes designs, so each is repopulated once.
 func (vr *TerrainEditor) refreshGrassVisibility() {
+	defer vr.deferGrassRender()()
 	for _, p := range vr.grassPatches {
-		vr.populateGrassMM(p)
+		vr.markGrassDirty(p.design)
 	}
 }
 
 // clearGrass removes every rendered grass patch (and any pending scatters whose
 // mesh had not yet loaded). Used by recomputeGrass before replaying the active
-// dressing history on undo/redo.
+// dressing history on undo/redo. The committed patches own no nodes; the merged
+// per-design renders do, so those are freed here.
 func (vr *TerrainEditor) clearGrass() {
-	for _, p := range vr.grassPatches {
-		p.freeNodes()
+	for d, r := range vr.grassRenders {
+		r.free()
+		delete(vr.grassRenders, d)
+		delete(vr.grassDirty, d)
 	}
 	vr.grassPatches = vr.grassPatches[:0]
 	vr.pendingGrass = vr.pendingGrass[:0]
@@ -181,6 +327,7 @@ func (vr *TerrainEditor) clearGrass() {
 // trims. Used on undo/redo of a dressing stroke: a region-based erase can only be
 // reverted by replaying what survives, not by an arithmetic inverse.
 func (vr *TerrainEditor) recomputeGrass() {
+	defer vr.deferGrassRender()()
 	vr.clearGrass()
 	for i := range vr.grassHistory {
 		e := vr.grassHistory[i]
@@ -201,6 +348,7 @@ func (vr *TerrainEditor) recomputeGrass() {
 // log before the .glb has loaded), it's parked in pendingGrass and retried
 // from Process once the resource is available.
 func (vr *TerrainEditor) scatterGrass(brush musical.Sculpt) {
+	defer timeIn(&bucketDressing)()
 	asset, ok := vr.grassMeshFor(brush.Design, brush.Slider)
 	if !ok {
 		vr.pendingGrass = append(vr.pendingGrass, brush)
@@ -287,6 +435,40 @@ func (p *grassPatch) freeNodes() {
 	p.mmNodes = p.mmNodes[:0]
 }
 
+// freeDressCaches releases every resource the dressing system keeps alive for the
+// session: the merged per-design MultiMeshes, plus the grass meshes and shared materials (no
+// longer Object.Leak'd, so they're freeable). Registered as a shutdown cleanup (see
+// Ready) so they don't report as leaks at exit. Object.Free only decrements, so a
+// MultiMesh still bound to a live MultiMeshInstance3D — or a mesh/material still
+// referenced by a patch — is destroyed for real only when those nodes finalize during
+// teardown. nil-guarded so a second run is a no-op.
+func (vr *TerrainEditor) freeDressCaches() {
+	for d, r := range vr.grassRenders {
+		for _, mm := range r.mms {
+			if mm != MultiMesh.Nil {
+				Object.Free(mm)
+			}
+		}
+		r.mms = nil
+		delete(vr.grassRenders, d)
+	}
+	vr.grassPatches = nil
+	for _, asset := range vr.grassMeshes {
+		for _, part := range asset.parts {
+			if part.mesh != Mesh.Nil {
+				Object.Free(part.mesh)
+			}
+		}
+	}
+	vr.grassMeshes = nil
+	for _, mat := range vr.dressSharedMats {
+		if mat != Material.Nil {
+			Object.Free(mat)
+		}
+	}
+	vr.dressSharedMats = nil
+}
+
 // buildPatchNodes (re)creates one MultiMeshInstance3D per asset part, parents
 // them under the editor and stores them on the patch (aligned with
 // asset.parts). Any pre-existing nodes are freed first, so it doubles as the
@@ -312,11 +494,12 @@ func (vr *TerrainEditor) buildPatchNodes(patch *grassPatch, asset grassAsset) {
 	}
 }
 
-// makeGrassPatch builds (but does not register) a scatter patch plus a
-// MultiMesh node per design sub-mesh for one dressing stroke, populated for the
-// currently revealed tiles. buildGrassPatch registers it as committed scenery;
-// the hover preview holds it transiently instead. Returns nil when the stroke
-// scatters nothing.
+// makeGrassPatch builds a scatter patch plus its own per-patch MultiMesh node
+// per design sub-mesh for one dressing stroke, populated for the currently
+// revealed tiles. Used ONLY by the transient hover preview (dressPreview), which
+// must render and tear down a single patch independently; committed strokes go
+// through buildGrassPatch (data only) and the shared per-design grassRender.
+// Returns nil when the stroke scatters nothing.
 func (vr *TerrainEditor) makeGrassPatch(brush musical.Sculpt, asset grassAsset) *grassPatch {
 	patch := &grassPatch{}
 	if !vr.fillPatch(patch, brush, asset) {
@@ -328,11 +511,16 @@ func (vr *TerrainEditor) makeGrassPatch(brush musical.Sculpt, asset grassAsset) 
 }
 
 // buildGrassPatch scatters one committed dressing stroke and registers the
-// resulting grassPatch so the placement can be re-projected later.
+// resulting grassPatch so the placement can be re-projected later. The patch
+// only holds scatter DATA (no per-patch nodes); its instances render through
+// the shared per-design grassRender, which markGrassDirty repopulates.
 func (vr *TerrainEditor) buildGrassPatch(brush musical.Sculpt, asset grassAsset) {
-	if patch := vr.makeGrassPatch(brush, asset); patch != nil {
-		vr.grassPatches = append(vr.grassPatches, patch)
+	patch := &grassPatch{}
+	if !vr.fillPatch(patch, brush, asset) {
+		return
 	}
+	vr.grassPatches = append(vr.grassPatches, patch)
+	vr.markGrassDirty(patch.design)
 }
 
 // dressKey is the quantised brush state a hover preview was built for. Quantising
@@ -428,15 +616,17 @@ func (vr *TerrainEditor) clearDressPreview() {
 // reprojectGrass re-plants the instances of every patch overlapping the
 // given sculpt disc back onto the (just reshaped) terrain surface.
 func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
+	defer vr.deferGrassRender()()
 	for _, patch := range vr.grassPatches {
 		dx := float64(patch.target.X - target.X)
 		dz := float64(patch.target.Z - target.Z)
 		if Float.X(math.Hypot(dx, dz)) > patch.radius+radius {
 			continue
 		}
-		// Repopulate the (filtered) MultiMesh; this recomputes grassTransform
-		// (which re-queries HeightAt) only for the instances on revealed tiles.
-		vr.populateGrassMM(patch)
+		// Mark the design dirty; the deferred flush repopulates each affected
+		// design's merged buffer once, recomputing grassTransform (which re-queries
+		// HeightAt) for the revealed-tile instances of every patch sharing it.
+		vr.markGrassDirty(patch.design)
 	}
 }
 
@@ -446,6 +636,10 @@ func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
 // immediately visible and is reproduced identically on every client that
 // replays the (negative-Amount) sculpt.
 func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
+	defer timeIn(&bucketDressing)()
+	// One flush for the whole erase: a bomb/category clear can trim many patches
+	// across several designs, and each survivor/removal only mutates Go data here.
+	defer vr.deferGrassRender()()
 	// For a normal (per-Design) erase we need the mesh loaded so we can
 	// safely repopulate the MultiMesh after filtering instances.
 	// Category-clear strokes (Design zero, Slider = category) do not need
@@ -501,17 +695,20 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 		}
 
 		if len(keptB) == 0 {
-			p.freeNodes()
+			// Patch wiped out: drop it and rebuild its design's merged buffer
+			// without these instances.
+			design := p.design
 			vr.grassPatches = append(vr.grassPatches[:i], vr.grassPatches[i+1:]...)
+			vr.markGrassDirty(design)
 			continue
 		}
 
 		p.bases = keptB
 		p.yaws = keptY
 		p.scales = keptS
-		// Rebuild the MultiMesh from the kept (full) data, but populate only
-		// adds the subset whose tiles are revealed.
-		vr.populateGrassMM(p)
+		// Rebuild the design's merged buffer from the kept (full) data; populate
+		// only adds the subset whose tiles are revealed.
+		vr.markGrassDirty(p.design)
 	}
 }
 
@@ -543,11 +740,7 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 	if a, ok := vr.grassMeshes[design]; ok {
 		return a, len(a.parts) > 0
 	}
-	sceneID, ok := vr.client.packed_scenes[design]
-	if !ok {
-		return grassAsset{}, false
-	}
-	scene, ok := sceneID.Instance()
+	scene, ok := vr.client.sceneFor(design)
 	if !ok {
 		return grassAsset{}, false
 	}
@@ -592,7 +785,10 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 	var asset grassAsset
 	for _, part := range parts {
 		mi := part.mi
-		mesh := Object.Leak(mi.Mesh())
+		// Kept alive for the session by grassMeshes (a TerrainEditor field, walked by
+		// keepalive) and released in freeDressCaches at shutdown — not Object.Leak'd,
+		// which would pin it un-freeably and report as a leak at exit.
+		mesh := mi.Mesh()
 		if mesh == Mesh.Nil {
 			continue
 		}
@@ -655,7 +851,9 @@ func (vr *TerrainEditor) sharedDressMaterial(ms *MaterialSharingMeshInstance3D) 
 	LoadAsync(ms.Material, func(mat Material.Instance) {
 		final := mat
 		if mat != Material.Nil && overrideAO != Texture2D.Nil {
-			dup := Object.Leak(Resource.Duplicate(Object.To[BaseMaterial3D.Instance](mat)))
+			// Held by dressSharedMats (walked by keepalive) and freed in freeDressCaches
+			// at shutdown — not Object.Leak'd, which would make it un-freeable.
+			dup := Resource.Duplicate(Object.To[BaseMaterial3D.Instance](mat))
 			dup.SetAoTexture(overrideAO)
 			final = dup.AsMaterial()
 		}

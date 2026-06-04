@@ -2,6 +2,8 @@ package internal
 
 import (
 	"path"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -68,6 +70,20 @@ type TerrainEditor struct {
 	// click on before the first sculpt.
 	tiles map[tileCoord]*TerrainTile
 
+	// bulkReplay is set while the client is replaying the .mus3 log under the
+	// loading splash. In this mode scheduleReload does NOT rebuild per frame —
+	// it just records the touched tile in pendingReload. flushBulkReloads then
+	// does a single full recompute per tile at the end (see finishLoading).
+	// Replaying ~61k sculpts incrementally meant one mesh/normal/collision/sides/
+	// water regen per frame (~83-148 of them) which dominated load time; this
+	// collapses that to one per tile (see project_load_time_profile).
+	bulkReplay    bool
+	pendingReload map[*TerrainTile]struct{}
+	// lightingApplyPending coalesces environment-slider sculpts during a bulk
+	// replay: the state is updated per-stroke but lighting.apply (a burst of ~20
+	// Godot setters) is fired once at the flush, avoiding a command-ring overflow.
+	lightingApplyPending bool
+
 	// arrowsVisible toggles every existing extend-the-world arrow
 	// when entering/leaving the terrain editor — arrows shouldn't be
 	// clickable from the coaster or scenery editors.
@@ -82,6 +98,15 @@ type TerrainEditor struct {
 	albedos     []Image.Instance
 	normal_maps []Image.Instance
 	spec_maps   []Image.Instance
+
+	// defaultSpec is the shared all-black 2048² R8 gloss layer used for the base
+	// layer and every design lacking a "_spec" sibling. Built ONCE and reused:
+	// Image.CreateFromData marshals its 4.19M-byte data argument into a Godot
+	// PackedByteArray element-by-element (a per-byte cgo cost — see the load
+	// profile), so building a fresh identical image per design cost seconds during
+	// replay. Reusing one handle as multiple Texture2DArray layers is safe — the
+	// layers are read-only copies of the source image's data.
+	defaultSpec Image.Instance
 
 	shader        ShaderMaterial.Instance
 	shader_buried ShaderMaterial.Instance
@@ -225,6 +250,21 @@ type TerrainEditor struct {
 	grassMeshes  map[musical.Design]grassAsset
 	pendingGrass []musical.Sculpt
 
+	// grassRenders holds the MERGED rendering: one grassRender per unique
+	// dressing Design, each with one MultiMesh per asset sub-mesh part, into
+	// which EVERY committed grassPatch of that design feeds its visible
+	// instances. So the scene carries a handful of MultiMeshInstance3D nodes
+	// (one set per design) instead of one set per patch — far fewer nodes and
+	// draw calls for the same instances. grassDirty marks the designs whose
+	// merged buffers need rebuilding; flushGrassRenders rebuilds them (deferred
+	// to one pass when grassDeferRender is set, so a bulk replay / multi-patch
+	// erase / height-drag reproject coalesces into a single repopulate per
+	// design). The transient hover dressPreview keeps its own per-patch
+	// MultiMeshes (it is a single patch and must tear down independently).
+	grassRenders     map[musical.Design]*grassRender
+	grassDirty       map[musical.Design]bool
+	grassDeferRender bool
+
 	// dressSharedMats caches the resolved surface material for scenery library
 	// props scattered by the foliage/boulder brushes. Those are
 	// MaterialSharingMeshInstance3D nodes whose material streams from
@@ -295,6 +335,47 @@ var cardinalDirs = [4]tileCoord{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
 // (so a brush spilling over an edge, or a replayed sculpt, builds it up) but
 // renders nothing and is not pickable until reveal() promotes it into the
 // world. Use revealTile to both create and reveal — the explicit "extend".
+// freeTerrainResources releases the terrain editor's session-lifetime resources at
+// shutdown (registered in Ready) so they don't report as leaks at exit. Object.Free only
+// decrements (and is a no-op on an unset handle), so anything still bound to a live node
+// is destroyed for real only when that node is finalized in teardown. The shared terrain/
+// water materials are freed ONCE — every tile aliases tr.shader/tr.shader_buried/
+// tr.water_shader (see revealTile), so freeing them per tile would over-decrement.
+func (tr *TerrainEditor) freeTerrainResources() {
+	for _, tile := range tr.tiles {
+		if tile != nil {
+			Object.Free(tile.heightmapShape) // per-tile, uniquely held
+		}
+	}
+	tr.tiles = nil
+	Object.Free(tr.shader)
+	Object.Free(tr.shader_buried)
+	Object.Free(tr.water_shader)
+	Object.Free(tr.waterShaderFull)
+	Object.Free(tr.waterShaderSimple)
+	Object.Free(tr.grassWindShader)
+	Object.Free(tr.foliageWindShader)
+	for _, img := range tr.albedos {
+		Object.Free(img)
+	}
+	for _, img := range tr.normal_maps {
+		Object.Free(img)
+	}
+	for _, img := range tr.spec_maps {
+		// defaultSpec is a single shared handle that appears in spec_maps once per
+		// design lacking a _spec sibling; free it exactly once (below), not per slot.
+		if img == tr.defaultSpec {
+			continue
+		}
+		Object.Free(img)
+	}
+	if tr.defaultSpec != (Image.Instance{}) {
+		Object.Free(tr.defaultSpec)
+		tr.defaultSpec = Image.Instance{}
+	}
+	tr.albedos, tr.normal_maps, tr.spec_maps = nil, nil, nil
+}
+
 func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 	if tile, ok := tr.tiles[coord]; ok {
 		return tile
@@ -987,14 +1068,22 @@ func (tr *TerrainEditor) Ready() {
 	// their live values from the environment Wind slider.
 	ensureGrassWindGlobals()
 	tr.grassMeshes = make(map[musical.Design]grassAsset)
+	tr.grassRenders = make(map[musical.Design]*grassRender)
+	tr.grassDirty = make(map[musical.Design]bool)
 	tr.dressSharedMats = make(map[sharingKey]Material.Instance)
 	tr.dressMatPending = make(map[sharingKey]bool)
+	// Release the session-lifetime dressing caches (MultiMeshes, grass meshes, shared
+	// materials) at shutdown so they don't report as leaks at exit (see freeDressCaches).
+	OnShutdown(tr.freeDressCaches)
+	// Likewise the terrain editor's own resources (tile collision shapes, the shared
+	// terrain/water materials and shaders, and the texture-array source images).
+	OnShutdown(tr.freeTerrainResources)
 	tr.objectPreviewOffsets = make(map[Node3D.ID]Float.X)
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
 	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
 	tr.normal_maps = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage()}
-	tr.spec_maps = []Image.Instance{defaultTerrainSpec()}
+	tr.spec_maps = []Image.Instance{tr.defaultTerrainSpec()}
 	tr.uploadTextureArrays()
 	// Spawn + reveal the starter tile so the world is clickable before any
 	// sculpt arrives (every other tile starts hidden until an explicit extend).
@@ -1009,6 +1098,7 @@ func (tr *TerrainEditor) Ready() {
 // (see normal.png.import, aligned to the pack's compressed-normal settings),
 // and spec_maps are normalised to R8 in loadTerrainSpec.
 func (tr *TerrainEditor) uploadTextureArrays() {
+	defer timeIn(&bucketTexArray)()
 	terrains := Texture2DArray.New()
 	terrains.AsImageTextureLayered().CreateFromImages(tr.albedos)
 	bumpmaps := Texture2DArray.New()
@@ -1035,7 +1125,9 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 	}
 	idx := len(tr.albedos)
 	tr.mapper[design] = idx
+	dt := timeIn(&bucketTexDecode)
 	tr.albedos = append(tr.albedos, texture.GetImage())
+	dt()
 	resPath := texture.AsResource().ResourcePath()
 	ext := path.Ext(resPath)
 	base := strings.TrimSuffix(resPath, ext)
@@ -1044,19 +1136,29 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 	// matched, so every painted design silently fell back to the flat
 	// default normal. Load the real map so the surface shows relief.
 	normal_path := base + "_norm" + ext
-	if FileAccess.FileExists(normal_path) {
-		tr.normal_maps = append(tr.normal_maps, LoadSync[Texture2D.Instance](normal_path).AsTexture2D().GetImage())
-	} else {
-		tr.normal_maps = append(tr.normal_maps, LoadSync[Texture2D.Instance]("res://terrain/normal.png").AsTexture2D().GetImage())
+	if !FileAccess.FileExists(normal_path) {
+		normal_path = "res://terrain/normal.png"
 	}
+	lt := timeIn(&bucketTexLoad)
+	normTex := LoadSync[Texture2D.Instance](normal_path)
+	lt()
+	dt = timeIn(&bucketTexDecode)
+	tr.normal_maps = append(tr.normal_maps, normTex.AsTexture2D().GetImage())
+	dt()
 	// Specular/gloss sibling ("<name>_spec.png"): feeds the shader's roughness.
 	spec_path := base + "_spec" + ext
 	if FileAccess.FileExists(spec_path) {
-		tr.spec_maps = append(tr.spec_maps, loadTerrainSpec(spec_path))
+		tr.spec_maps = append(tr.spec_maps, tr.loadTerrainSpec(spec_path))
 	} else {
-		tr.spec_maps = append(tr.spec_maps, defaultTerrainSpec())
+		tr.spec_maps = append(tr.spec_maps, tr.defaultTerrainSpec())
 	}
-	tr.uploadTextureArrays()
+	// During bulk replay, many designs are uploaded back-to-back; rebuilding all
+	// three Texture2DArrays per design is O(designs²) GPU work. Skip it here and
+	// rebuild once in flushBulkReloads. (mapper/albedos are still populated, so
+	// the deferred sample_texture finds the layer index.)
+	if !tr.bulkReplay {
+		tr.uploadTextureArrays()
+	}
 	return idx
 }
 
@@ -1071,11 +1173,15 @@ const terrainTextureSize = 2048
 // inconsistent GPU formats and break CreateFromImages; flattening to R8 here
 // guarantees every gloss layer shares one format. Falls back to the neutral
 // default if the image can't be decompressed.
-func loadTerrainSpec(spec_path string) Image.Instance {
-	img := LoadSync[Texture2D.Instance](spec_path).AsTexture2D().GetImage()
+func (tr *TerrainEditor) loadTerrainSpec(spec_path string) Image.Instance {
+	lt := timeIn(&bucketTexLoad)
+	specTex := LoadSync[Texture2D.Instance](spec_path)
+	lt()
+	defer timeIn(&bucketTexDecode)()
+	img := specTex.AsTexture2D().GetImage()
 	if img.IsCompressed() {
 		if err := img.Decompress(); err != nil {
-			return defaultTerrainSpec()
+			return tr.defaultTerrainSpec()
 		}
 	}
 	img.Convert(Image.FormatR8)
@@ -1085,10 +1191,18 @@ func loadTerrainSpec(spec_path string) Image.Instance {
 
 // defaultTerrainSpec is the gloss layer used for the base layer and for any
 // design that ships no `_spec` sibling: fully black, i.e. ROUGHNESS = 1.0 in
-// the shader, matching the terrain's prior uniformly-matte look.
-func defaultTerrainSpec() Image.Instance {
-	return Image.CreateFromData(terrainTextureSize, terrainTextureSize, false,
-		Image.FormatR8, make([]byte, terrainTextureSize*terrainTextureSize))
+// the shader, matching the terrain's prior uniformly-matte look. The image is
+// built once and cached (tr.defaultSpec) — every design's default gloss is the
+// same all-black 2048² R8, so there's no reason to allocate and CreateFromData a
+// fresh identical 4.19MB image per design (graphics.gd now bulk-marshals the
+// data, so the per-image cost is small, but this still avoids the redundant
+// allocations entirely). Reusing one handle across Texture2DArray layers is safe.
+func (tr *TerrainEditor) defaultTerrainSpec() Image.Instance {
+	if tr.defaultSpec == (Image.Instance{}) {
+		tr.defaultSpec = Image.CreateFromData(terrainTextureSize, terrainTextureSize, false,
+			Image.FormatR8, make([]byte, terrainTextureSize*terrainTextureSize))
+	}
+	return tr.defaultSpec
 }
 
 func (tr *TerrainEditor) Paint() {
@@ -1724,7 +1838,16 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// Environment sliders for the shared world look (terrain + scenery).
 	if strings.HasPrefix(brush.Slider, "environment/") {
 		if vr.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
-			vr.lighting.apply(vr.client)
+			// Lighting is last-writer-wins, so during the bulk replay just update
+			// the state and apply ONCE at the flush. Applying per-sculpt fired ~20
+			// Godot setters each; draining many in one frame overflowed graphics.gd's
+			// command ring and deadlocked the load (the ring flush blocks waiting for
+			// Godot, which can't run until Process returns). See flushBulkReloads.
+			if vr.bulkReplay {
+				vr.lightingApplyPending = true
+			} else {
+				vr.lighting.apply(vr.client)
+			}
 			return nil
 		}
 	}
@@ -1748,6 +1871,18 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		(brush.Design != (musical.Design{}) ||
 			(brush.Amount <= 0 && (isDressingCategory(brush.Slider) || brush.Slider == ClearAllDressingCategory)))
 	if isDressing {
+		// During a bulk replay, defer ALL grass scatter/erase to the flush
+		// (recomputeGrass rebuilds it from grassHistory once). The per-stroke
+		// scatterGrass creates/populates Godot MultiMesh nodes — thousands of cgo
+		// calls that pressure graphics.gd's command ring during the replay. Just
+		// record the stroke here; the bomb explosion is also skipped (it must not
+		// re-fire when replaying the log).
+		if vr.bulkReplay {
+			if brush.Commit {
+				vr.grassHistory = append(vr.grassHistory, editStroke{brush: brush})
+			}
+			return nil
+		}
 		if brush.Amount <= 0 {
 			vr.eraseGrass(brush)
 			if brush.Slider == ClearAllDressingCategory && brush.Commit && !brush.Revert &&
@@ -1771,7 +1906,14 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		}
 		return nil
 	}
-	if brush.Author == vr.client.id {
+	// These five SetShaderParameter calls clear the live height-brush GHOST
+	// preview after one's own committed stroke. During the bulk replay there is
+	// no preview (3D rendering is suppressed under the splash) and the uniforms
+	// default to 0 until the first live brush arms them — so firing them per
+	// stroke is pure graphics.gd command-ring traffic for ~60k self-authored
+	// sculpts (the very ring pressure that gates the load). Skip while replaying;
+	// apply state to Godot at the flush, not per buffered mutation.
+	if !vr.bulkReplay && brush.Author == vr.client.id {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader.SetShaderParameter("river_carve", 0.0)
 		vr.shader.SetShaderParameter("brush_mode", 0.0)
@@ -1784,12 +1926,30 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// surface before the tiles reload, so the deferred reprojection can re-seat
 	// them on the new surface (see reprojectObjects).
 	isHeight := brush.Design == (musical.Design{}) && (brush.Amount != 0 || isSpecialTerrainSlider(brush.Slider))
+	// During bulk replay the terrain is deferred to a single flush, which re-seats
+	// objects (the heightEdited object-snap in performReload) and grass
+	// (refreshGrassVisibility) exactly once. So the per-stroke captureObjectHeights
+	// + reprojectGrass/reprojectObjects below is pure redundant work here — and a
+	// no-op anyway, since HeightAt reads the flat deferred field, so capture+reproject
+	// restore the object's original Y. Skip it all while replaying; the flush gives
+	// identical object/grass placement. (Live editing keeps the per-stroke path.)
+	bulk := vr.bulkReplay
 	var objectCaps []objectHeightCapture
-	if isHeight {
+	if isHeight && !bulk {
+		cap := timeIn(&bucketTerrainCapture)
 		objectCaps = vr.captureObjectHeights(brush.Target, brush.Radius)
+		cap()
 	}
-	for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
+	ti := timeIn(&bucketTilesIntersect)
+	hitTiles := vr.tilesIntersecting(brush.Target, brush.Radius)
+	ti()
+	ts := timeIn(&bucketTerrainTiles)
+	for _, tile := range hitTiles {
 		tile.Sculpt(brush)
+	}
+	ts()
+	if bulk {
+		return nil
 	}
 	// Grass + placed objects that were sitting on the old surface must be
 	// re-planted on the new one. Defer both so the tiles' deferred Reload has
@@ -2510,12 +2670,58 @@ type tileStroke struct {
 	reverted bool
 }
 
+// sculptOrder is the deterministic total order over committed strokes: ascending
+// by Timing (wall-clock-ns, so chronological), with Author breaking exact-Timing
+// ties. Returns <0 if a precedes b. Every client folds its history in this order,
+// so terrain converges regardless of the order parts/peers deliver strokes in.
+func sculptOrder(a, b musical.Sculpt) int {
+	switch {
+	case a.Timing < b.Timing:
+		return -1
+	case a.Timing > b.Timing:
+		return 1
+	case a.Author < b.Author:
+		return -1
+	case a.Author > b.Author:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func (tile *TerrainTile) Sculpt(brush musical.Sculpt) {
-	// Retain the committed stroke for undo (recompute replays the survivors) and
-	// queue it in the pending batch for the incremental forward rebuild.
-	tile.history = append(tile.history, tileStroke{brush: brush})
-	tile.sculpts = append(tile.sculpts, brush)
-	tile.Reload()
+	// History is kept in canonical sculptOrder so the folded result is a pure
+	// function of the SET of strokes, independent of arrival/part order.
+	//
+	// During bulk replay we append unsorted and sort the whole history once in
+	// flushBulkReloads (O(n log n)) rather than insert-sorting each of ~60k
+	// strokes (O(n²)); the rebuild is deferred there too. In the bulk window a
+	// paint design's imported texture ID is only briefly resolvable, so
+	// uploadDesign must copy its image NOW (the live path does this in
+	// performReload, when the texture is still up).
+	if tile.editor != nil && tile.editor.bulkReplay {
+		tile.history = append(tile.history, tileStroke{brush: brush})
+		tile.sculpts = append(tile.sculpts, brush)
+		if brush.Design != (musical.Design{}) {
+			tile.editor.uploadDesign(brush.Design)
+		}
+		tile.Reload()
+		return
+	}
+	// Live: insert at the sorted position. A stroke at the end is the newest (the
+	// common case) and folds forward incrementally; one landing earlier is an
+	// out-of-order arrival the forward accumulators can't express, so rebuild from
+	// the survivors in order.
+	idx := sort.Search(len(tile.history), func(i int) bool {
+		return sculptOrder(tile.history[i].brush, brush) > 0
+	})
+	tile.history = slices.Insert(tile.history, idx, tileStroke{brush: brush})
+	if idx == len(tile.history)-1 {
+		tile.sculpts = append(tile.sculpts, brush)
+		tile.Reload()
+	} else {
+		tile.recompute()
+	}
 }
 
 // revert toggles the reverted flag of the history stroke with the given
@@ -2606,6 +2812,7 @@ func (tile *TerrainTile) recomputeNormals() {
 
 // generateBase mesh, textures and the collision shape, these will change whenever a [musical.Sculpt] arrives.
 func (tile *TerrainTile) generateBase() {
+	defer timeIn(&bucketGenerateBase)()
 	tile.generated = true
 	if tile.size == 0 {
 		tile.size = terrainDefaultSize
@@ -2665,6 +2872,7 @@ func (tile *TerrainTile) generateBase() {
 	}
 	// Replace the flat seed normals with real heightfield-gradient normals so the
 	// terrain self-shades by slope (see recomputeNormals).
+	wasted := timeIn(&bucketGenBaseWaste)
 	tile.recomputeNormals()
 	attributes := [Mesh.ArrayMax]any{
 		Mesh.ArrayVertex:  tile.vertices,
@@ -2683,6 +2891,7 @@ func (tile *TerrainTile) generateBase() {
 	// Regenerate tangents for the now-varying normals so the terrain normal map
 	// still applies correctly on slopes (matches the recompute path).
 	mesh.RegenNormalMaps()
+	wasted()
 	tile.Mesh.
 		SetMesh(mesh.AsMesh()).
 		AsNode3D().SetPosition(Vector3.New(-half, 0, -half))
@@ -2739,8 +2948,10 @@ func (tile *TerrainTile) generateBase() {
 	}
 
 	// Texture arrays are owned by the editor (shared across tiles).
+	wasted2 := timeIn(&bucketGenBaseWaste)
 	tile.reloadSides()
 	tile.reloadWater()
+	wasted2()
 	// Sync visibility + pickability to the reveal state (tiles start hidden;
 	// applyRevealState also gates the water mesh on revealed && waterVisible).
 	tile.applyRevealState()
@@ -2749,6 +2960,72 @@ func (tile *TerrainTile) generateBase() {
 // Reload folds any pending sculpt batch into the tile — the fast, incremental
 // forward path taken on every edit.
 func (tile *TerrainTile) Reload() { tile.scheduleReload(false) }
+
+// debugTerrainSignature logs an order-independent checksum of every generated
+// tile's heights and texture indices. Two loads of the same world must produce
+// identical sums once history is folded in the canonical (Timing, Author) order —
+// a determinism check for the merge.
+func (vr *TerrainEditor) debugTerrainSignature() {
+	var hSum, tSum float64
+	var nH, nT, tiles int
+	for _, tile := range vr.tiles {
+		if !tile.generated {
+			continue
+		}
+		tiles++
+		for _, h := range tile.heights {
+			hSum += float64(h)
+			nH++
+		}
+		for _, t := range tile.textures {
+			tSum += float64(t)
+			nT++
+		}
+	}
+	var instances int
+	for _, p := range vr.grassPatches {
+		instances += len(p.bases)
+	}
+	// Merged rendering: one grassRender (a handful of MultiMeshInstance3D nodes)
+	// per unique design, vs. the old one-set-per-patch. mmNodes is the total
+	// MultiMeshInstance3D count actually in the scene.
+	var mmNodes int
+	for _, r := range vr.grassRenders {
+		mmNodes += len(r.mmNodes)
+	}
+	profMark("[sig] tiles=%d heightSum=%.4f (%d) textureSum=%.0f (%d) | grassPatches=%d instances=%d designs=%d mmNodes=%d",
+		tiles, hSum, nH, tSum, nT, len(vr.grassPatches), instances, len(vr.grassRenders), mmNodes)
+	// What ARE the paint designs in the mapper? (answer: preview vs library vs region)
+	if vr.client != nil {
+		byCat := map[string]int{}
+		unique := map[string]bool{}
+		var sample []string
+		for d := range vr.mapper {
+			uri := vr.client.design_to_string[d]
+			unique[uri] = true
+			lu := strings.ToLower(uri)
+			cat := "other"
+			switch {
+			case strings.Contains(lu, "preview/"):
+				cat = "preview"
+			case strings.HasSuffix(lu, ".region"):
+				cat = "region"
+			case strings.Contains(lu, "wildfire_games/terrain"):
+				cat = "terrain"
+			case strings.Contains(lu, "/texture/"):
+				cat = "texture-md5"
+			}
+			byCat[cat]++
+			if len(sample) < 6 {
+				sample = append(sample, uri)
+			}
+		}
+		profMark("[mapper] designs=%d uniquePaths=%d albedos=%d byCategory=%v", len(vr.mapper), len(unique), len(vr.albedos), byCat)
+		for _, s := range sample {
+			profMark("[mapper] sample: %s", s)
+		}
+	}
+}
 
 // recompute re-derives the tile from scratch over the non-reverted strokes in
 // its history. Used on undo/redo: a Revert sculpt toggles a stroke's reverted
@@ -2795,11 +3072,31 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 	if full {
 		tile.fullReload = true
 	}
+	// During the initial bulk replay we suppress per-frame rebuilds entirely:
+	// just remember the touched tile and rebuild every pending tile exactly once
+	// at the end (flushBulkReloads). The final rebuild is always a full recompute
+	// over the active history, so accumulating the strokes here (tile.Sculpt
+	// already appended them) without a forward fold is correct.
+	if tile.editor != nil && tile.editor.bulkReplay {
+		if tile.editor.pendingReload == nil {
+			tile.editor.pendingReload = map[*TerrainTile]struct{}{}
+		}
+		tile.editor.pendingReload[tile] = struct{}{}
+		return
+	}
 	if tile.reloading {
 		return // we only want to reload once per frame.
 	}
 	tile.reloading = true
-	Callable.Defer(Callable.New(func() {
+	Callable.Defer(Callable.New(tile.performReload))
+}
+
+// performReload rebuilds the tile's heightfield, mesh, normals, collision, side
+// walls and water from its stroke history. Normally invoked end-of-frame via
+// scheduleReload's Callable.Defer; flushBulkReloads calls it directly (twice) at
+// the end of a bulk replay.
+func (tile *TerrainTile) performReload() {
+	{
 		tile.reloading = false
 		// Forward edits accumulate just the pending batch; a recompute resets the
 		// accumulators and replays the full active history so reverted strokes
@@ -3078,7 +3375,221 @@ func (tile *TerrainTile) scheduleReload(full bool) {
 		// follow newly exposed/covered neighbour edges).
 		tile.reloadWater()
 		tile.sculpts = tile.sculpts[:0]
-	}))
+	}
+}
+
+// flushBulkReloads ends a bulk replay (see scheduleReload) by rebuilding every
+// tile that was touched, exactly once each, instead of the per-frame rebuild
+// that ran while bulkReplay was set. Two passes: the first folds each tile's
+// full stroke history into its heightfield + mesh; the second re-derives the
+// geometry (normals, side walls, water) now that every tile's heights are final,
+// so cross-tile seam normals sample neighbours' final surface rather than a
+// stale one. Called from finishLoading before 3D rendering resumes.
+func (vr *TerrainEditor) flushBulkReloads() {
+	if !vr.bulkReplay {
+		return
+	}
+	vr.bulkReplay = false
+	pending := vr.pendingReload
+	vr.pendingReload = nil
+	// Apply the coalesced final lighting state once (see the environment branch in
+	// Sculpt) — replaces the per-sculpt apply that overflowed the command ring.
+	if vr.lightingApplyPending {
+		vr.lightingApplyPending = false
+		vr.lighting.apply(vr.client)
+	}
+	// Build the shared paint-texture arrays once, now that every design seen
+	// during the replay has been registered (uploadDesign skipped the per-design
+	// rebuild while bulkReplay was set).
+	vr.uploadTextureArrays()
+	// Sort each touched tile's history into the canonical (Timing, Author) order
+	// before the from-scratch rebuild, so the loaded terrain is independent of the
+	// order the device parts were concatenated in. SortStable keeps the original
+	// (append) order among strokes that share a key — e.g. legacy strokes with an
+	// unset Timing — so old single-part saves are unaffected.
+	for tile := range pending {
+		slices.SortStableFunc(tile.history, func(a, b tileStroke) int {
+			return sculptOrder(a.brush, b.brush)
+		})
+	}
+	// Pass 1: restore the rasterised <=Cutoff grids from a valid snapshot and fold
+	// only the newer strokes; otherwise full recompute (reset + replay history).
+	restored := false
+	if snapshotEnabled && vr.client != nil {
+		if snap, err := readTerrainSnapshot(vr.client.record); err == nil {
+			restored = vr.applySnapshot(snap, pending)
+		}
+	}
+	if !restored {
+		for tile := range pending {
+			tile.fullReload = true
+			tile.reloading = false
+			tile.performReload()
+		}
+	}
+	// Pass 2: geometry-only rebuild (fullReload already cleared, sculpts drained)
+	// against now-final neighbour heights.
+	for tile := range pending {
+		tile.reloading = false
+		tile.performReload()
+	}
+	// Grass scatter was deferred during the replay (see the dressing branch in
+	// Sculpt): build every patch now, once, from grassHistory. The terrain is
+	// already rebuilt above, so grassTransform samples the final HeightAt and each
+	// blade lands on the real surface.
+	vr.recomputeGrass()
+
+	// Bake a fresh snapshot of the just-built terrain so the NEXT load can skip
+	// re-folding these strokes (see snapshot.go).
+	if snapshotEnabled && vr.client != nil {
+		if snap := vr.buildSnapshot(pending); snap != nil {
+			if err := writeTerrainSnapshot(vr.client.record, snap); err != nil {
+				profMark("snapshot: write failed: %v", err)
+			} else {
+				profMark("snapshot: wrote cutoff=%d %d strokes %d tiles", snap.Cutoff, snap.StrokeCount, len(snap.Tiles))
+			}
+		}
+	}
+}
+
+// hashActiveStrokes is the order-independent digest (XOR of per-stroke mixes) +
+// count of the active (non-reverted) strokes with Timing <= cutoff across the
+// touched tiles. A snapshot is valid iff this matches what was baked.
+func (vr *TerrainEditor) hashActiveStrokes(pending map[*TerrainTile]struct{}, cutoff musical.Timing) (uint64, int) {
+	var h uint64
+	var n int
+	for tile := range pending {
+		for _, s := range tile.history {
+			if s.reverted || s.brush.Timing > cutoff {
+				continue
+			}
+			h ^= strokeHashMix(s.brush)
+			n++
+		}
+	}
+	return h, n
+}
+
+// applySnapshot validates snap against the current strokes and, if it matches,
+// restores each tile's grids and folds only the strokes newer than the cutoff.
+// Returns false (→ caller does a full replay) on any mismatch.
+func (vr *TerrainEditor) applySnapshot(snap *terrainSnapshot, pending map[*TerrainTile]struct{}) bool {
+	h, n := vr.hashActiveStrokes(pending, snap.Cutoff)
+	if h != snap.StrokeHash || n != snap.StrokeCount {
+		profMark("snapshot: stale (hash/count %x/%d vs %x/%d) — full replay", h, n, snap.StrokeHash, snap.StrokeCount)
+		return false
+	}
+	// Map each snapshot texture layer to this session's layer for the same Design
+	// (uploadDesign registers it if new); layer 0 is the untextured base.
+	translate := make([]float32, len(snap.LayerDesigns))
+	for i, d := range snap.LayerDesigns {
+		if d != (musical.Design{}) {
+			translate[i] = float32(vr.uploadDesign(d))
+		}
+	}
+	vr.uploadTextureArrays()
+	snapByCoord := make(map[tileCoord]*tileSnapshot, len(snap.Tiles))
+	for i := range snap.Tiles {
+		t := &snap.Tiles[i]
+		snapByCoord[tileCoord{t.X, t.Z}] = t
+	}
+	for tile := range pending {
+		st, ok := snapByCoord[tile.coord]
+		if !ok || !tile.restoreFromSnapshot(st, translate, snap.Cutoff) {
+			// New / mismatched tile: fold it fully from history.
+			tile.fullReload = true
+			tile.reloading = false
+			tile.performReload()
+		}
+	}
+	profMark("snapshot: restored cutoff=%d %d strokes %d tiles", snap.Cutoff, n, len(snap.Tiles))
+	return true
+}
+
+// restoreFromSnapshot loads the cached accumulators (remapping texture layers)
+// and folds only this tile's strokes newer than cutoff onto them. Returns false
+// on a shape mismatch so the caller falls back to a full fold.
+func (tile *TerrainTile) restoreFromSnapshot(st *tileSnapshot, translate []float32, cutoff musical.Timing) bool {
+	if !tile.generated {
+		tile.generateBase()
+	}
+	n := tile.size
+	hm := n + 1
+	if st.Size != n || len(st.GroundHeights) != hm*hm || len(st.RiverDepth) != hm*hm ||
+		len(st.Textures) != n*n*6*4 {
+		return false
+	}
+	tile.revealed = st.Revealed
+	copy(tile.groundHeights, st.GroundHeights)
+	copy(tile.riverDepth, st.RiverDepth)
+	copy(tile.waterFlowX, st.WaterFlowX)
+	copy(tile.waterFlowZ, st.WaterFlowZ)
+	if len(tile.heights) == len(st.Heights) {
+		copy(tile.heights, st.Heights)
+	}
+	if len(tile.textures) != len(st.Textures) {
+		tile.textures = make([]float32, len(st.Textures))
+	}
+	for i, v := range st.Textures {
+		if idx := int(v); idx >= 0 && idx < len(translate) {
+			tile.textures[i] = translate[idx]
+		} else {
+			tile.textures[i] = 0
+		}
+	}
+	// Fold the post-cutoff strokes forward onto the restored grids (no reset).
+	tile.sculpts = tile.sculpts[:0]
+	for _, s := range tile.history {
+		if !s.reverted && s.brush.Timing > cutoff {
+			tile.sculpts = append(tile.sculpts, s.brush)
+		}
+	}
+	tile.fullReload = false
+	tile.reloading = false
+	tile.performReload()
+	return true
+}
+
+// buildSnapshot captures the just-built terrain as a snapshot covering every
+// active stroke (cutoff = the newest stroke's Timing).
+func (vr *TerrainEditor) buildSnapshot(pending map[*TerrainTile]struct{}) *terrainSnapshot {
+	var cutoff musical.Timing
+	for tile := range pending {
+		for _, s := range tile.history {
+			if !s.reverted && s.brush.Timing > cutoff {
+				cutoff = s.brush.Timing
+			}
+		}
+	}
+	h, n := vr.hashActiveStrokes(pending, cutoff)
+	layerDesigns := make([]musical.Design, len(vr.albedos))
+	for d, idx := range vr.mapper {
+		if idx >= 0 && idx < len(layerDesigns) {
+			layerDesigns[idx] = d
+		}
+	}
+	snap := &terrainSnapshot{
+		Version:      terrainSnapshotVersion,
+		Cutoff:       cutoff,
+		StrokeHash:   h,
+		StrokeCount:  n,
+		LayerDesigns: layerDesigns,
+	}
+	for tile := range pending {
+		if !tile.generated {
+			continue
+		}
+		snap.Tiles = append(snap.Tiles, tileSnapshot{
+			X: tile.coord.X, Z: tile.coord.Z, Size: tile.size, Revealed: tile.revealed,
+			Heights:       append([]float32(nil), tile.heights...),
+			GroundHeights: append([]float32(nil), tile.groundHeights...),
+			RiverDepth:    append([]float32(nil), tile.riverDepth...),
+			WaterFlowX:    append([]float32(nil), tile.waterFlowX...),
+			WaterFlowZ:    append([]float32(nil), tile.waterFlowZ...),
+			Textures:      append([]float32(nil), tile.textures...),
+		})
+	}
+	return snap
 }
 
 // hasNeighbour reports whether a REVEALED TerrainTile exists at the adjacent
