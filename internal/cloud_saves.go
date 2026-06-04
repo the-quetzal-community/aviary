@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -80,13 +81,28 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 		// cloud catch-up (usually small / already cached) streams in after.
 		size:   int64(len(musical.MagicHeader)) + size,
 		writer: file,
-		reader: io.MultiReader(strings.NewReader(musical.MagicHeader), file, lazy),
+		// Buffer the local part: the decoder reads record-by-record via
+		// binary.Read (tiny reads), so an unbuffered file turns ~65k records
+		// into ~65k read syscalls. A 64K buffer collapses that to ~20 reads.
+		// The buffer wraps only the READER side; the writer (line above) keeps
+		// the raw *os.File, and saves only append AFTER the decode has read the
+		// part to EOF (file offset = EOF), so buffered read-ahead can't corrupt
+		// a later append. The bufio EOFs exactly at the local part's end, so the
+		// MultiReader still advances to `lazy` only then — the cloud round-trip
+		// stays deferred (unlike buffering the whole MultiReader, which could
+		// read across the boundary and trigger the fetch during the load start).
+		reader: io.MultiReader(strings.NewReader(musical.MagicHeader), bufio.NewReaderSize(file, decodeReadBuffer), lazy),
 		closer: func() error {
 			return file.Close()
 		},
 		community: community,
 	}, nil
 }
+
+// decodeReadBuffer is the read-ahead buffer size wrapped around each save part
+// (local device file + cloud parts) so the decoder's record-sized binary.Read
+// calls are served from memory instead of hitting the file/network per record.
+const decodeReadBuffer = 1 << 16 // 64 KiB
 
 // lazyCloudReader defers the CloudParts network round-trip (and the per-part
 // cloud readers it builds) until the decode first reads past the local part.
@@ -145,7 +161,13 @@ func (l *lazyCloudReader) init() {
 			return
 		}
 	}
-	l.r = io.MultiReader(readers...)
+	// Buffer the cloud parts too — each cloudReader serves the decoder's tiny
+	// per-record reads from either a local cache file or a network stream;
+	// either way a 64K buffer turns thousands of small reads (syscalls /
+	// round-trips) into a handful. cloudReader does its own one-shot magic-
+	// header read internally before yielding data, so the buffer sees a clean
+	// post-header stream.
+	l.r = bufio.NewReaderSize(io.MultiReader(readers...), decodeReadBuffer)
 }
 
 type cloudReader struct {
