@@ -108,6 +108,96 @@ func approxVec(a, b Vec3, tol float32) bool {
 // Suppress "imported and not used" if a test gets stripped during edits.
 var _ = math.Pi
 
+// TestRestore_RoundTrip is the snapshot contract: a critter state captured
+// via Bones()/Legs()/Weights() and re-installed via Restore() must be
+// byte-identical to the original — that fidelity is what lets the load-time
+// snapshot skip replaying the thousands of sculpts that built the shape.
+func TestRestore_RoundTrip(t *testing.T) {
+	// Build a non-trivial state: grow the chain, edit bones, add legs,
+	// edit a joint, set some weights — i.e. the kinds of edits the 40k
+	// recorded sculpts fold into.
+	src := New()
+	src.AppendHead()
+	src.AppendTail()
+	src.MoveBone(2, Vec3{X: 0, Y: 0.35, Z: 0.1})
+	src.SetBoneRadius(1, 0.42)
+	src.AppendLeg()
+	src.AppendLegAt(3)
+	src.SetLegJoint(0, LegKnee, Vec3{X: 0.4, Y: -0.2, Z: -0.1})
+	src.SetLegJointRadius(1, LegFoot, 0.06)
+	src.SetWeight("shape/length", 0.7)
+	src.SetWeight("shape/head_size", -0.3)
+
+	bones := src.Bones()
+	legs := src.Legs()
+	weights := src.Weights()
+
+	// Restore into a fresh critter that started from a DIFFERENT shape, so
+	// a partial restore (e.g. forgetting to replace legs) would show up.
+	dst := New()
+	dst.AppendLeg()
+	dst.SetWeight("shape/length", -1)
+	dst.Restore(bones, legs, weights)
+
+	if dst.BoneCount() != src.BoneCount() {
+		t.Fatalf("bone count = %d, want %d", dst.BoneCount(), src.BoneCount())
+	}
+	for i, b := range src.BonesView() {
+		gb, _ := dst.BoneAt(i)
+		if !approxVec(gb.Pos, b.Pos, 0) || gb.Radius != b.Radius {
+			t.Errorf("bone %d = %+v, want %+v", i, gb, b)
+		}
+	}
+	if dst.LegCount() != src.LegCount() {
+		t.Fatalf("leg count = %d, want %d", dst.LegCount(), src.LegCount())
+	}
+	for i, l := range src.LegsView() {
+		gl := dst.LegsView()[i]
+		if gl != l {
+			t.Errorf("leg %d = %+v, want %+v", i, gl, l)
+		}
+	}
+	if got, want := dst.Weights(), weights; len(got) != len(want) {
+		t.Fatalf("weights len = %d, want %d", len(got), len(want))
+	} else {
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("weight %q = %v, want %v", k, got[k], v)
+			}
+		}
+	}
+}
+
+// TestRestore_NoAliasing guards against the restored critter sharing
+// backing storage with the caller's snapshot slices/map — a later edit to
+// one must not bleed into the other (the snapshot is a frozen baseline).
+func TestRestore_NoAliasing(t *testing.T) {
+	src := New()
+	src.AppendLeg()
+	src.SetWeight("shape/length", 0.5)
+	bones, legs, weights := src.Bones(), src.Legs(), src.Weights()
+
+	dst := New()
+	dst.Restore(bones, legs, weights)
+
+	// Mutate the snapshot inputs after restore; dst must be unaffected.
+	bones[0].Radius = 99
+	if len(legs) > 0 {
+		legs[0].HipRadius = 99
+	}
+	weights["shape/length"] = 99
+
+	if gb, _ := dst.BoneAt(0); gb.Radius == 99 {
+		t.Error("bone radius aliased the caller's slice")
+	}
+	if dst.LegCount() > 0 && dst.LegsView()[0].HipRadius == 99 {
+		t.Error("leg radius aliased the caller's slice")
+	}
+	if dst.Weight("shape/length") == 99 {
+		t.Error("weight aliased the caller's map")
+	}
+}
+
 func TestAnchorPoint_OnSurface(t *testing.T) {
 	c := New()
 	// Pick an arbitrary point part-way along the body. The anchor

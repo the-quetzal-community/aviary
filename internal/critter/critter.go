@@ -589,6 +589,24 @@ func (c *Critter) Weights() map[string]float32 {
 	return out
 }
 
+// Restore replaces the entire critter state (bone chain, legs, macro
+// weights) in one shot, taking private copies so the caller's slices /
+// map aren't aliased. Used by the load-time snapshot path to install a
+// previously-baked shape without replaying the thousands of individual
+// bone/leg/weight sculpts that produced it. The inputs are the exact
+// values returned by Bones()/Legs()/Weights(), so a snapshot is a
+// faithful round-trip of the live state.
+func (c *Critter) Restore(bones []Bone, legs []Leg, weights map[string]float32) {
+	c.bones = make([]Bone, len(bones))
+	copy(c.bones, bones)
+	c.legs = make([]Leg, len(legs))
+	copy(c.legs, legs)
+	c.weights = make(map[string]float32, len(weights))
+	for k, v := range weights {
+		c.weights[k] = v
+	}
+}
+
 // DefaultControls is a backwards-compatible view returning the
 // rest positions of the default bone chain. Kept around for any
 // callers that still want the old "5-control" shape; new code

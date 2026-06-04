@@ -847,6 +847,19 @@ func (world *Client) beginLoading() {
 	if world.TerrainEditor != nil && os.Getenv("AVIARY_DEFER_TERRAIN") != "0" {
 		world.TerrainEditor.bulkReplay = true
 	}
+	// Buffer the critter editor's bone/leg/weight sculpts during the replay
+	// and fold them once in finishLoading (flushCritterReplay), backed by a
+	// snapshot that can skip the fold. MEASURED: this saves ~0 wall here —
+	// the critter fold of 40k sculpts is only ~30ms (the historical "~4s
+	// critter" was queue/cgo-dispatch overhead during the decode-drain, NOT
+	// apply work the fold/snapshot can remove). So it's gated behind the
+	// snapshot flag, off by default, leaving the default path (incremental
+	// per-sculpt apply) unchanged. Kept for parity with the terrain snapshot
+	// and in case critter folding ever becomes expensive. AVIARY_DEFER_CRITTER=0
+	// force-disables even when snapshots are on (for A/B comparison).
+	if world.CritterEditor != nil && snapshotEnabled && os.Getenv("AVIARY_DEFER_CRITTER") != "0" {
+		world.CritterEditor.bulkReplay = true
+	}
 	world.loadProgressArmed.Store(true)
 	world.loadLastProgress = time.Now()
 	overlay := LoadSync[PackedScene.Instance]("res://ui/scene_loader.tscn").Instantiate()
@@ -871,6 +884,11 @@ func (world *Client) finishLoading() {
 	if world.TerrainEditor != nil {
 		profMark("finishLoading: flushing bulk terrain reloads")
 		world.TerrainEditor.flushBulkReloads()
+	}
+	if world.CritterEditor != nil {
+		// No-op unless the critter snapshot path buffered the replay (see
+		// beginLoading); it logs its own markers when it actually folds.
+		world.CritterEditor.flushCritterReplay()
 	}
 	Viewport.Get(world.AsNode()).SetDisable3d(false)
 	if world.loadingOverlay != nil {
@@ -1018,6 +1036,9 @@ func (world *Client) maybeCaptureScreenshot() {
 	world.debugResourceUsage()
 	if world.TerrainEditor != nil {
 		world.TerrainEditor.debugTerrainSignature()
+	}
+	if world.CritterEditor != nil {
+		world.CritterEditor.debugCritterSignature()
 	}
 }
 

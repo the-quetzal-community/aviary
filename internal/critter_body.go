@@ -575,6 +575,17 @@ func (b *CritterBody) EnsureFlushed() {
 	b.flushRebuild()
 }
 
+// RestoreCritter installs a wholesale critter state (bones/legs/weights)
+// and rebuilds the mesh + skeleton + collision + parts synchronously, so
+// the body is fully built on return. Used by the load-time snapshot path
+// to skip replaying the thousands of sculpts that produced the shape —
+// the restored state is byte-equivalent to having folded them all.
+func (b *CritterBody) RestoreCritter(bones []critter.Bone, legs []critter.Leg, weights map[string]float32) {
+	b.critter.Restore(bones, legs, weights)
+	b.rebuildDirty = false
+	b.flushRebuild()
+}
+
 // PauseRebuild gates further auto-flushes until ResumeRebuild runs.
 // Used by the bone-drag path to batch dozens of per-bone Sculpts
 // into one mesh + collision + reposition pass per frame and fire it

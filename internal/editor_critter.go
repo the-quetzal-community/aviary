@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,6 +105,34 @@ type CritterEditor struct {
 	spineEdit bool
 	spineRig  *spineRig
 	dragging  spineDrag
+
+	// dragEmits coalesces a bone/leg drag into ONE committed Sculpt
+	// per touched slider, recorded at mouse-release instead of every
+	// frame. A drag runs in PhysicsProcess at 60-120fps and (with
+	// radial propagation) emits 2×N sculpts per frame — historically
+	// the dominant load cost (tens of thousands of redundant
+	// intermediate bone/weight sculpts in the history). During the
+	// drag the edit is applied LOCALLY for live feedback but not
+	// recorded; flushDragEmits emits each slider's final value once on
+	// release. The committed value equals the last local value
+	// (absolute set), so peers + reloads converge on the same pose.
+	// dragEmitOrder keeps first-touch order so the flush is
+	// deterministic (the values are commutative absolute sets, but a
+	// stable order keeps signatures reproducible).
+	dragEmits     map[string]float32
+	dragEmitOrder []string
+
+	// bulkReplay is set while the client replays the .mus3 log at load
+	// (see Client.beginLoading / flushCritterReplay). While set, body-
+	// shape sculpts (bone/leg/weight) are appended to replayBuffer
+	// instead of applied — folding tens of thousands of them one queued
+	// closure at a time (each a strings.Split + Bones() copy +
+	// SetBoneAxis) was the dominant load cost. flushCritterReplay folds
+	// the buffer once at the end, or restores a cached snapshot and skips
+	// the fold entirely. Environment/lighting sculpts are NOT buffered —
+	// they stay on the live path so the snapshot only concerns body shape.
+	bulkReplay   bool
+	replayBuffer []musical.Sculpt
 
 	// ribcage is the side-view, xray diagram shared by the body-
 	// editing view ("ribcage") and the limb-editing view
@@ -318,6 +347,9 @@ func (*CritterEditor) Views() []string {
 }
 func (ce *CritterEditor) SwitchToView(view string) {
 	ce.ensureLoaded()
+	// Commit any in-progress drag before changing views — the new
+	// view tears down the rig the drag was operating on.
+	ce.flushDragEmits()
 	// Drop any ribcage / control state hanging around from the
 	// previous view before we enter the new one. Each enter is
 	// idempotent on its own, but exits are NOT — calling
@@ -456,6 +488,10 @@ func (ce *CritterEditor) EnableEditor() {
 }
 
 func (ce *CritterEditor) ChangeEditor() {
+	// Commit any in-progress drag before tearing things down so a
+	// pending (locally-applied but unrecorded) edit isn't lost when
+	// the user leaves mid-drag.
+	ce.flushDragEmits()
 	// Leaving the editor — tear down the spine rig too. Otherwise the
 	// handles linger as invisible-but-pickable colliders in the
 	// world.
@@ -692,19 +728,107 @@ func (ce *CritterEditor) Sculpt(brush musical.Sculpt) error {
 			return nil
 		}
 	}
-	if strings.HasPrefix(brush.Slider, "bone/") {
+	// During the initial bulk replay, buffer body-shape sculpts and fold
+	// them once at finishLoading (flushCritterReplay) instead of applying
+	// each through the queue. A valid snapshot lets the flush skip the
+	// fold entirely. Environment sculpts (handled above) never reach here.
+	if ce.bulkReplay {
+		ce.replayBuffer = append(ce.replayBuffer, brush)
+		return nil
+	}
+	ce.applyBodySculpt(brush)
+	return nil
+}
+
+// applyBodySculpt routes one body-shape sculpt to the right apply path.
+// Shared by the live Sculpt path and the buffered-replay fold so both
+// fold identically. Mirrors the prefix dispatch the editor has always
+// used (bone/ → bone op, leg/ → leg op, else macro weight slider).
+func (ce *CritterEditor) applyBodySculpt(brush musical.Sculpt) {
+	switch {
+	case strings.HasPrefix(brush.Slider, "bone/"):
 		defer timeIn(&bucketCritterBone)()
 		ce.applyBoneSculpt(brush.Slider, float32(brush.Amount))
-		return nil
-	}
-	if strings.HasPrefix(brush.Slider, "leg/") {
+	case strings.HasPrefix(brush.Slider, "leg/"):
 		defer timeIn(&bucketCritterLeg)()
 		ce.applyLegSculptBrush(brush)
-		return nil
+	default:
+		defer timeIn(&bucketCritterSlider)()
+		ce.applySlider(brush.Slider, brush.Amount)
 	}
-	defer timeIn(&bucketCritterSlider)()
-	ce.applySlider(brush.Slider, brush.Amount)
-	return nil
+}
+
+// flushCritterReplay ends a bulk replay: it folds the buffered body-shape
+// sculpts into the critter once (instead of the tens of thousands of
+// queued per-sculpt applies that would otherwise dominate load), or — if a
+// valid snapshot exists — restores the baked shape and skips the fold
+// entirely. Fail-safe: any stroke-set mismatch falls back to the full
+// fold, so a stale snapshot can never corrupt the critter. Always writes a
+// fresh snapshot so the next load is fast. Called from Client.finishLoading
+// before 3D rendering resumes. Gated by AVIARY_SNAPSHOT for the snapshot
+// half; the fold-once half always runs (it's a pure speed/equivalence win).
+func (ce *CritterEditor) flushCritterReplay() {
+	if !ce.bulkReplay {
+		return
+	}
+	ce.bulkReplay = false
+	buf := ce.replayBuffer
+	ce.replayBuffer = nil
+	if len(buf) == 0 {
+		return
+	}
+	ce.ensureLoaded()
+	if ce.body.critter == nil {
+		return
+	}
+	// Canonical (Timing, Author) order so the folded shape is independent
+	// of the order the .mus3 device parts were concatenated — matches the
+	// terrain total-order merge, and makes the snapshot hash reproducible.
+	slices.SortStableFunc(buf, func(a, b musical.Sculpt) int {
+		return sculptOrder(a, b)
+	})
+	hash, count := hashCritterBuffer(buf)
+
+	restored := false
+	if snapshotEnabled && ce.client != nil {
+		if snap, err := readCritterSnapshot(ce.client.record); err == nil {
+			if snap.StrokeHash == hash && snap.StrokeCount == count {
+				ce.body.RestoreCritter(snap.Bones, snap.Legs, snap.Weights)
+				restored = true
+				profMark("critter snapshot: restored %d bones %d legs (skipped %d sculpts)",
+					len(snap.Bones), len(snap.Legs), count)
+			}
+		}
+	}
+	if !restored {
+		ce.body.PauseRebuild()
+		for i := range buf {
+			ce.applyBodySculpt(buf[i])
+		}
+		ce.body.ResumeRebuild()
+	}
+	// Leg-anchored parts (steppers) queued during the replay because their
+	// leg hadn't been folded yet — now that the legs exist, attach them so
+	// they appear in the same frame the splash drops, not one frame later.
+	ce.retryPendingChanges()
+
+	if snapshotEnabled && ce.client != nil {
+		c := ce.body.Critter()
+		snap := &critterSnapshot{
+			Version:     critterSnapshotVersion,
+			StrokeHash:  hash,
+			StrokeCount: count,
+			Bones:       c.Bones(),
+			Legs:        c.Legs(),
+			Weights:     c.Weights(),
+		}
+		if err := writeCritterSnapshot(ce.client.record, snap); err != nil {
+			profMark("critter snapshot: write failed: %v", err)
+		} else {
+			profMark("critter snapshot: wrote %d bones %d legs %d sculpts",
+				len(snap.Bones), len(snap.Legs), count)
+		}
+	}
 }
 
 func (ce *CritterEditor) applySlider(editing string, value Float.X) {
@@ -1056,6 +1180,57 @@ func (ce *CritterEditor) emitBoneSculpt(slider string, amount float32) {
 	}
 }
 
+// dragEmit applies one in-progress drag edit LOCALLY (so the user sees
+// the bone/leg move) and records it as the slider's latest value,
+// WITHOUT emitting a musical mutation. The whole drag is coalesced
+// into one committed Sculpt per touched slider at mouse-release
+// (flushDragEmits) — see the dragEmits field comment for why. Routed
+// by slider prefix to the same apply path the echoed mutation would
+// take, so the live pose matches the eventual committed pose exactly.
+func (ce *CritterEditor) dragEmit(slider string, amount float32) {
+	ce.lastEditAt = time.Now()
+	if strings.HasPrefix(slider, "leg/") {
+		ce.applyLegSculptBrush(musical.Sculpt{
+			Editor: "critter",
+			Slider: slider,
+			Amount: Float.X(amount),
+			Commit: true,
+		})
+	} else {
+		ce.applyBoneSculpt(slider, amount)
+	}
+	if ce.dragEmits == nil {
+		ce.dragEmits = make(map[string]float32)
+	}
+	if _, seen := ce.dragEmits[slider]; !seen {
+		ce.dragEmitOrder = append(ce.dragEmitOrder, slider)
+	}
+	ce.dragEmits[slider] = amount
+}
+
+// flushDragEmits commits a coalesced drag: one musical Sculpt per
+// slider touched since the drag began, carrying its final value. The
+// edits were already applied locally during the drag (dragEmit); this
+// records them as observable mutations for peers + persistence. Called
+// on mouse-release and defensively when leaving the view/editor
+// mid-drag so a pending edit isn't silently dropped. No-op when no
+// drag is pending.
+func (ce *CritterEditor) flushDragEmits() {
+	if len(ce.dragEmitOrder) == 0 {
+		return
+	}
+	for _, slider := range ce.dragEmitOrder {
+		amount := ce.dragEmits[slider]
+		if strings.HasPrefix(slider, "leg/") {
+			ce.emitLegSculpt(slider, amount)
+		} else {
+			ce.emitBoneSculpt(slider, amount)
+		}
+	}
+	ce.dragEmits = nil
+	ce.dragEmitOrder = ce.dragEmitOrder[:0]
+}
+
 func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 	if !ce.AsNode3D().Visible() {
 		return
@@ -1183,6 +1358,10 @@ func (ce *CritterEditor) spineUnhandledInput(event InputEvent.Instance) {
 		return
 	}
 	if !mev.AsInputEvent().IsPressed() {
+		// Commit the whole drag as one Sculpt per touched slider now
+		// that the mouse is up — the intermediate frames were applied
+		// locally but never recorded (see dragEmits).
+		ce.flushDragEmits()
 		ce.dragging = spineDrag{}
 		return
 	}
@@ -1797,6 +1976,52 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 	return nil
 }
 
+// debugCritterSignature logs a deterministic checksum of the final folded
+// critter state (bones, legs, weights). Used to prove that a snapshot
+// restore produces byte-identical state to a full sculpt fold — run a load
+// to bake the snapshot, then a second load to restore it, and compare.
+func (ce *CritterEditor) debugCritterSignature() {
+	if !loadProfileOn || ce.body.critter == nil {
+		return
+	}
+	c := ce.body.critter
+	bones := c.BonesView()
+	var boneSum float64
+	for _, b := range bones {
+		boneSum += float64(b.Pos.X) + float64(b.Pos.Y) + float64(b.Pos.Z) + float64(b.Radius)
+	}
+	legs := c.LegsView()
+	var legSum float64
+	for _, l := range legs {
+		legSum += float64(l.Hip.X+l.Hip.Y+l.Hip.Z) + float64(l.Knee.X+l.Knee.Y+l.Knee.Z) +
+			float64(l.Foot.X+l.Foot.Y+l.Foot.Z) + float64(l.HipRadius+l.KneeRadius+l.FootRadius)
+	}
+	var weightSum float64
+	for _, w := range c.Weights() {
+		weightSum += float64(w)
+	}
+	profMark("[critter sig] bones=%d boneSum=%.5f legs=%d legSum=%.5f weightSum=%.5f parts=%d",
+		len(bones), boneSum, len(legs), legSum, weightSum, len(ce.partToEntity))
+}
+
+// retryPendingChanges re-attempts every Change that couldn't attach when
+// it first arrived — either because its design's scene hadn't imported yet,
+// or (during the bulk replay) because the leg it anchors to hadn't been
+// folded yet. Called every Process tick and once at the end of
+// flushCritterReplay (so leg-anchored parts land before 3D re-enables).
+func (ce *CritterEditor) retryPendingChanges() {
+	if len(ce.pendingChanges) == 0 {
+		return
+	}
+	remaining := ce.pendingChanges[:0]
+	for _, change := range ce.pendingChanges {
+		if !ce.tryAttachChange(change) {
+			remaining = append(remaining, change)
+		}
+	}
+	ce.pendingChanges = remaining
+}
+
 // anchorFromChange decodes a wire Change back into a PartAnchor.
 // Mirrors the encode in place() / the gizmo emit path: Offset.XYZ
 // holds (T, Theta, Offset); Bounds.X > 0 signals a leg-foot anchor
@@ -2019,8 +2244,8 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 				// from the projected mouse. Send each as its own
 				// Sculpt so the network can drop one without
 				// corrupting the bone state.
-				ce.emitBoneSculpt(fmt.Sprintf("bone/%d/y", ce.dragging.bone), float32(local.Y))
-				ce.emitBoneSculpt(fmt.Sprintf("bone/%d/z", ce.dragging.bone), float32(local.Z))
+				ce.dragEmit(fmt.Sprintf("bone/%d/y", ce.dragging.bone), float32(local.Y))
+				ce.dragEmit(fmt.Sprintf("bone/%d/z", ce.dragging.bone), float32(local.Z))
 				// Propagate the same delta to every bone strictly
 				// between the dragged one and the nearer chain
 				// endpoint. Index-based, not geometry-based:
@@ -2054,8 +2279,8 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 							propagate = j > i
 						}
 						if propagate {
-							ce.emitBoneSculpt(fmt.Sprintf("bone/%d/y", j), sj.Y+dY)
-							ce.emitBoneSculpt(fmt.Sprintf("bone/%d/z", j), sj.Z+dZ)
+							ce.dragEmit(fmt.Sprintf("bone/%d/y", j), sj.Y+dY)
+							ce.dragEmit(fmt.Sprintf("bone/%d/z", j), sj.Z+dZ)
 						}
 					}
 				}
@@ -2075,11 +2300,11 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 				// position again.
 				ce.body.PauseRebuild()
 				jname := legJointName(ce.dragging.legJoint)
-				ce.emitLegSculpt(
+				ce.dragEmit(
 					fmt.Sprintf("leg/%d/%s/y", ce.dragging.legIdx, jname),
 					float32(local.Y)-legHandleYShift,
 				)
-				ce.emitLegSculpt(
+				ce.dragEmit(
 					fmt.Sprintf("leg/%d/%s/z", ce.dragging.legIdx, jname),
 					float32(local.Z),
 				)
@@ -2109,7 +2334,7 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 					r = 0.005
 				}
 				jname := legJointName(ce.dragging.legJoint)
-				ce.emitLegSculpt(
+				ce.dragEmit(
 					fmt.Sprintf("leg/%d/%s/r", ce.dragging.legIdx, jname),
 					r,
 				)
@@ -2138,7 +2363,7 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 				if r < 0.02 {
 					r = 0.02
 				}
-				ce.emitBoneSculpt(fmt.Sprintf("bone/%d/r", ce.dragging.bone), r)
+				ce.dragEmit(fmt.Sprintf("bone/%d/r", ce.dragging.bone), r)
 			}
 		}
 	}
@@ -2187,15 +2412,7 @@ func (ce *CritterEditor) Process(delta Float.X) {
 	// Retry any Changes whose packed scene wasn't loaded when the
 	// Change arrived. Cheap: pendingChanges is usually empty after
 	// the first second or two of a session.
-	if len(ce.pendingChanges) > 0 {
-		remaining := ce.pendingChanges[:0]
-		for _, change := range ce.pendingChanges {
-			if !ce.tryAttachChange(change) {
-				remaining = append(remaining, change)
-			}
-		}
-		ce.pendingChanges = remaining
-	}
+	ce.retryPendingChanges()
 	// Mouse-pointer hint for eye parts: pure 2D screen-relative —
 	// project each eye's world position to screen pixels, take the
 	// cursor's 2D offset, normalise to a local look direction. No

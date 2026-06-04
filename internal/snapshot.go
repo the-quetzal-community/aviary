@@ -4,8 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
+	"math"
 	"os"
 
+	"the.quetzal.community/aviary/internal/critter"
 	"the.quetzal.community/aviary/internal/musical"
 )
 
@@ -102,6 +104,111 @@ func readTerrainSnapshot(work musical.WorkID) (*terrainSnapshot, error) {
 		return nil, fmt.Errorf("snapshot version %d != %d", snap.Version, terrainSnapshotVersion)
 	}
 	return &snap, nil
+}
+
+// --- Critter snapshot ---------------------------------------------------
+//
+// The critter editor bakes thousands of bone/leg/weight sculpts (a single
+// bone drag historically recorded one Sculpt per axis per frame) into one
+// small state: the bone chain, the legs, and the macro-weight map. Unlike
+// terrain there is no cheap "record vs expensive fold" split — applying a
+// critter sculpt directly mutates the shape — so the snapshot caches the
+// fully-folded state and lets a reload skip applying the buffered sculpts
+// entirely. Same contract as the terrain snapshot: a private, local,
+// per-WorkID cache that is never shared and is fail-safe (any stroke-set
+// mismatch falls back to a full replay), gated by AVIARY_SNAPSHOT=1.
+
+const critterSnapshotVersion = 1
+
+type critterSnapshot struct {
+	Version int
+	// StrokeHash + StrokeCount identify the exact sorted body-shape sculpt
+	// buffer that was folded to produce this state. On reload we re-sort the
+	// buffer, recompute these, and only trust the snapshot on an exact match.
+	StrokeHash  uint64
+	StrokeCount int
+	Bones       []critter.Bone
+	Legs        []critter.Leg
+	Weights     map[string]float32
+}
+
+func critterSnapshotPath(work musical.WorkID) string {
+	name := base64.RawURLEncoding.EncodeToString(work[:])
+	return UserDataDir + "/snapshots/" + name + ".critter.snap"
+}
+
+func writeCritterSnapshot(work musical.WorkID, snap *critterSnapshot) error {
+	if err := os.MkdirAll(UserDataDir+"/snapshots", 0777); err != nil {
+		return err
+	}
+	path := critterSnapshotPath(work)
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if err := gob.NewEncoder(f).Encode(snap); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func readCritterSnapshot(work musical.WorkID) (*critterSnapshot, error) {
+	f, err := os.Open(critterSnapshotPath(work))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var snap critterSnapshot
+	if err := gob.NewDecoder(f).Decode(&snap); err != nil {
+		return nil, err
+	}
+	if snap.Version != critterSnapshotVersion {
+		return nil, fmt.Errorf("critter snapshot version %d != %d", snap.Version, critterSnapshotVersion)
+	}
+	return &snap, nil
+}
+
+// hashCritterBuffer digests a sorted body-shape sculpt buffer order-
+// DEPENDENTLY (FNV-1a over each sculpt's full identity, not just
+// Author/Timing). Critter emits several sculpts that share one (Author,
+// Timing) — e.g. a bone move records bone/N/y and bone/N/z together — so
+// the order-independent XOR digest used for terrain would let those cancel
+// out; folding the full field set in canonical order avoids the collision.
+// The buffer MUST already be sorted (sculptOrder) so the digest is stable
+// across loads regardless of how the .mus3 device parts were concatenated.
+func hashCritterBuffer(buf []musical.Sculpt) (uint64, int) {
+	const (
+		offset = uint64(1469598103934665603)
+		prime  = uint64(1099511628211)
+	)
+	h := offset
+	mix := func(v uint64) {
+		h ^= v
+		h *= prime
+	}
+	mixStr := func(s string) {
+		for i := 0; i < len(s); i++ {
+			mix(uint64(s[i]))
+		}
+		mix(0xFF) // terminator so "ab"+"c" != "a"+"bc"
+	}
+	for _, s := range buf {
+		mix(uint64(s.Timing))
+		mix(uint64(s.Author))
+		mixStr(s.Slider)
+		mix(uint64(math.Float32bits(float32(s.Amount))))
+		mix(uint64(math.Float32bits(float32(s.Target.X))))
+		mix(uint64(math.Float32bits(float32(s.Target.Y))))
+		mix(uint64(math.Float32bits(float32(s.Target.Z))))
+	}
+	return h, len(buf)
 }
 
 // strokeHashMix maps one (Author, Timing) identity to a 64-bit value. Combined
