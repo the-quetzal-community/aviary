@@ -84,6 +84,18 @@ type TerrainEditor struct {
 	// Godot setters) is fired once at the flush, avoiding a command-ring overflow.
 	lightingApplyPending bool
 
+	// waterRecomputePending / revealRecomputePending coalesce water-level and
+	// reveal/hide edits the same way during a bulk replay. Applying them per
+	// stroke loops every tile (applyWaterLevel → reloadWater) or rebuilds the
+	// whole grass set (a revert's recomputeGrass) — thousands of cgo calls
+	// against graphics.gd's command ring. While replaying we only record the
+	// stroke / toggle the reverted flag and set these; flushBulkReloads applies
+	// the final state once (recomputeWater / recomputeReveal) after the tiles are
+	// rebuilt. Water is LWW and reveal is a deterministic replay of the surviving
+	// strokes, so the once-at-flush result is identical to per-stroke folding.
+	waterRecomputePending  bool
+	revealRecomputePending bool
+
 	// arrowsVisible toggles every existing extend-the-world arrow
 	// when entering/leaving the terrain editor — arrows shouldn't be
 	// clickable from the coaster or scenery editors.
@@ -1804,10 +1816,18 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// Water-level slider sculpts are routed through the terrain editor but
 	// are not height/paint/dressing edits, so handle them up front.
 	if brush.Slider == "editing/water_level" {
-		vr.applyWaterLevel(Float.X(brush.Amount))
 		if brush.Commit {
 			vr.waterHistory = append(vr.waterHistory, editStroke{brush: brush})
 		}
+		// During the bulk replay just record the stroke; recomputeWater applies
+		// the final (last-writer-wins) level once at the flush. Per-stroke
+		// applyWaterLevel loops every tile's reloadWater — thousands of cgo
+		// water-mesh rebuilds across the ~60k-stroke replay (see flushBulkReloads).
+		if vr.bulkReplay {
+			vr.waterRecomputePending = true
+			return nil
+		}
+		vr.applyWaterLevel(Float.X(brush.Amount))
 		return nil
 	}
 	// "Extend the world" reveals a tile, and is the ONLY way the visible grid
@@ -2154,44 +2174,69 @@ func revertEdit(hist []editStroke, author musical.Author, timing musical.Timing)
 // and redo emit the identical Revert (a toggle), so replaying the persisted
 // Revert log reproduces the final state on any client.
 func (vr *TerrainEditor) revertSculpt(brush musical.Sculpt) {
+	// During the bulk replay, a revert only toggles the stroke's reverted flag
+	// and lets the flush recompute the affected subsystem ONCE from the
+	// survivors — exactly like the forward strokes. The eager recomputes below
+	// (recomputeWater loops every tile, recomputeGrass rebuilds the whole grass
+	// set) are the same cgo bursts we defer on the forward path; firing them per
+	// revert during a replay with many undo records was a measurable load cost.
+	bulk := vr.bulkReplay
 	switch {
 	case brush.Slider == "editing/water_level":
 		if revertEdit(vr.waterHistory, brush.Author, brush.Timing) {
-			vr.recomputeWater()
+			if bulk {
+				vr.waterRecomputePending = true
+			} else {
+				vr.recomputeWater()
+			}
 		}
 	case brush.Editor == "terrain" && (brush.Slider == extendSlider || brush.Slider == hideSlider):
 		if revertEdit(vr.revealHistory, brush.Author, brush.Timing) {
-			vr.recomputeReveal()
+			if bulk {
+				vr.revealRecomputePending = true
+			} else {
+				vr.recomputeReveal()
+			}
 		}
 	case brush.Slider != "" && (brush.Design != (musical.Design{}) ||
 		isDressingCategory(brush.Slider) || brush.Slider == ClearAllDressingCategory):
 		if revertEdit(vr.grassHistory, brush.Author, brush.Timing) {
-			vr.recomputeGrass()
+			// Grass is already recomputed once at the flush (recomputeGrass folds
+			// the surviving grassHistory); toggling the flag above is enough.
+			if !bulk {
+				vr.recomputeGrass()
+			}
 		}
 	default:
 		// Tile op (height / paint / river): toggle the stroke in every tile it
 		// touched and recompute those tiles from their surviving history.
 		// Snapshot object heights against the current surface before the recompute
 		// so a reverted height change re-seats them on the restored surface
-		// (mirrors the forward path in Sculpt; see reprojectObjects).
-		objectCaps := vr.captureObjectHeights(brush.Target, brush.Radius)
+		// (mirrors the forward path in Sculpt; see reprojectObjects). Skipped
+		// during the bulk replay where the deferred per-tile flush re-seats objects
+		// anyway (the capture would read the flat deferred height — pure redundant
+		// work, matching the forward bulk path).
+		var objectCaps []objectHeightCapture
+		if !bulk {
+			objectCaps = vr.captureObjectHeights(brush.Target, brush.Radius)
+		}
 		reverted := false
 		for _, tile := range vr.tilesIntersecting(brush.Target, brush.Radius) {
 			if tile.revert(brush.Author, brush.Timing) {
-				tile.recompute()
+				tile.recompute() // during bulk this only records the tile in pendingReload
 				reverted = true
 			}
 		}
 		// A height change moves grass + placed objects; re-seat them after the
 		// tiles recompute (deferred so the new heights are in place), mirroring
-		// the forward path.
-		if reverted && len(vr.grassPatches) > 0 {
+		// the forward path. During bulk the flush re-seats both once.
+		if !bulk && reverted && len(vr.grassPatches) > 0 {
 			target, radius := brush.Target, brush.Radius
 			Callable.Defer(Callable.New(func() {
 				vr.reprojectGrass(target, radius)
 			}))
 		}
-		if reverted && len(objectCaps) > 0 {
+		if !bulk && reverted && len(objectCaps) > 0 {
 			Callable.Defer(Callable.New(func() {
 				vr.reprojectObjects(objectCaps)
 			}))
@@ -3433,6 +3478,24 @@ func (vr *TerrainEditor) flushBulkReloads() {
 		tile.reloading = false
 		tile.performReload()
 	}
+	// Water level + tile reveal/hide were deferred during the replay too (forward
+	// strokes recorded to history, reverts only toggled the reverted flag). Apply
+	// their final state once now that every tile's heights are rebuilt:
+	// recomputeWater re-derives the last-writer-wins level and reloads each tile's
+	// water surface against the final heights; recomputeReveal replays the
+	// surviving extend/hide strokes. Both are no-ops if nothing was deferred.
+	// MUST run BEFORE recomputeGrass — grass is filtered to instances on REVEALED
+	// tiles, so the reveal set has to be final before grass scatters (otherwise a
+	// reverted reveal leaves that tile's blades scattered).
+	if vr.waterRecomputePending {
+		vr.waterRecomputePending = false
+		vr.recomputeWater()
+	}
+	if vr.revealRecomputePending {
+		vr.revealRecomputePending = false
+		vr.recomputeReveal()
+	}
+
 	// Grass scatter was deferred during the replay (see the dressing branch in
 	// Sculpt): build every patch now, once, from grassHistory. The terrain is
 	// already rebuilt above, so grassTransform samples the final HeightAt and each
