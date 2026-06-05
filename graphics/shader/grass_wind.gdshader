@@ -109,10 +109,21 @@ void vertex() {
 	// rooted while the tips travel.
 	float height = max(VERTEX.y - root.y, 0.0);
 
+	// Per-instance wind variation, packed into the MultiMesh custom data in
+	// repopulateDesign (grassWindCustom) and surfaced here as INSTANCE_CUSTOM:
+	//   .x = a phase offset so neighbouring blades fall out of lockstep instead
+	//        of rippling in perfect position-locked unison (the giveaway of
+	//        instanced grass), and .y = a per-blade amplitude jitter so some
+	//        blades sway harder than others. Both are 0 on a MultiMesh that
+	//        carries no custom data (e.g. the transient hover-preview patches),
+	//        which degrades exactly to the old shared phase + unit amplitude.
+	vec4 wind_inst = INSTANCE_CUSTOM;
+
 	vec2 dir = normalize(grass_wind_dir);
 	float t = TIME * grass_wind_speed;
-	// Phase advances along the wind direction so gusts visibly roll downwind.
-	float phase = dot(root.xz, dir) * 0.35;
+	// Phase advances along the wind direction so gusts visibly roll downwind, plus
+	// the per-blade offset so adjacent blades desync.
+	float phase = dot(root.xz, dir) * 0.35 + wind_inst.x;
 
 	// Light wind: a symmetric travelling wave that ripples across the field,
 	// rocking the blades back and forth through vertical.
@@ -134,7 +145,9 @@ void vertex() {
 	// blade hard over, never completely flat, and drop the tip (sqrt) so the
 	// blade bends/pivots about its rooted base instead of stretching.
 	const float MAX_LEAN = 0.8;
-	float leanFrac = clamp(sway * grass_wind_strength, -MAX_LEAN, MAX_LEAN);
+	// (1.0 + jitter) scales each blade's lean independently — taller/looser blades
+	// read as swaying harder than stiff ones in the same gust.
+	float leanFrac = clamp(sway * grass_wind_strength * (1.0 + wind_inst.y), -MAX_LEAN, MAX_LEAN);
 	vec2 disp = dir * (leanFrac * height);
 	VERTEX.xz += disp;
 	// Shift Y by the drop only; verts at/below the pivot (height == 0) are

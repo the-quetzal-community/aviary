@@ -276,6 +276,10 @@ type TerrainEditor struct {
 	grassRenders     map[musical.Design]*grassRender
 	grassDirty       map[musical.Design]bool
 	grassDeferRender bool
+	// grassXformBuf is a reusable scratch for repopulateDesign's one-shot
+	// MultiMesh.SetBuffer push (see writeMultiMeshXform) — grown on demand and
+	// reused across designs/parts so a rebuild allocates nothing per instance.
+	grassXformBuf []float32
 
 	// dressSharedMats caches the resolved surface material for scenery library
 	// props scattered by the foliage/boulder brushes. Those are

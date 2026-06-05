@@ -157,6 +157,13 @@ func (vr *TerrainEditor) ensureGrassRender(design musical.Design, asset grassAss
 	for _, part := range asset.parts {
 		mm := MultiMesh.New()
 		mm.SetTransformFormat(MultiMesh.Transform3d)
+		// Per-instance custom data (a vec4 read by grass_wind.gdshader as
+		// INSTANCE_CUSTOM) carries per-blade wind phase + amplitude — variation
+		// that can't be derived from world position alone. Enabled for every
+		// dressing design (the extra 4 floats/instance are negligible and the
+		// non-grass shaders simply ignore the channel); filled in repopulateDesign.
+		// Format flags must be set before SetInstanceCount.
+		mm.SetUseCustomData(true)
 		mm.SetMesh(part.mesh)
 		mmi := MultiMeshInstance3D.New()
 		mmi.SetMultimesh(mm)
@@ -211,6 +218,19 @@ func (vr *TerrainEditor) repopulateDesign(design musical.Design) {
 		}
 		xform := asset.parts[pi].xform
 		mm.SetInstanceCount(n)
+		if n == 0 {
+			continue
+		}
+		// PROTOTYPE (RenderingServer-direct, step 1): build the whole instance
+		// transform buffer in Go and push it in ONE SetBuffer call, instead of
+		// one SetInstanceTransform cgo round-trip per instance (~18k of them on a
+		// full rebuild). The []float32 marshals to a Godot PackedFloat32Array in a
+		// single bulk memcpy (graphics.gd's bulk-packed-array path). Buffer is
+		// allocated once per repopulate and reused across the design's parts.
+		if cap(vr.grassXformBuf) < n*multiMeshStride {
+			vr.grassXformBuf = make([]float32, n*multiMeshStride)
+		}
+		buf := vr.grassXformBuf[:n*multiMeshStride]
 		k := 0
 		for _, p := range vr.grassPatches {
 			if p.design != design {
@@ -218,12 +238,56 @@ func (vr *TerrainEditor) repopulateDesign(design musical.Design) {
 			}
 			for i := range p.bases {
 				if vr.tileRevealedAt(p.bases[i]) {
-					mm.SetInstanceTransform(k, vr.grassTransform(p.bases[i], p.yaws[i], p.scales[i], xform))
+					off := k * multiMeshStride
+					writeMultiMeshXform(buf, off,
+						vr.grassTransform(p.bases[i], p.yaws[i], p.scales[i], xform))
+					// Per-instance wind variation in the 4 custom-data floats
+					// (INSTANCE_CUSTOM): phase, amplitude jitter, 2 spare.
+					phase, amp := grassWindCustom(p.bases[i])
+					buf[off+12], buf[off+13], buf[off+14], buf[off+15] = phase, amp, 0, 0
 					k++
 				}
 			}
 		}
+		mm.SetBuffer(buf[:k*multiMeshStride])
 	}
+}
+
+// MultiMesh 3D instance-buffer layout for the dressing renders (transform_format
+// 3D, use_custom_data on, no colours): 12 transform floats (row-major 3x4) then 4
+// custom-data floats — the vec4 surfaced to the shader as INSTANCE_CUSTOM.
+const (
+	multiMeshXformFloats  = 12
+	multiMeshCustomFloats = 4
+	multiMeshStride       = multiMeshXformFloats + multiMeshCustomFloats
+)
+
+// writeMultiMeshXform packs one Transform3D into buf[off:off+12] in Godot's
+// MultiMesh 3D buffer layout: row-major 3x4, each row = (that row of the basis,
+// then the origin component). graphics.gd's Basis.{X,Y,Z} are the matrix
+// COLUMNS, so row r is (X[r], Y[r], Z[r], origin[r]).
+func writeMultiMeshXform(buf []float32, off int, t Transform3D.BasisOrigin) {
+	b, o := t.Basis, t.Origin
+	buf[off+0], buf[off+1], buf[off+2], buf[off+3] = float32(b.X.X), float32(b.Y.X), float32(b.Z.X), float32(o.X)
+	buf[off+4], buf[off+5], buf[off+6], buf[off+7] = float32(b.X.Y), float32(b.Y.Y), float32(b.Z.Y), float32(o.Y)
+	buf[off+8], buf[off+9], buf[off+10], buf[off+11] = float32(b.X.Z), float32(b.Y.Z), float32(b.Z.Z), float32(o.Z)
+}
+
+// grassWindCustom derives the per-instance wind variation written into a
+// dressing instance's MultiMesh custom data, read by grass_wind.gdshader as
+// INSTANCE_CUSTOM: phase ∈ [0, 2π) offsets the blade's sway so neighbours fall
+// out of lockstep, and amp ∈ [-0.25, 0.25] jitters its lean amplitude (0 ⇒ unit
+// amplitude). Both come from a stable hash of the plant XZ, so the variation is
+// deterministic and identical on every client without adding any musical state.
+func grassWindCustom(base Vector3.XYZ) (phase, amp float32) {
+	h := uint32(int32(float32(base.X)*131.7)) * 0x9E3779B1
+	h ^= uint32(int32(float32(base.Z)*189.3)) * 0x85EBCA77
+	h ^= h >> 15
+	h *= 0xC2B2AE3D
+	h ^= h >> 13
+	phase = float32(h&0xFFFF) / 65536.0 * (2.0 * math.Pi)
+	amp = (float32((h>>16)&0xFF)/255.0 - 0.5) * 0.5
+	return
 }
 
 // markGrassDirty flags a design's merged render for rebuild. Unless rendering is
