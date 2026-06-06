@@ -138,6 +138,17 @@ func (client *Client) MusicalDesign(resource string) musical.Design {
 	return design
 }
 
+// newEntityMaps allocates the entity↔object↔design tracking triad every
+// placement editor that keeps its OWN maps (coaster/shelter/vehicle) initialises
+// in Ready, ready for registerEntity/removeEntity. Returned as a triple so each
+// editor assigns into its own fields. (Scenery uses the client-global maps and so
+// doesn't call this.)
+func newEntityMaps() (map[musical.Design][]Node3D.ID, map[musical.Entity]Node3D.ID, map[Node3D.ID]musical.Entity) {
+	return map[musical.Design][]Node3D.ID{},
+		map[musical.Entity]Node3D.ID{},
+		map[Node3D.ID]musical.Entity{}
+}
+
 // NextEntity reserves the next Entity id authored by this client and
 // returns the full musical.Entity. Replaces the
 // `client.entity_ids[client.id]++ ; Entity{Author, Number}` pattern

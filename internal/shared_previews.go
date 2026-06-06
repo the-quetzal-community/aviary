@@ -11,6 +11,7 @@ import (
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Euler"
+	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Transform3D"
 	"graphics.gd/variant/Vector3"
@@ -167,6 +168,15 @@ func (preview *PreviewRenderer) Remove() {
 	preview.design = ""
 	preview.attached = ""
 	preview.hasExplicitScale = false
+}
+
+// setDefaultScale records a uniform "library placement" factor as the preview's
+// defaultScale and applies it immediately. Every placement editor's Ready sets
+// its factor this way (scenery 0.1, shelter 0.2, vehicle 0.3, coaster 0.5); the
+// stored defaultScale is what SetDesign re-applies on each fresh pick.
+func (preview *PreviewRenderer) setDefaultScale(s Float.X) {
+	preview.defaultScale = Vector3.New(s, s, s)
+	preview.AsNode3D().SetScale(preview.defaultScale)
 }
 
 func (preview *PreviewRenderer) AABB() (bounds AABB.PositionSize) {

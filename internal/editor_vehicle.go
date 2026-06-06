@@ -42,18 +42,14 @@ func (*VehicleEditor) Views() []string          { return nil }
 func (*VehicleEditor) SwitchToView(view string) {}
 
 func (editor *VehicleEditor) Ready() {
-	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
-	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)
-	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
+	editor.design_to_entity, editor.entity_to_object, editor.object_to_entity = newEntityMaps()
 	editor.entity_to_mirror = make(map[musical.Entity]Node3D.ID)
 
 	base := LoadSync[PackedScene.Is[Node.Instance]]("res://base.obj")
 	instance := base.Instantiate()
 	editor.AsNode().AddChild(instance)
-	editor.Preview.defaultScale = Vector3.New(0.3, 0.3, 0.3)
-	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
-	editor.MirrorPreview.defaultScale = Vector3.New(0.3, 0.3, 0.3)
-	editor.MirrorPreview.AsNode3D().SetScale(editor.MirrorPreview.defaultScale)
+	editor.Preview.setDefaultScale(0.3)
+	editor.MirrorPreview.setDefaultScale(0.3)
 	scale := editor.MirrorPreview.AsNode3D().Scale()
 	scale.X = -scale.X
 	editor.MirrorPreview.SetScale(scale)

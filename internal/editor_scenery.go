@@ -49,8 +49,7 @@ func (*SceneryEditor) Views() []string          { return nil }
 func (*SceneryEditor) SwitchToView(view string) {}
 
 func (editor *SceneryEditor) Ready() {
-	editor.Preview.defaultScale = Vector3.New(sceneryLibraryScale, sceneryLibraryScale, sceneryLibraryScale)
-	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
+	editor.Preview.setDefaultScale(sceneryLibraryScale)
 }
 
 func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {

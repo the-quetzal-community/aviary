@@ -54,13 +54,10 @@ type ShelterEditor struct {
 
 func (editor *ShelterEditor) Ready() {
 	editor.explore = true
-	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
-	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)
-	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
+	editor.design_to_entity, editor.entity_to_object, editor.object_to_entity = newEntityMaps()
 
 	editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
-	editor.Preview.defaultScale = Vector3.New(0.2, 0.2, 0.2)
-	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
+	editor.Preview.setDefaultScale(0.2)
 }
 
 func (editor *ShelterEditor) Views() []string {

@@ -59,11 +59,8 @@ type coasterChainEntry struct {
 }
 
 func (editor *CoasterEditor) Ready() {
-	editor.design_to_entity = make(map[musical.Design][]Node3D.ID)
-	editor.entity_to_object = make(map[musical.Entity]Node3D.ID)
-	editor.object_to_entity = make(map[Node3D.ID]musical.Entity)
-	editor.Preview.defaultScale = Vector3.New(coasterPieceScale, coasterPieceScale, coasterPieceScale)
-	editor.Preview.AsNode3D().SetScale(editor.Preview.defaultScale)
+	editor.design_to_entity, editor.entity_to_object, editor.object_to_entity = newEntityMaps()
+	editor.Preview.setDefaultScale(coasterPieceScale)
 }
 
 func (*CoasterEditor) Name() string { return "coaster" }
