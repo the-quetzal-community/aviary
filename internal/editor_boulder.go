@@ -35,8 +35,7 @@ type BoulderEditor struct {
 func (fe *BoulderEditor) Name() string { return "boulder" }
 func (fe *BoulderEditor) EnableEditor() {
 	fe.client.SetGizmos(nil)
-	fe.lighting.apply(fe.client)
-	fe.lighting.ensureSeeded(fe.client)
+	fe.lighting.resync(fe.client)
 }
 func (fe *BoulderEditor) ChangeEditor() {
 
@@ -63,10 +62,10 @@ func (fe *BoulderEditor) ExitTree() {
 
 func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
 	if strings.HasPrefix(brush.Slider, "environment/") {
-		if fe.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
-			fe.lighting.apply(fe.client)
-			return nil
-		}
+		// World lighting is single-owned by the terrain editor (environment/*
+		// sculpts are stamped Editor "terrain"). Ignore any that reach a
+		// non-owner so per-editor caches can't diverge and clobber the look.
+		return nil
 	}
 	editing := brush.Slider
 	value := float64(brush.Amount)

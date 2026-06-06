@@ -186,10 +186,14 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *ShelterEditor) EnableEditor() {
-	editor.client.SetGizmos([]Gizmo{
-		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
-		GizmoSpace, GizmoClone, GizmoTrash,
-	})
+	gizmos := []Gizmo{GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat}
+	if librarySizesFile() != "" {
+		// GizmoScale is exposed only in the library-sizing debug mode
+		// (AVIARY_LIBRARY_SIZES): dial a placed part's size with it, then
+		// press F2 to persist the measurement into the library's sizes.txt.
+		gizmos = append(gizmos, GizmoScale)
+	}
+	editor.client.SetGizmos(append(gizmos, GizmoSpace, GizmoClone, GizmoTrash))
 	shader := ShaderMaterial.New()
 	shader.SetShader(LoadSync[Shader.Instance]("res://shader/grid.gdshader"))
 	editor.grid_shader = shader.ID()
@@ -313,6 +317,10 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	}
 	registerEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, node)
 	container.AddChild(node.AsNode())
+	// Library-sizing debug mode: preview the sizes.txt entry for this part
+	// (no-op outside debug mode). Shelter parts anchor to the level grid,
+	// not the terrain, hence terrainSeated=false.
+	editor.client.applyLibrarySizeOverride(change.Entity, change.Design, node, false)
 	return nil
 }
 

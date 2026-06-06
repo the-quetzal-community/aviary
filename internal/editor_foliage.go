@@ -101,8 +101,7 @@ func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
 }
 func (fe *FoliageEditor) EnableEditor() {
 	fe.client.SetGizmos(nil)
-	fe.lighting.apply(fe.client)
-	fe.lighting.ensureSeeded(fe.client)
+	fe.lighting.resync(fe.client)
 }
 func (fe *FoliageEditor) ChangeEditor() {}
 
@@ -174,10 +173,10 @@ func (fe *FoliageEditor) applyMaterials() {
 
 func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
 	if strings.HasPrefix(brush.Slider, "environment/") {
-		if fe.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
-			fe.lighting.apply(fe.client)
-			return nil
-		}
+		// World lighting is single-owned by the terrain editor (environment/*
+		// sculpts are stamped Editor "terrain"). Ignore any that reach a
+		// non-owner so per-editor caches can't diverge and clobber the look.
+		return nil
 	}
 	switch brush.Slider {
 	case "leaflet", "timbers":

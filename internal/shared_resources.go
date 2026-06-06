@@ -11,6 +11,7 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Float"
 	"the.quetzal.community/aviary/internal/musical"
 )
 
@@ -35,10 +36,49 @@ type SharedResources struct {
 	entity_to_object map[musical.Entity]Node3D.ID
 	object_to_entity map[Node3D.ID]musical.Entity
 
+	// pending_actions holds move Actions replayed before the target entity's
+	// placement Change registered it in entity_to_object. This happens because a
+	// save is stitched from multiple parts (the local device file then each other
+	// device's cloud part — see OpenCloud's io.MultiReader): a critter placed on
+	// one device and moved on another has its placement and its move in different
+	// parts, and the local part (which may hold only the move) replays first. The
+	// Action handler parks such actions here and flushPendingActions replays them
+	// once registerEntity creates the entity, so the move isn't lost on reload.
+	pending_actions map[musical.Entity][]musical.Action
+
+	// entity_move_timing is the per-entity high-water timestamp of the latest
+	// positional mutation applied (placement/gizmo Change.Timing or walk
+	// Action.Timing). Position only ever moves FORWARD in time: a Change or Action
+	// older than this is ignored. This is what makes reload order positional edits
+	// by time rather than by save-part order — without it an older gizmo move
+	// replayed from a later part clobbers a newer walk (see [[project_multipart_action_ordering]]).
+	// Committed Changes are stamped with the wall clock at record time (stampedSpace);
+	// legacy unstamped records (Timing 0) sort oldest, so any timestamped mutation wins.
+	entity_move_timing map[musical.Entity]musical.Timing
+
+	// entity_float_delta holds the terrain-relative lift (Change.Offset.Y for an
+	// Editor="float" Change) of every entity whose latest positional mutation was a
+	// float, so it can be re-seated against the FINAL terrain. During the bulk
+	// replay the heightfield isn't built yet, so a float Change reconstructs its Y
+	// against HeightAt==0 (placing it at ~delta, not terrain+delta); reseatFloats
+	// (run after flushBulkReloads) fixes every such object once the terrain exists.
+	// An entity is removed from the map when a non-float positional Change supersedes
+	// its float, or when the entity is removed.
+	entity_float_delta map[musical.Entity]Float.X
+
 	packed_scenes    map[musical.Design]PackedScene.ID
 	textures         map[musical.Design]Texture2D.ID
 	design_to_string map[musical.Design]string
 	loaded           map[string]musical.Design
+
+	// missing_scenes records designs whose .glb/.scn could not be loaded even
+	// though their import URI is known (file absent from the library.pck, or the
+	// resource is the wrong Godot type). sceneFor consults it to attempt such a
+	// load exactly ONCE rather than re-issuing it every frame: dressing strokes,
+	// critters and the placement editors all park-and-retry through sceneFor, so
+	// without this a single dangling design re-triggers Godot's "Resource file
+	// not found" error on every Process tick for the whole session.
+	missing_scenes map[musical.Design]bool
 }
 
 // The entity↔object↔design bookkeeping below is what every placement

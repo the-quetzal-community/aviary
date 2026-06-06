@@ -370,15 +370,19 @@ func NewClient() *Client {
 	var client = &Client{
 		clientReady: sync.WaitGroup{},
 		SharedResources: SharedResources{
-			design_ids:       make(map[musical.Author]uint16),
-			entity_ids:       make(map[musical.Author]uint16),
-			design_to_entity: make(map[musical.Design][]Node3D.ID),
-			entity_to_object: make(map[musical.Entity]Node3D.ID),
-			object_to_entity: make(map[Node3D.ID]musical.Entity),
-			design_to_string: make(map[musical.Design]string),
-			packed_scenes:    make(map[musical.Design]PackedScene.ID),
-			textures:         make(map[musical.Design]Texture2D.ID),
-			loaded:           make(map[string]musical.Design),
+			design_ids:         make(map[musical.Author]uint16),
+			entity_ids:         make(map[musical.Author]uint16),
+			design_to_entity:   make(map[musical.Design][]Node3D.ID),
+			entity_to_object:   make(map[musical.Entity]Node3D.ID),
+			object_to_entity:   make(map[Node3D.ID]musical.Entity),
+			pending_actions:    make(map[musical.Entity][]musical.Action),
+			entity_move_timing: make(map[musical.Entity]musical.Timing),
+			entity_float_delta: make(map[musical.Entity]Float.X),
+			design_to_string:   make(map[musical.Design]string),
+			packed_scenes:      make(map[musical.Design]PackedScene.ID),
+			textures:           make(map[musical.Design]Texture2D.ID),
+			loaded:             make(map[string]musical.Design),
+			missing_scenes:     make(map[musical.Design]bool),
 		},
 		clients: make(chan musical.Networking),
 		authors: make(map[musical.Author]Node3D.ID),
@@ -506,7 +510,9 @@ func (world *Client) apiJoin(code networking.Code) {
 		return
 	}
 	Callable.Defer(Callable.New(func() {
-		world.space = space
+		// Wrap so every committed Change we record gets a wall-clock Timing —
+		// the replay then orders positional edits by time, not save-part order.
+		world.space = stampedSpace{inner: space, clock: &world.time}
 	}))
 }
 
@@ -573,10 +579,18 @@ func (world *Client) Ready() {
 			}
 		}
 		var err error
-		world.space, _, err = musical.Host("Aviary v"+version, clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
+		var hosted musical.UsersSpace3D
+		hosted, _, err = musical.Host("Aviary v"+version, clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
 		if err != nil {
 			Engine.Raise(err)
 		}
+		// Wrap so every committed Change we record locally gets a wall-clock
+		// Timing, exactly like the network-join path above. Without this,
+		// single-player edits are written with Timing 0, so on reload the
+		// multi-part replay can't order positional edits by time — e.g. a fence
+		// lifted with GizmoFloat across two save parts gets a non-deterministic Y
+		// (the "fences change height on reload" corruption).
+		world.space = stampedSpace{inner: hosted, clock: &world.time}
 	}
 
 	world.println = make(chan string, 10)
@@ -874,6 +888,30 @@ func (world *Client) beginLoading() {
 
 // finishLoading tears the splash down and resumes 3D rendering once the world
 // has been fully built.
+// reseatFloats re-applies every tracked float entity's terrain-relative lift
+// against the CURRENT terrain heightfield: node.Y = HeightAt(node.XZ) + delta.
+// Run after flushBulkReloads, because during the bulk replay the heightfield
+// isn't built yet, so an Editor="float" Change reconstructs its Y against
+// HeightAt==0 and the object lands at ~delta regardless of the real terrain
+// height (too low where terrain is high, too high where it dips below 0). A
+// correctly-seated live float re-derives the same Y here, so this is a no-op for
+// those; stale entries (entity since removed) are pruned.
+func (world *Client) reseatFloats() {
+	if world.TerrainEditor == nil {
+		return
+	}
+	for entity, delta := range world.entity_float_delta {
+		node, ok := world.entity_to_object[entity].Instance()
+		if !ok {
+			delete(world.entity_float_delta, entity)
+			continue
+		}
+		pos := node.Position()
+		pos.Y = world.TerrainEditor.HeightAt(Vector3.New(pos.X, 0, pos.Z)) + delta
+		node.SetPosition(pos)
+	}
+}
+
 func (world *Client) finishLoading() {
 	if !world.loading {
 		return
@@ -884,6 +922,15 @@ func (world *Client) finishLoading() {
 	if world.TerrainEditor != nil {
 		profMark("finishLoading: flushing bulk terrain reloads")
 		world.TerrainEditor.flushBulkReloads()
+		// Float Changes that replayed while the heightfield was deferred
+		// reconstructed their Y against HeightAt==0; with the terrain now final,
+		// re-seat each tracked float to HeightAt(XZ)+delta so it sits at the right
+		// height instead of near y=0 (the "lifted props are too high/low on
+		// reload" bug).
+		world.reseatFloats()
+		// Library-sizing debug mode: settle every sizes.txt override against
+		// the final terrain (replay-time applications grounded to HeightAt==0).
+		world.applyLibrarySizeOverrides()
 	}
 	if world.CritterEditor != nil {
 		// No-op unless the critter snapshot path buffered the replay (see
@@ -1516,13 +1563,41 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						if ok {
 							if node3d, ok := Object.As[Node3D.Instance](node); ok {
 								if entity, ok := world.object_to_entity[node3d.ID()]; ok {
+									// Plain right-click: walk straight to the point (replace any
+									// path). Shift: append a segment onto the end of the current
+									// path. Ctrl: append AND make the whole path a back-and-forth
+									// loop. Shift/Ctrl chain from where the path currently ends
+									// (and when it ends) so segments join seamlessly.
+									shift := Input.IsKeyPressed(Input.KeyShift)
+									ctrl := Input.IsKeyPressed(Input.KeyCtrl)
+									startPos := node3d.Position()
+									startTime := world.time.Future()
+									hasPath := false
+									if shift || ctrl {
+										if ar, ok := actionRendererFor(node3d); ok {
+											if tail, end, active := ar.PathTail(); active {
+												// Chain the new segment onto the end of the current
+												// path (where, and when, it finishes).
+												hasPath = true
+												startPos = tail
+												if end > startTime {
+													startTime = end
+												}
+											}
+										}
+									}
 									world.space.Action(musical.Action{
 										Author: world.id,
 										Entity: entity,
 										Target: intersect.Position,
-										Period: musical.Period(Vector3.Distance(node3d.Position(), intersect.Position) * Float.X(time.Second) * 5),
-										Timing: world.time.Future(), // FIXME
-										Cancel: true,
+										Period: musical.Period(Vector3.Distance(startPos, intersect.Position) * Float.X(time.Second) * 5),
+										Timing: startTime,
+										// Append (Cancel=false) only when there's a path to extend;
+										// a modifier-click with no active path is a fresh walk that
+										// advances the move high-water like a plain click. Ctrl marks
+										// the path a back-and-forth loop.
+										Cancel: !hasPath,
+										Repeat: ctrl,
 										Commit: true,
 									})
 								}
@@ -1565,6 +1640,12 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyF1 {
 			vp := Viewport.Get(world.AsNode())
 			vp.SetDebugDraw(vp.DebugDraw() ^ Viewport.DebugDrawWireframe)
+		}
+		// F2 (debug): with AVIARY_LIBRARY_SIZES set, record the selected
+		// entity's current in-world height into the library's sizes.txt so
+		// rescale_glb.py can bake it into the .glb as the default size.
+		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyF2 && !event.AsInputEvent().IsEcho() {
+			world.debugPersistSelectionSize()
 		}
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyS && Input.IsKeyPressed(Input.KeyCtrl) && !event.AsInputEvent().IsEcho() {
 			AnimateTheSceneBeingSaved(world, world.record)
@@ -1892,33 +1973,6 @@ func smoothstep(edge0, edge1, x float64) float64 {
 		t = 1
 	}
 	return t * t * (3 - 2*t)
-}
-
-// activeLightingEditorKey returns the musical Editor routing key that
-// should be stamped on environment Sculpt records from the lighting menu.
-// scenery and terrain share the world lighting owned by the "terrain" editor.
-// The map keys (not Name()) are used for dispatch.
-func (world *Client) activeLightingEditorKey() string {
-	if world.Editing == Editing.Scenery || world.Editing == Editing.Terrain {
-		return "terrain"
-	}
-	switch world.Editing {
-	case Editing.Foliage:
-		return "foliage"
-	case Editing.Mineral:
-		return "mineral"
-	case Editing.Shelter:
-		return "shelter"
-	case Editing.Vehicle:
-		return "vehicle"
-	case Editing.Citizen:
-		return "citizen"
-	case Editing.Critter:
-		return "critter"
-	case Editing.Coaster:
-		return "coaster"
-	}
-	return "terrain"
 }
 
 // applyLightingStateFromSlider is called by the lighting menu for immediate

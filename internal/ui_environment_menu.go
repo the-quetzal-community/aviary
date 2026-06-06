@@ -68,7 +68,7 @@ func (ui *UI) buildEnvironmentMenu() {
 	// res://ui/<icon>.svg; if that texture isn't present yet (the icons are
 	// still being sourced) it falls back to the text label so the row is
 	// never blank.
-	makeRow := func(sliderKey, icon, labelText string, minV, maxV, step, initV Float.X, onChange func(Float.X)) {
+	makeRow := func(sliderKey, icon, labelText string, minV, maxV, step, initV Float.X) {
 		row := HBoxContainer.New()
 		row.AsControl().SetCustomMinimumSize(Vector2.New(0, 28))
 
@@ -109,7 +109,23 @@ func (ui *UI) buildEnvironmentMenu() {
 			}
 		}
 
-		Range.Instance(sld.AsRange()).OnValueChanged(onChange)
+		// Persist on release, preview while dragging. value_changed fires many
+		// times a second during a drag; committing each would flood the musical
+		// log and every peer. So emit preview sculpts (Commit:false) during the
+		// drag and a single committed sculpt (Commit:true) on release. Discrete
+		// changes (keyboard, track click, wheel) don't start a drag, so they
+		// commit immediately. Programmatic refreshes use SetValueNoSignal and so
+		// never reach here.
+		dragging := false
+		slider := HSlider.Instance(sld)
+		slider.AsSlider().OnDragStarted(func() { dragging = true })
+		Range.Instance(sld.AsRange()).OnValueChanged(func(v Float.X) {
+			ui.sendEnvironmentSlider(sliderKey, v, !dragging)
+		})
+		slider.AsSlider().OnDragEnded(func(valueChanged bool) {
+			dragging = false
+			ui.sendEnvironmentSlider(sliderKey, Range.Instance(sld.AsRange()).Value(), true)
+		})
 
 		row.AsNode().AddChild(HSlider.Instance(sld).AsNode())
 		container.AsNode().AddChild(row.AsNode())
@@ -131,82 +147,49 @@ func (ui *UI) buildEnvironmentMenu() {
 		tod, sunAng, fg, cl, rn, sn, wn, mn = ui.client.GetLightingMenuState()
 	}
 
-	// Friendly, non-technical controls. We drive them through
-	// ApplyLightingMenuState so each axis stays completely independent.
-	makeRow("environment/time_of_day", "daytime", "Time of Day", 0, 1, 0.005, tod, func(v Float.X) {
-		if ui.client != nil {
-			_, angle, fog, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(v, angle, fog, clouds, rain, snow, wind, moon)
-		}
-		// Still send the Sculpt for networking + persistence
-		ui.sendEnvironmentSlider("environment/time_of_day", v)
-	})
-	makeRow("environment/sun_angle", "sunside", "Sun Angle", 0, 1, 0.005, sunAng, func(v Float.X) {
-		if ui.client != nil {
-			tod, _, fog, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, v, fog, clouds, rain, snow, wind, moon)
-		}
-		ui.sendEnvironmentSlider("environment/sun_angle", v)
-	})
-	makeRow("environment/fog", "fogmist", "Fog / Atmosphere", 0, 1, 0.01, fg, func(v Float.X) {
-		if ui.client != nil {
-			tod, angle, _, clouds, rain, snow, wind, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, v, clouds, rain, snow, wind, moon)
-		}
-		ui.sendEnvironmentSlider("environment/fog", v)
-	})
-	makeRow("environment/clouds", "cumulus", "Clouds", 0, 1, 0.01, cl, func(v Float.X) {
-		if ui.client != nil {
-			tod, angle, fog, _, rain, snow, wind, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, v, rain, snow, wind, moon)
-		}
-		ui.sendEnvironmentSlider("environment/clouds", v)
-	})
-	makeRow("environment/rain", "raining", "Rain", 0, 1, 0.01, rn, func(v Float.X) {
-		if ui.client != nil {
-			tod, angle, fog, clouds, _, snow, wind, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, v, snow, wind, moon)
-		}
-		ui.sendEnvironmentSlider("environment/rain", v)
-	})
-	makeRow("environment/snow", "snowing", "Snow", 0, 1, 0.01, sn, func(v Float.X) {
-		if ui.client != nil {
-			tod, angle, fog, clouds, rain, _, wind, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, v, wind, moon)
-		}
-		ui.sendEnvironmentSlider("environment/snow", v)
-	})
-	makeRow("environment/wind", "cyclone", "Wind", 0, 1, 0.01, wn, func(v Float.X) {
-		if ui.client != nil {
-			tod, angle, fog, clouds, rain, snow, _, moon := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, v, moon)
-		}
-		ui.sendEnvironmentSlider("environment/wind", v)
-	})
-	makeRow("environment/moon", "moonlit", "Moon Phase", 0, 1, 0.01, mn, func(v Float.X) {
-		if ui.client != nil {
-			tod, angle, fog, clouds, rain, snow, wind, _ := ui.client.GetLightingMenuState()
-			ui.client.ApplyLightingMenuState(tod, angle, fog, clouds, rain, snow, wind, v)
-		}
-		ui.sendEnvironmentSlider("environment/moon", v)
-	})
+	// Friendly, non-technical controls. Each axis stays completely independent:
+	// the per-axis apply happens inside sendEnvironmentSlider (via
+	// applyLightingStateFromSlider, keyed by the slider name), which reads the
+	// current state and replaces only this axis. So each row just needs its
+	// config; makeRow wires the preview/commit signals.
+	makeRow("environment/time_of_day", "daytime", "Time of Day", 0, 1, 0.005, tod)
+	makeRow("environment/sun_angle", "sunside", "Sun Angle", 0, 1, 0.005, sunAng)
+	makeRow("environment/fog", "fogmist", "Fog / Atmosphere", 0, 1, 0.01, fg)
+	makeRow("environment/clouds", "cumulus", "Clouds", 0, 1, 0.01, cl)
+	makeRow("environment/rain", "raining", "Rain", 0, 1, 0.01, rn)
+	makeRow("environment/snow", "snowing", "Snow", 0, 1, 0.01, sn)
+	makeRow("environment/wind", "cyclone", "Wind", 0, 1, 0.01, wn)
+	makeRow("environment/moon", "moonlit", "Moon Phase", 0, 1, 0.01, mn)
 }
 
-// sendEnvironmentSlider builds a Sculpt with the correct Editor routing key
-// for the active editor (so it lands in the right editor's Sculpt handler)
-// and also applies immediately for snappy local feedback.
-func (ui *UI) sendEnvironmentSlider(slider string, value Float.X) {
-	if ui.client == nil || ui.client.space == nil {
+// sendEnvironmentSlider records an environment change and applies it locally for
+// snappy feedback. commit=false emits a preview sculpt (broadcast to peers for
+// live feedback but NOT persisted to the .mus3); commit=true persists it. The
+// caller previews while a slider is being dragged and commits once on release,
+// so a drag doesn't flood the log and every peer with a sculpt per frame.
+func (ui *UI) sendEnvironmentSlider(slider string, value Float.X, commit bool) {
+	if ui.client == nil {
+		return
+	}
+	if ui.client.space == nil {
 		// Fallback: still push to renderer so the menu works even before join.
 		ui.client.applyLightingStateFromSlider(slider, value)
 		return
 	}
-	key := ui.client.activeLightingEditorKey()
 	ui.client.space.Sculpt(musical.Sculpt{
-		Editor: key,
+		// Author MUST be stamped: the server validates every Sculpt with
+		// validateAuthor (Author == authenticated id) and silently drops any
+		// mismatch. Without this the environment/* sculpts never persist to the
+		// .mus3 (so they don't restore on reopen) and never broadcast to other
+		// clients. Editor is always "terrain": world lighting is single-owned by
+		// the terrain editor, so every environment/* sculpt accumulates into one
+		// lighting state on replay (last-writer-wins) instead of splitting across
+		// the per-mode editor caches.
+		Author: ui.client.id,
+		Editor: "terrain",
 		Slider: slider,
 		Amount: value,
-		Commit: true,
+		Commit: commit,
 	})
 	// Immediate local apply (the round-trip will re-apply the same value).
 	ui.client.applyLightingStateFromSlider(slider, value)

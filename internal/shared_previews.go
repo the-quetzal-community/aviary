@@ -4,11 +4,13 @@ import (
 	"strings"
 
 	"graphics.gd/classdb/CollisionObject3D"
+	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/variant/AABB"
+	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Transform3D"
 	"graphics.gd/variant/Vector3"
@@ -18,6 +20,11 @@ type PreviewRenderer struct {
 	Node3D.Instance
 
 	design string
+	// attached is the design whose mesh is currently parented (set in attach),
+	// lagging `design` by the async load. Geometry readers (the fence
+	// footprint analysis) check it so they don't measure the previous design's
+	// mesh in the frame after SetDesign, before the old child is freed.
+	attached string
 	// gen increments on every SetDesign/Remove so an async scene load
 	// that finishes after the user has already moved on to another design
 	// (or cleared the preview) can detect it's stale and drop its result
@@ -31,6 +38,16 @@ type PreviewRenderer struct {
 	// from the design and tells SetDesign to preserve the explicit value.
 	defaultScale     Vector3.XYZ
 	hasExplicitScale bool
+
+	// normalizeRotation, when set, makes attach discard the design root's
+	// intrinsic rotation so the preview shows the geometry the way the
+	// placement path orients it. client_musical.Change overwrites a spawned
+	// root's rotation with con.Angles, dropping any baked-in root rotation
+	// (Kenney fence panels carry a 180° Y on their root node); a preview that
+	// kept it would face the opposite way from what gets placed. Set by the
+	// fence tool, which both relies on this match and reads Faces() the same
+	// (root-transform-excluded) way.
+	normalizeRotation bool
 }
 
 func (preview *PreviewRenderer) Design() string {
@@ -39,6 +56,7 @@ func (preview *PreviewRenderer) Design() string {
 
 func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 	preview.design = design
+	preview.attached = "" // the new design's mesh hasn't attached yet
 	preview.gen++
 	preview.hasExplicitScale = false
 	if preview.defaultScale != (Vector3.XYZ{}) {
@@ -113,8 +131,33 @@ func (preview *PreviewRenderer) attach(instance Node3D.Instance, gen int) {
 		if pscale := preview.AsNode3D().Scale(); pscale != Vector3.One && pscale != (Vector3.XYZ{}) {
 			preview.AsNode3D().SetScale(Vector3.Mul(pscale, s))
 		}
+		// Library-sizing debug mode: match the ghost to the sizes.txt
+		// override that applyLibrarySizeOverride will apply on placement,
+		// so the model doesn't visibly jump from stale-.glb size to
+		// overridden size when dropped.
+		if overrides := librarySizeOverrides(); len(overrides) > 0 {
+			preview.applySizeOverride(instance, overrides)
+		}
 	}
+	// Discard the design root's intrinsic rotation when asked (the fence tool),
+	// so the preview faces the way the placement path will: client_musical.Change
+	// overwrites the spawned root's rotation with con.Angles, dropping any baked-in
+	// root rotation (Kenney fence panels carry a 180° Y). Only the root is zeroed —
+	// descendant transforms are kept, matching the placement (which only sets the
+	// root). See normalizeRotation.
+	if preview.normalizeRotation {
+		instance.SetRotation(Euler.Radians{})
+	}
+	// Record which design's mesh is now actually displayed, so geometry
+	// readers (the fence tool's footprint analysis) don't measure a stale mesh
+	// in the window between SetDesign and the async attach landing.
+	preview.attached = preview.design
 }
+
+// AttachedDesign reports the design whose mesh is currently attached and
+// displayed — which lags SetDesign's Design() by the async load. The fence tool
+// only trusts Faces()/footprint analysis once this matches the selected design.
+func (preview *PreviewRenderer) AttachedDesign() string { return preview.attached }
 
 func (preview *PreviewRenderer) Remove() {
 	preview.gen++ // invalidate any in-flight async load
@@ -122,11 +165,68 @@ func (preview *PreviewRenderer) Remove() {
 		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
 	}
 	preview.design = ""
+	preview.attached = ""
 	preview.hasExplicitScale = false
 }
 
 func (preview *PreviewRenderer) AABB() (bounds AABB.PositionSize) {
 	return preview.aabb(preview.AsNode3D())
+}
+
+// Faces returns every triangle vertex of the loaded design expressed in the
+// design root's OWN local frame — the root's own transform excluded but every
+// descendant transform applied — then component-multiplied by the preview root
+// scale so the points are in world units at identity rotation. That is exactly
+// the frame the placement path produces: client_musical.Change overwrites the
+// spawned root's rotation (con.Angles) and scale (con.Bounds) while leaving
+// descendant transforms intact (Kenney fence panels bake a rotation into their
+// root, so measuring the root rotated would mismatch what gets placed).
+//
+// The fence tool runs a PCA over these points to find the run axis — which is why
+// it handles diagonal panels (a 45° strip), not just axis-aligned ones — and to
+// tell a thin draggable strip from a blocky corner/blob. Returns nil until a mesh
+// has attached.
+func (preview *PreviewRenderer) Faces() []Vector3.XYZ {
+	if preview.AsNode().GetChildCount() == 0 {
+		return nil
+	}
+	child, ok := Object.As[Node3D.Instance](preview.AsNode().GetChild(0))
+	if !ok {
+		return nil
+	}
+	var pts []Vector3.XYZ
+	collectFaces(child, &pts)
+	s := preview.AsNode3D().Scale()
+	for i := range pts {
+		pts[i] = Vector3.Mul(pts[i], s)
+	}
+	return pts
+}
+
+// collectFaces appends node's triangle vertices in node's OWN local frame: node's
+// own mesh contributes its raw GetFaces (node's own transform NOT applied) and
+// each child's contribution is transformed up by that child's transform. So the
+// top node's own transform is excluded while every descendant transform is
+// applied — matching what the placement path keeps (see Faces).
+func collectFaces(node Node3D.Instance, out *[]Vector3.XYZ) {
+	if instance, ok := Object.As[MeshInstance3D.Instance](node); ok {
+		if mesh := instance.Mesh(); mesh != Mesh.Nil {
+			*out = append(*out, mesh.GetFaces()...)
+		}
+	}
+	n := node.AsNode()
+	for i := range n.GetChildCount() {
+		child, ok := Object.As[Node3D.Instance](n.GetChild(i))
+		if !ok {
+			continue
+		}
+		base := len(*out)
+		collectFaces(child, out)
+		t := child.Transform()
+		for j := base; j < len(*out); j++ {
+			(*out)[j] = Transform3D.Transform((*out)[j], t)
+		}
+	}
 }
 
 func (preview *PreviewRenderer) aabb(node Node3D.Instance) (bounds AABB.PositionSize) {

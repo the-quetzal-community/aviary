@@ -48,8 +48,7 @@ func (*CitizenEditor) Views() []string { return nil }
 func (ce *CitizenEditor) EnableEditor() {
 	ce.client.SetGizmos(nil)
 	ce.ensureLoaded()
-	ce.lighting.apply(ce.client)
-	ce.lighting.ensureSeeded(ce.client)
+	ce.lighting.resync(ce.client)
 	if len(ce.pendingSculpts) == 0 {
 		return
 	}
@@ -337,10 +336,10 @@ func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, 
 // snappy.
 func (ce *CitizenEditor) Sculpt(brush musical.Sculpt) error {
 	if strings.HasPrefix(brush.Slider, "environment/") {
-		if ce.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
-			ce.lighting.apply(ce.client)
-			return nil
-		}
+		// World lighting is single-owned by the terrain editor (environment/*
+		// sculpts are stamped Editor "terrain"). Ignore any that reach a
+		// non-owner so per-editor caches can't diverge and clobber the look.
+		return nil
 	}
 	if ce.body.citizen == nil {
 		ce.pendingSculpts = append(ce.pendingSculpts, brush)

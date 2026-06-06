@@ -14,8 +14,9 @@ import (
 type undoKind uint8
 
 const (
-	undoChange undoKind = iota // Do/Undo are paired musical.Change records.
-	undoSculpt                 // Sculpt is a committed terrain stroke (toggled).
+	undoChange      undoKind = iota // Do/Undo are paired musical.Change records.
+	undoSculpt                      // Sculpt is a committed terrain stroke (toggled).
+	undoChangeGroup                 // Dos/Undos are parallel batches reversed as one.
 )
 
 // UndoEntry reverses one committed mutation. For a Change edit it pairs the
@@ -31,6 +32,10 @@ type UndoEntry struct {
 
 	// change path
 	Do, Undo musical.Change
+
+	// change-group path: parallel forward/inverse batches committed together
+	// (e.g. every panel of a dragged fence run) so one Ctrl+Z reverses them all.
+	Dos, Undos []musical.Change
 
 	// sculpt path
 	Sculpt musical.Sculpt
@@ -92,6 +97,23 @@ func (world *Client) RecordChange(do, undo musical.Change) {
 	do.Commit = true
 	undo.Commit = true
 	world.undo.Push(UndoEntry{kind: undoChange, Do: do, Undo: undo})
+}
+
+// RecordChangeGroup registers a batch of paired forward/inverse Changes as a
+// SINGLE undo entry, so one Ctrl+Z reverses the whole batch — used by the fence
+// tool, where a drag commits many panels at once and should undo as one stroke
+// rather than one panel per keypress. Each forward Change must already have been
+// dispatched through client.space.Change; this only records how to reverse them.
+// dos[i] and undos[i] are the forward/inverse pair for the same entity.
+func (world *Client) RecordChangeGroup(dos, undos []musical.Change) {
+	if len(dos) == 0 || len(dos) != len(undos) {
+		return
+	}
+	for i := range dos {
+		dos[i].Commit = true
+		undos[i].Commit = true
+	}
+	world.undo.Push(UndoEntry{kind: undoChangeGroup, Dos: dos, Undos: undos})
 }
 
 // RecordSculpt registers a committed terrain stroke for undo/redo. The brush
@@ -172,6 +194,16 @@ func (world *Client) dispatchUndo(entry UndoEntry) bool {
 		// A Revert sculpt toggles the stored stroke off; re-emitted through the
 		// normal pipeline so peers + the .mus3 log observe the undo.
 		return world.emitRevert(entry.Sculpt)
+	case undoChangeGroup:
+		// Reverse order so the batch unwinds opposite to how it was applied.
+		ok := true
+		for i := len(entry.Undos) - 1; i >= 0; i-- {
+			if err := world.space.Change(entry.Undos[i]); err != nil {
+				Engine.Raise(err)
+				ok = false
+			}
+		}
+		return ok
 	default:
 		if err := world.space.Change(entry.Undo); err != nil {
 			Engine.Raise(err)
@@ -186,6 +218,15 @@ func (world *Client) dispatchRedo(entry UndoEntry) bool {
 	case undoSculpt:
 		// Redo re-emits the same Revert, toggling the stroke back on.
 		return world.emitRevert(entry.Sculpt)
+	case undoChangeGroup:
+		ok := true
+		for i := range entry.Dos {
+			if err := world.space.Change(entry.Dos[i]); err != nil {
+				Engine.Raise(err)
+				ok = false
+			}
+		}
+		return ok
 	default:
 		if err := world.space.Change(entry.Do); err != nil {
 			Engine.Raise(err)

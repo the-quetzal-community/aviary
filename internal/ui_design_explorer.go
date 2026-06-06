@@ -108,6 +108,14 @@ type DesignExplorer struct {
 
 const dragThreshold Float.X = 6
 
+// dragPlaceTravel is how far (in screen pixels) the cursor must have moved
+// UP from the press anchor for a drag-release to count as a deliberate
+// drop into the world rather than the drawer collapsing out from under a
+// near-stationary cursor (an accidental micro-drag). Comfortably larger
+// than dragThreshold so an idle wiggle never trips placement, far smaller
+// than a real drag from the palette up into the scene.
+const dragPlaceTravel Float.X = 32
+
 // previewDropZoneReporter is implemented by editors that can tell the
 // drag flow whether the in-progress preview is currently hovering a
 // valid drop site. When true, the design explorer hides the 2D ghost
@@ -369,6 +377,27 @@ func (ui *DesignExplorer) endDrag() {
 	}
 	if !dragged {
 		return // tap path: legacy OnPressed already handled preview attach.
+	}
+	// A drag only drops a design into the world if it was released over the
+	// 3D viewport — NOT over the design explorer. The desktop mouse picker
+	// raycasts straight through the 2D panel (it's a Control, not a physics
+	// collider), so previewOnTerrain alone can't tell a real drop from a
+	// release over the palette; the click-to-place path is spared this only
+	// because Godot's input propagation lets the panel consume clicks, which
+	// this polled drag path bypasses. The panel is bottom-anchored, so "over
+	// the viewport" means the cursor sits above the panel's current top edge;
+	// we additionally require the cursor to have travelled up from the press
+	// anchor, which rejects the drawer merely collapsing out from under a
+	// near-stationary cursor. When the drop is rejected the design simply
+	// stays selected as a preview (SelectDesign ran when the threshold was
+	// crossed), so the user can click in the viewport to place it — a fumbled
+	// drag degrades to exactly the same outcome as a tap.
+	mouse := ui.AsCanvasItem().GetGlobalMousePosition()
+	panelTop := ui.AsControl().GetGlobalRect().Position.Y
+	overViewport := mouse.Y < panelTop
+	travelledUp := ui.drag_anchor.Y-mouse.Y > dragPlaceTravel
+	if !overViewport || !travelledUp {
+		return
 	}
 	placed := false
 	if pp, ok := ui.editor.(PreviewPlacer); ok {

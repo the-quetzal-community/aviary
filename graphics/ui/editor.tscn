@@ -21,7 +21,7 @@
 [ext_resource type="Texture2D" uid="uid://036fls0ceuva" path="res://ui/scenery.svg" id="15_407as"]
 [ext_resource type="Texture2D" uid="uid://fcr38fjatls4" path="res://ui/arrows.svg" id="15_ny7lf"]
 [ext_resource type="Texture2D" uid="uid://6odjaflojmi0" path="res://ui/foliage.svg" id="16_2x4ir"]
-[ext_resource type="Texture2D" uid="uid://34ipn4hu4h2h" path="res://ui/mineral.svg" id="18_l3ljj"]
+[ext_resource type="Texture2D" uid="uid://34ipn4hu4h2h" path="res://ui/boulder.svg" id="18_l3ljj"]
 [ext_resource type="Texture2D" uid="uid://47rl4j222xrm" path="res://ui/shelter.svg" id="20_i6rcl"]
 [ext_resource type="Texture2D" uid="uid://d3nq482anjp6c" path="res://ui/vehicle.svg" id="20_sb7vj"]
 [ext_resource type="Texture2D" uid="uid://bgdasw0ni1og3" path="res://ui/rounded.svg" id="21_bs2fd"]
@@ -857,7 +857,7 @@ stretch_mode = 5
 z_index = -1
 layout_mode = 0
 offset_left = 71.194275
-offset_top = -1237.7494
+offset_top = -1318.4049
 offset_right = 200.32867
 offset_bottom = 0.41210938
 theme = ExtResource("1_hi2iw")

@@ -294,6 +294,18 @@ func (l *lighting) ensureSeeded(c *Client) {
 	l.seeded = true
 }
 
+// resync re-pulls the current world look into this cache and re-applies it.
+// World lighting is single-owned by the terrain editor (every environment/*
+// sculpt is stamped Editor "terrain"), so a non-owner editor's cached copy can
+// be stale by the time it regains focus: the user may have changed the look from
+// another mode in the meantime. A plain apply() would then push those stale
+// values and clobber the live look; clearing seeded forces ensureSeeded to pull
+// the current state first, making the re-apply a faithful refresh instead.
+func (l *lighting) resync(c *Client) {
+	l.seeded = false
+	l.apply(c)
+}
+
 // BuiltinDesign is one procedural/builtin entry that an editor wants
 // shown in a tab alongside (or instead of) library scenes. Used by
 // editors whose part categories include shapes generated in code

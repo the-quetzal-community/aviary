@@ -483,8 +483,7 @@ func (ce *CritterEditor) EnableEditor() {
 		GizmoSpace, GizmoClone, GizmoTrash,
 	})
 	ce.ensureLoaded()
-	ce.lighting.apply(ce.client)
-	ce.lighting.ensureSeeded(ce.client)
+	ce.lighting.resync(ce.client)
 }
 
 func (ce *CritterEditor) ChangeEditor() {
@@ -723,10 +722,10 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 // (body shape sliders) so existing scenes replay correctly.
 func (ce *CritterEditor) Sculpt(brush musical.Sculpt) error {
 	if strings.HasPrefix(brush.Slider, "environment/") {
-		if ce.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
-			ce.lighting.apply(ce.client)
-			return nil
-		}
+		// World lighting is single-owned by the terrain editor (environment/*
+		// sculpts are stamped Editor "terrain"). Ignore any that reach a
+		// non-owner so per-editor caches can't diverge and clobber the look.
+		return nil
 	}
 	// During the initial bulk replay, buffer body-shape sculpts and fold
 	// them once at finishLoading (flushCritterReplay) instead of applying

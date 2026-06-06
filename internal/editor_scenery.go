@@ -28,6 +28,12 @@ type SceneryEditor struct {
 	// orientation but isn't a valid drop site.
 	previewOnTerrain bool
 
+	// fence lays a continuous run of panels along the terrain via a two-click
+	// line tool (anchor, preview-follows-cursor, commit) when a fencing design
+	// is selected, instead of dropping one panel per click. Inactive (a no-op)
+	// for every other design. See editor_scenery_fence.go.
+	fence fenceTool
+
 	client *Client
 }
 
@@ -58,10 +64,32 @@ func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 			}
 		}
 		if event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsPressed() {
-			editor.Preview.Remove()
+			// Right-click aborts an in-progress fence run (discarding its
+			// ghosts) rather than clearing the design; otherwise it clears
+			// the preview as before.
+			if editor.fence.previewing {
+				editor.fence.cancel(editor)
+			} else {
+				editor.Preview.Remove()
+			}
 		}
 		if event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
-			editor.TryPlacePreview()
+			// A draggable fencing design (a thin straight/diagonal strip) is a
+			// two-click line tool: the first click anchors the run and enters
+			// preview mode, the second commits it. Corner/blob fence pieces and
+			// every other design place one entity per click as before.
+			switch {
+			case editor.fence.previewing:
+				editor.fence.commit(editor)
+			case editor.fence.draggable(editor):
+				// Anchor only over terrain; off-terrain clicks no-op (the
+				// preview stays at the cursor for another try).
+				if editor.previewOnTerrain {
+					editor.fence.begin(editor)
+				}
+			default:
+				editor.TryPlacePreview()
+			}
 		}
 	}
 }
@@ -129,9 +157,31 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 	hover := editor.client.PreviewPicker()
 	onTerrain := Object.Is[*TerrainTile](hover.Collider)
 	editor.previewOnTerrain = onTerrain
+	if editor.fence.previewing {
+		// In preview mode (between the anchor and commit clicks) the single
+		// preview is hidden and the ghost row shows the whole line. Track the
+		// cursor end while it's over terrain; leave the last good layout (and
+		// remembered end) when the cursor wanders off a tile.
+		editor.Preview.AsNode3D().SetVisible(false)
+		if onTerrain {
+			editor.fence.update(editor, hover.Position)
+		}
+		return
+	}
 	if onTerrain {
+		pos := hover.Position
+		// For a draggable fencing design, rotate the hover preview to trail the
+		// cursor's movement (the panel lies along the path being swept), then
+		// pivot it around its end on the cursor (the same way a committed run
+		// pivots each panel) so an off-centre-origin panel hangs off the cursor by
+		// its end instead of sitting beside it and jumping on the anchor click.
+		// Corner/blob pieces hover like ordinary single placement.
+		if editor.fence.draggable(editor) {
+			editor.Preview.AsNode3D().SetRotation(Euler.Radians{Y: editor.fence.hoverHeading(hover.Position)})
+			pos = editor.fence.anchorOrigin(editor, pos)
+		}
 		editor.Preview.AsNode3D().SetVisible(true)
-		editor.Preview.AsNode3D().SetGlobalPosition(hover.Position)
+		editor.Preview.AsNode3D().SetGlobalPosition(pos)
 		return
 	}
 	if editor.client.xr && editor.client.xrRight != XRController3D.Nil {
@@ -148,10 +198,15 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 func (fe *SceneryEditor) Name() string { return "scenery" }
 
 func (fe *SceneryEditor) EnableEditor() {
-	fe.client.SetGizmos([]Gizmo{
-		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
-		GizmoSpace, GizmoClone, GizmoTrash,
-	})
+	gizmos := []Gizmo{GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat}
+	if librarySizesFile() != "" {
+		// GizmoScale is exposed only in the library-sizing debug mode
+		// (AVIARY_LIBRARY_SIZES): dial a placed model's size (and lift,
+		// via GizmoFloat) until it looks right, then press F2 to persist
+		// the measurement into the library's sizes.txt.
+		gizmos = append(gizmos, GizmoScale)
+	}
+	fe.client.SetGizmos(append(gizmos, GizmoSpace, GizmoClone, GizmoTrash))
 	fe.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (fe *SceneryEditor) ChangeEditor() {
@@ -162,11 +217,6 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		return []string{
-			// natural
-			"foliage",
-			"boulder",
-
-			// village
 			"housing",
 			"village",
 			"farming",
@@ -202,7 +252,15 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 }
 
 func (fe *SceneryEditor) SelectDesign(mode Mode, design string) {
+	// Fence assets bake a root rotation (Kenney panels: 180° Y) that the
+	// placement path drops; tell the preview to drop it too so the hover preview
+	// faces the way the run will be placed. Set before SetDesign so the async
+	// attach sees it.
+	fe.Preview.normalizeRotation = isFenceDesign(design)
 	fe.Preview.SetDesign(design)
+	// Arm (or disarm) the fence tool and preload its ghost scene so the first
+	// run of a fencing design shows panels without a load stall.
+	fe.fence.selectDesign(fe, design)
 }
 
 // PreviewOverDropZone tells the design-explorer drag flow whether the

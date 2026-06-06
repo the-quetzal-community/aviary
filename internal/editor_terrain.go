@@ -1859,8 +1859,18 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		}
 		return nil
 	}
-	// Environment sliders for the shared world look (terrain + scenery).
+	// Environment sliders for the shared world look. The terrain editor is the
+	// single owner: every environment/* sculpt is stamped Editor "terrain" so
+	// they all accumulate into this one lighting cache (last-writer-wins) on
+	// replay, regardless of which mode authored them.
 	if strings.HasPrefix(brush.Slider, "environment/") {
+		// Seed the cache from the current world look BEFORE mutating an axis.
+		// Otherwise the first environment sculpt to reach an unseeded cache (the
+		// user changes e.g. wind while in Scenery/Foliage mode, having never
+		// entered Terrain mode) sets the axis only for apply()'s lazy
+		// ensureSeeded to immediately overwrite it. Routing every environment
+		// sculpt here makes that path reachable from any mode, so seed up front.
+		vr.lighting.ensureSeeded(vr.client)
 		if vr.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
 			// Lighting is last-writer-wins, so during the bulk replay just update
 			// the state and apply ONCE at the flush. Applying per-sculpt fired ~20
@@ -3461,6 +3471,20 @@ func (vr *TerrainEditor) flushBulkReloads() {
 			return sculptOrder(a.brush, b.brush)
 		})
 	}
+	// The editor-level histories (grass dressing, water level, tile reveal/hide)
+	// are likewise appended in raw device-part concatenation order during the
+	// replay, but their recomputes below all assume canonical commit order:
+	// recomputeGrass folds scatter-then-erase (an erase must land AFTER the
+	// scatters it trims), recomputeWater is last-writer-wins, and recomputeReveal
+	// replays extend/hide in order. Sort them into the same (Timing, Author) order
+	// as the tiles so a scythe erase (or a later water level / hide) can't be
+	// undone by a scatter/extend that happened earlier but was concatenated after
+	// it — the bug where scythed grass reappeared on reload. SortStable keeps
+	// append order among equal keys (legacy unset Timing), matching the tiles.
+	editOrder := func(a, b editStroke) int { return sculptOrder(a.brush, b.brush) }
+	slices.SortStableFunc(vr.grassHistory, editOrder)
+	slices.SortStableFunc(vr.waterHistory, editOrder)
+	slices.SortStableFunc(vr.revealHistory, editOrder)
 	// Pass 1: restore the rasterised <=Cutoff grids from a valid snapshot and fold
 	// only the newer strokes; otherwise full recompute (reset + replay history).
 	restored := false

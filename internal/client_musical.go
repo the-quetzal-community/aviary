@@ -29,6 +29,38 @@ type musicalImpl struct {
 	*Client
 }
 
+// stampedSpace wraps the recording side of the musical storage to assign a
+// wall-clock Timing to every committed Change as it is recorded. Positional
+// mutations (placements, gizmo moves) then carry a timestamp comparable to a
+// walk Action's, so reload can order them by time (see the Change/Action
+// handlers' entity_move_timing gate). Without this, Changes are written with
+// Timing 0, and an older manual move replayed from a later save part clobbers a
+// newer walk. Only committed, not-yet-stamped Changes are touched; previews
+// (Commit=false) and every other operation forward verbatim. Replayed and remote
+// records keep the Timing they were recorded with — this only stamps OUR edits.
+type stampedSpace struct {
+	inner musical.UsersSpace3D
+	clock *TimingCoordinator
+}
+
+func (s stampedSpace) Change(con musical.Change) error {
+	// Stamp every locally-recorded Change (previews included — they don't persist
+	// but still flow through the entity_move_timing gate, and a live drag of a
+	// previously-walked entity must read as "now" to clear that gate). Replayed and
+	// remote records arrive via a different path and keep their recorded Timing, so
+	// this only timestamps OUR edits; legacy records on disk stay at Timing 0.
+	if con.Timing == 0 {
+		con.Timing = s.clock.Now()
+	}
+	return s.inner.Change(con)
+}
+func (s stampedSpace) Member(r musical.Member) error { return s.inner.Member(r) }
+func (s stampedSpace) Upload(u musical.Upload) error { return s.inner.Upload(u) }
+func (s stampedSpace) Sculpt(b musical.Sculpt) error { return s.inner.Sculpt(b) }
+func (s stampedSpace) Import(i musical.Import) error { return s.inner.Import(i) }
+func (s stampedSpace) Action(a musical.Action) error { return s.inner.Action(a) }
+func (s stampedSpace) LookAt(v musical.LookAt) error { return s.inner.LookAt(v) }
+
 // keptImports holds every imported library resource (PackedScenes, textures) for the
 // lifetime of the session, so the weak .ID()s in packed_scenes/textures always resolve
 // when scenery is (re)instantiated. They are loaded on the resource-loader thread, so each
@@ -213,12 +245,25 @@ func (client *Client) sceneFor(design musical.Design) (PackedScene.Instance, boo
 			return inst, true
 		}
 	}
+	// A design that already failed to load once will fail the same way every
+	// time (the file is absent from the pck, or it is the wrong resource type) —
+	// LoadSync blocks through any on-demand download, so a nil result is a real
+	// failure, not a not-yet-streamed one. Bail before re-issuing the load so a
+	// dangling design doesn't re-spam Godot's "Resource file not found" error
+	// each frame that a parked dressing stroke / critter / prop retries.
+	if client.missing_scenes[design] {
+		return PackedScene.Instance{}, false
+	}
 	uri, ok := client.design_to_string[design]
 	if !ok || isKeepImporterPath(uri) || !isSceneImportPath(uri) {
+		// No import URI yet: the Import may simply not have replayed (a remote
+		// peer placing before importing), so this is retryable — don't cache it.
 		return PackedScene.Instance{}, false
 	}
 	res := LoadSync[Resource.Instance](boulderCompatPath(uri))
 	if !Object.Is[PackedScene.Instance](res) {
+		client.missing_scenes[design] = true
+		fmt.Println("design", uri, "could not be loaded; skipping (will not retry this session)")
 		return PackedScene.Instance{}, false
 	}
 	scene := Object.To[PackedScene.Instance](res)
@@ -287,6 +332,10 @@ func (world musicalImpl) Import(uri musical.Import) error {
 				world.entity_to_object[world.object_to_entity[id]] = new_node.ID()
 				world.object_to_entity[new_node.ID()] = world.object_to_entity[id]
 				delete(world.object_to_entity, id)
+				// Library-sizing debug mode: entities created before their
+				// design streamed in had no visuals to measure; preview the
+				// sizes.txt entry now that the real mesh is attached.
+				world.applyLibrarySizeOverride(world.object_to_entity[new_node.ID()], uri.Design, new_node, true)
 			}
 		}
 		world.design_to_entity[uri.Design] = redesigns
@@ -311,6 +360,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 		exists, ok := world.entity_to_object[con.Entity].Instance()
 		if ok {
 			if con.Remove {
+				delete(world.entity_float_delta, con.Entity)
 				removeEntity(world.design_to_entity, world.entity_to_object, world.object_to_entity, con.Design, con.Entity, exists)
 				return
 			}
@@ -323,17 +373,37 @@ func (world musicalImpl) Change(con musical.Change) error {
 				terrainY := world.TerrainEditor.HeightAt(xz)
 				pos.Y = terrainY + pos.Y
 			}
-			exists.
-				SetPosition(pos).
-				SetRotation(con.Angles)
-			// This just set the object's committed Y directly. If a terrain
-			// height-brush hover preview had nudged it (objectPreviewOffsets), that
-			// transient offset is now stale — drop it so the preview's
-			// node.Y == committedY + offset invariant resets and Process re-derives
-			// a fresh offset next frame (avoids a desync when a peer moves an object
-			// while we hover a height brush over it).
-			if world.TerrainEditor != nil {
-				delete(world.TerrainEditor.objectPreviewOffsets, world.entity_to_object[con.Entity])
+			exists.SetRotation(con.Angles)
+			// Position only moves FORWARD in time: a Change older than the entity's
+			// latest positional mutation (a newer walk Action, or a later manual
+			// move) must not revert it. This is what stops an older gizmo move
+			// replayed from a later save part from clobbering a newer walk. Rotation
+			// and scale still apply. Legacy Changes carry Timing 0 and so lose to any
+			// timestamped Action — the desired "recent walk wins" on existing saves.
+			if con.Timing >= world.entity_move_timing[con.Entity] {
+				exists.SetPosition(pos)
+				world.entity_move_timing[con.Entity] = con.Timing
+				// Remember the terrain-relative lift of a float (or forget it when a
+				// plain absolute move supersedes the float) so reseatFloats can fix
+				// the Y once the deferred terrain heightfield is built (con.Offset.Y
+				// is still the raw delta — pos.Y above was the reconstructed copy).
+				if con.Editor == "float" {
+					world.entity_float_delta[con.Entity] = con.Offset.Y
+				} else {
+					delete(world.entity_float_delta, con.Entity)
+				}
+				// A newer manual move supersedes any queued/active walk for this
+				// entity, so its ActionRenderer doesn't drag it back next frame.
+				cancelEntityAction(exists)
+				// This just set the object's committed Y directly. If a terrain
+				// height-brush hover preview had nudged it (objectPreviewOffsets), that
+				// transient offset is now stale — drop it so the preview's
+				// node.Y == committedY + offset invariant resets and Process re-derives
+				// a fresh offset next frame (avoids a desync when a peer moves an object
+				// while we hover a height brush over it).
+				if world.TerrainEditor != nil {
+					delete(world.TerrainEditor.objectPreviewOffsets, world.entity_to_object[con.Entity])
+				}
 			}
 			// If the Change carries an explicit Bounds (set by the
 			// scale gizmo or restored from the musical log), use it
@@ -382,6 +452,24 @@ func (world musicalImpl) Change(con musical.Change) error {
 		}
 		registerEntity(world.design_to_entity, world.entity_to_object, world.object_to_entity, con.Design, con.Entity, node)
 		container.AddChild(node.AsNode())
+		// Seed the positional high-water mark with the placement's own timing so a
+		// later manual move or a walk Action only takes effect if it is newer.
+		world.entity_move_timing[con.Entity] = con.Timing
+		// If a float Change created this entity out of order (its placement Change
+		// lives in a later part), remember its lift for reseatFloats too.
+		if con.Editor == "float" {
+			world.entity_float_delta[con.Entity] = con.Offset.Y
+		}
+		// Library-sizing debug mode: preview the sizes.txt entry for this
+		// design (no-op outside debug mode; load-time applications are
+		// settled again by finishLoading once the terrain exists).
+		world.applyLibrarySizeOverride(con.Entity, con.Design, node, true)
+		// Replay any move Actions that arrived for this entity before its
+		// placement (a cross-device save where the move and the placement live in
+		// different parts — see Action/flushPendingActions), so the critter ends
+		// at its last commanded location instead of its placement spot. Each flushed
+		// Action advances entity_move_timing as it is applied.
+		world.flushPendingActions(con.Entity, node)
 		// A placement that streams in (history replay at load, or a remote
 		// peer) while we're terrain editing must also be non-pickable, so it
 		// doesn't block the terrain brush raycast until the next editor
@@ -413,19 +501,79 @@ func (world musicalImpl) Action(action musical.Action) error {
 		editor.Action(action)
 
 		object, ok := world.entity_to_object[action.Entity].Instance()
-		if ok {
-			if !object.AsNode().HasNode("ActionRenderer") {
-				actions := new(ActionRenderer)
-				actions.client = world.Client
-				actions.Initial = object.AsNode3D().Position()
-				actions.AsNode().SetName("ActionRenderer")
-				object.AsNode().AddChild(actions.AsNode())
-			}
-			actions := Object.To[*ActionRenderer](object.AsNode().GetNode("ActionRenderer"))
-			actions.Add(action)
+		if !ok {
+			// The entity's placement Change hasn't been replayed yet. A save is
+			// stitched from several parts (this device's local file, then each
+			// other device's cloud part — OpenCloud's io.MultiReader), and a
+			// critter placed on one device but moved on another has its placement
+			// and its move in different parts. The local part (which may carry
+			// only the move) replays first, so the Action lands before the entity
+			// exists. Park it and let flushPendingActions replay it when
+			// registerEntity creates the entity — otherwise the move is silently
+			// dropped and the critter sits at its placement spot after reload.
+			world.pending_actions[action.Entity] = append(world.pending_actions[action.Entity], action)
+			return
 		}
+		world.applyEntityAction(action.Entity, object, action)
 	})
 	return nil
+}
+
+// applyEntityAction routes a move Action to the entity's ActionRenderer, gated by
+// the positional high-water mark. A Cancel action is an explicit "walk here now /
+// start a new path" command: it's gated (an older cross-part walk can't override a
+// newer manual move) and advances the mark. Appended segments (Shift/Ctrl,
+// Cancel=false) belong to the SAME command and carry FUTURE start times, so they
+// must NOT advance the mark — otherwise a later plain right-click or drag (issued
+// "now") would be gated out behind the still-queued path. They attach directly;
+// ActionRenderer.Add orders them by timing.
+func (world musicalImpl) applyEntityAction(entity musical.Entity, object Node3D.Instance, action musical.Action) {
+	if action.Cancel {
+		if action.Timing < world.entity_move_timing[entity] {
+			return
+		}
+		world.entity_move_timing[entity] = action.Timing
+	}
+	attachEntityAction(world.Client, object, action)
+}
+
+// attachEntityAction routes an Action to the target object's ActionRenderer,
+// creating the renderer on first use. Shared by the Action handler and the
+// pending-action flush so both apply a move the same way.
+func attachEntityAction(client *Client, object Node3D.Instance, action musical.Action) {
+	if !object.AsNode().HasNode("ActionRenderer") {
+		actions := new(ActionRenderer)
+		actions.client = client
+		actions.Initial = object.AsNode3D().Position()
+		actions.AsNode().SetName("ActionRenderer")
+		object.AsNode().AddChild(actions.AsNode())
+	}
+	actions := Object.To[*ActionRenderer](object.AsNode().GetNode("ActionRenderer"))
+	actions.Add(action)
+}
+
+// cancelEntityAction clears any queued/active walk on the entity's ActionRenderer
+// (if one exists). Used when a newer manual move supersedes the walk so the
+// renderer doesn't drag the entity back to the stale target next frame.
+func cancelEntityAction(object Node3D.Instance) {
+	if object.AsNode().HasNode("ActionRenderer") {
+		Object.To[*ActionRenderer](object.AsNode().GetNode("ActionRenderer")).cancel()
+	}
+}
+
+// flushPendingActions replays any move Actions that arrived before this entity's
+// placement Change registered it (see Action), in the order they were parked,
+// each gated/advanced through the positional high-water mark so the latest move
+// wins regardless of which save part each Action came from.
+func (world musicalImpl) flushPendingActions(entity musical.Entity, object Node3D.Instance) {
+	pending := world.pending_actions[entity]
+	if len(pending) == 0 {
+		return
+	}
+	delete(world.pending_actions, entity)
+	for _, action := range pending {
+		world.applyEntityAction(entity, object, action)
+	}
 }
 
 func (world musicalImpl) LookAt(view musical.LookAt) error {

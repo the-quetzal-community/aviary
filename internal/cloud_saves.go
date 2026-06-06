@@ -70,9 +70,24 @@ func OpenCloud(community signalling.API, work musical.WorkID) (fs.File, error) {
 			file.Close()
 			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
 		}
+	} else {
+		// Fresh local part: persist the magic header NOW so the on-disk file is a
+		// valid musical.Users3DScene from its first byte. The reader below prepends
+		// a *synthetic* header for the decoder, but the file itself must still
+		// carry a real one — InsertSave uploads this raw file and peers validate
+		// that header (cloudReader), and the next reload re-validates it (the
+		// size > 0 branch above). Without this, a freshly created save is written
+		// header-less, rejected as "invalid" on reload, which kills the musical
+		// server goroutine (network.go server.run) and hard-freezes the next edit.
+		// newStorage's own empty-file header write never fires here because
+		// CloudBacked.Size() reports len(MagicHeader)+0, never 0.
+		if _, err := file.Write([]byte(musical.MagicHeader)); err != nil {
+			file.Close()
+			return nil, xray.New(err)
+		}
 	}
 
-	lazy := &lazyCloudReader{community: community, work: name, file: file, localSize: size}
+	lazy := &lazyCloudReader{community: community, work: name}
 
 	return &CloudBacked{
 		name: name,
@@ -113,8 +128,6 @@ const decodeReadBuffer = 1 << 16 // 64 KiB
 type lazyCloudReader struct {
 	community signalling.API
 	work      string
-	file      *os.File
-	localSize int64
 
 	once sync.Once
 	r    io.Reader
@@ -137,12 +150,10 @@ func (l *lazyCloudReader) init() {
 		Engine.Raise(err) // not fatal: fall through with whatever parts we got.
 	}
 	var readers []io.Reader
-	var other int
 	for part, stat := range parts {
 		if part == signalling.PartID(UserState.Device) {
 			continue
 		}
-		other++
 		readers = append(readers, &cloudReader{
 			community: l.community,
 			work:      signalling.WorkID(l.work),
@@ -151,16 +162,9 @@ func (l *lazyCloudReader) init() {
 			time:      stat.Time,
 		})
 	}
-	// Local part empty but other devices have data: seed the local file with the
-	// magic header so future saves append to a valid file. Safe here — the local
-	// reader has already EOF'd (empty), and no save can happen until the load
-	// finishes (well after this runs).
-	if l.localSize == 0 && other > 0 {
-		if _, werr := l.file.Write([]byte(musical.MagicHeader)); werr != nil {
-			l.err = xray.New(werr)
-			return
-		}
-	}
+	// The local part's magic header is seeded eagerly in OpenCloud (fresh files)
+	// or already present (reloads), so there's nothing to seed here — the local
+	// file is always a valid musical.Users3DScene by the time future saves append.
 	// Buffer the cloud parts too — each cloudReader serves the decoder's tiny
 	// per-record reads from either a local cache file or a network stream;
 	// either way a 64K buffer turns thousands of small reads (syscalls /
