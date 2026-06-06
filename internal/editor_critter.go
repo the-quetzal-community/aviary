@@ -1912,8 +1912,7 @@ func newProceduralPart(design string) proceduralParter {
 // clip the ground plate; that offset is editor scaffolding, not part
 // of the model).
 func (ce *CritterEditor) ExportSubtree() Node3D.Instance {
-	root := Node3D.New()
-	root.AsNode().SetName("critter")
+	root := newExportRoot("critter")
 	if ce.body.mesh != MeshInstance3D.Nil {
 		if dup, ok := Object.As[Node3D.Instance](ce.body.mesh.AsNode().Duplicate()); ok {
 			dup.SetPosition(Vector3.Zero)

@@ -60,8 +60,7 @@ func (fe *FoliageEditor) Name() string { return "foliage" }
 // StandardMaterial3D carrying the current leaf texture so that glTF
 // exporters embed the albedo (and alpha scissor) reliably for the leaves.
 func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
-	root := Node3D.New()
-	root.AsNode().SetName("foliage")
+	root := newExportRoot("foliage")
 	if fe.Mesh == MeshInstance3D.Nil {
 		return root
 	}

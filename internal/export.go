@@ -11,6 +11,7 @@ import (
 	"graphics.gd/classdb/GLTFState"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
+	"graphics.gd/variant/Object"
 )
 
 // Exporter is an optional capability an editor implements to
@@ -31,6 +32,30 @@ type Exporter interface {
 	// (e.g. zero out a body's float-above-ground rise) by setting
 	// the root or its children's positions accordingly.
 	ExportSubtree() Node3D.Instance
+}
+
+// newExportRoot creates the named Node3D root that every Exporter.ExportSubtree
+// assembles its duplicated nodes under. The caller owns and frees it (see Export).
+func newExportRoot(name string) Node3D.Instance {
+	root := Node3D.New()
+	root.AsNode().SetName(name)
+	return root
+}
+
+// exportDuplicateChild duplicates src as a Node3D and parents it under root,
+// returning the duplicate (Node3D.Nil when src is nil or the cast fails). Used by
+// the container-copying ExportSubtree implementations (e.g. vehicle's Objects and
+// Spinner groups).
+func exportDuplicateChild(root, src Node3D.Instance) Node3D.Instance {
+	if src == Node3D.Nil {
+		return Node3D.Nil
+	}
+	dup, ok := Object.As[Node3D.Instance](src.AsNode().Duplicate())
+	if !ok {
+		return Node3D.Nil
+	}
+	root.AsNode().AddChild(dup.AsNode())
+	return dup
 }
 
 // Export prompts the user with an OS-native file save dialog and
