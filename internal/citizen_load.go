@@ -31,12 +31,24 @@ func LoadCitizenAssets() (*citizen.BaseMesh, []*citizen.Target, error) {
 	return base, targets, nil
 }
 
-func loadCitizenBase(path string) (*citizen.BaseMesh, error) {
+// openCitizenText opens a citizen asset (res:// in production, the live
+// filesystem in dev mode) via Godot's FileAccess and returns its full text.
+// Centralises the open + nil-check + "citizen: cannot open" error that every
+// citizen .obj/.target/.mhclo loader repeated.
+func openCitizenText(path string) (string, error) {
 	f := FileAccess.Open(path, FileAccess.Read)
 	if f == FileAccess.Nil {
-		return nil, fmt.Errorf("citizen: cannot open %s", path)
+		return "", fmt.Errorf("citizen: cannot open %s", path)
 	}
-	return citizen.ParseOBJ(path, strings.NewReader(f.GetAsText()))
+	return f.GetAsText(), nil
+}
+
+func loadCitizenBase(path string) (*citizen.BaseMesh, error) {
+	text, err := openCitizenText(path)
+	if err != nil {
+		return nil, err
+	}
+	return citizen.ParseOBJ(path, strings.NewReader(text))
 }
 
 func loadCitizenTargets(root string) ([]*citizen.Target, error) {
@@ -52,11 +64,10 @@ func loadCitizenTargets(root string) ([]*citizen.Target, error) {
 				continue
 			}
 			path := dir + "/" + file
-			f := FileAccess.Open(path, FileAccess.Read)
-			if f == FileAccess.Nil {
-				return fmt.Errorf("citizen: cannot open %s", path)
+			content, err := openCitizenText(path)
+			if err != nil {
+				return err
 			}
-			content := f.GetAsText()
 			rel := strings.TrimSuffix(strings.TrimPrefix(path, root+"/"), ".target")
 			t, err := citizen.ParseTarget(rel, strings.NewReader(content))
 			if err != nil {

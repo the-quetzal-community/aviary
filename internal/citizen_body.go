@@ -700,19 +700,19 @@ func markCoveredWithDirs(covered []bool, dirs, body, cloth, clothNormals []citiz
 // scene tree.
 func loadCitizenDressing(objPath string) (*CitizenDressing, error) {
 	mhcloPath := strings.TrimSuffix(objPath, ".obj") + ".mhclo"
-	objFile := FileAccess.Open(objPath, FileAccess.Read)
-	if objFile == FileAccess.Nil {
-		return nil, fmt.Errorf("citizen: cannot open %s", objPath)
-	}
-	base, err := citizen.ParseOBJ(objPath, strings.NewReader(objFile.GetAsText()))
+	objText, err := openCitizenText(objPath)
 	if err != nil {
 		return nil, err
 	}
-	mhcloFile := FileAccess.Open(mhcloPath, FileAccess.Read)
-	if mhcloFile == FileAccess.Nil {
-		return nil, fmt.Errorf("citizen: cannot open %s", mhcloPath)
+	base, err := citizen.ParseOBJ(objPath, strings.NewReader(objText))
+	if err != nil {
+		return nil, err
 	}
-	mhclo, err := citizen.ParseMHClo(mhcloPath, strings.NewReader(mhcloFile.GetAsText()))
+	mhcloText, err := openCitizenText(mhcloPath)
+	if err != nil {
+		return nil, err
+	}
+	mhclo, err := citizen.ParseMHClo(mhcloPath, strings.NewReader(mhcloText))
 	if err != nil {
 		return nil, err
 	}
