@@ -121,7 +121,7 @@ var coasterCategories = map[string]string{
 // no hyphens). The "station" category is theme-less; the filename is
 // the shape directly.
 func coasterParsePath(design string) (category, theme, shape string, ok bool) {
-	folder := path.Base(path.Dir(design))
+	folder := designCategory(design)
 	cat, isCoaster := coasterCategories[folder]
 	if !isCoaster {
 		return "", "", "", false

@@ -2,7 +2,6 @@ package internal
 
 import (
 	"encoding/json"
-	"path"
 	"reflect"
 	"strings"
 	"time"
@@ -286,7 +285,7 @@ func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
 		return
 	}
 	var slider string
-	switch path.Base(path.Dir(design)) {
+	switch designCategory(design) {
 	case "leaflet":
 		slider = "leaflet"
 	case "timbers":

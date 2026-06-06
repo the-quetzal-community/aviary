@@ -178,7 +178,7 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, -0.3)))
 		}
 		editor.entity_to_mirror[change.Entity] = node.ID()
-		if path.Base(path.Dir(editor.client.design_to_string[change.Design])) == "spinner" {
+		if designCategory(editor.client.design_to_string[change.Design]) == "spinner" {
 			editor.Spinner.AsNode().AddChild(node.AsNode())
 		} else {
 			editor.Objects.AsNode().AddChild(node.AsNode())

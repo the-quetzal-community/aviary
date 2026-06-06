@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"path"
 	"reflect"
 	"slices"
 	"strconv"
@@ -120,6 +121,15 @@ func removeEntity(designToEntity map[musical.Design][]Node3D.ID, entityToObject 
 	delete(entityToObject, entity)
 	delete(objectToEntity, node.ID())
 	node.AsNode().QueueFree()
+}
+
+// designCategory returns the library category a resource URI sits in — the name
+// of its parent folder (library/<author>/<category>/<file>). Editors switch on
+// this to decide how a picked or placed design behaves (e.g. "spinner",
+// "fencing", "leaflet", "hanging"/"mounted"). (editor_terrain and the fence tool
+// still inline path.Base(path.Dir(...)) for now — adoption is incremental.)
+func designCategory(uri string) string {
+	return path.Base(path.Dir(uri))
 }
 
 func (client *Client) MusicalDesign(resource string) musical.Design {

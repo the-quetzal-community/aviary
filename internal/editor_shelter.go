@@ -280,7 +280,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		}
 	} else {
 		node = editor.client.instantiateDesign(change.Design)
-		kind := path.Base(path.Dir(design))
+		kind := designCategory(design)
 		if kind == "hanging" || kind == "mounted" {
 			node.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
 		}
@@ -358,7 +358,7 @@ func (editor *ShelterEditor) UnhandledInput(event InputEvent.Instance) {
 func (editor *ShelterEditor) PhysicsProcess(_ Float.X) {
 	if design := editor.Preview.Design(); design != "" {
 		mouse := Viewport.Get(editor.AsNode()).GetMousePosition()
-		kind := path.Base(path.Dir(design))
+		kind := designCategory(design)
 		switch editor.client.ui.mode {
 		case ModeDressing:
 			if hover := MousePicker(editor.AsNode3D()); hover.Collider != Object.Nil {
