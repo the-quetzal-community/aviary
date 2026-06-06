@@ -181,12 +181,7 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 	node, ok := editor.entity_to_mirror[change.Entity].Instance()
 	switch {
 	case !ok && change.Mirror != (Vector3.XYZ{}):
-		scene, ok := editor.client.sceneFor(change.Design)
-		if ok {
-			node = Object.To[Node3D.Instance](scene.Instantiate())
-		} else {
-			node = Node3D.New()
-		}
+		node = editor.client.instantiateDesign(change.Design)
 		switch {
 		case change.Mirror.X != 0:
 			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(-0.3, 0.3, 0.3)))
@@ -250,13 +245,7 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 		}
 		return nil
 	}
-	var node Node3D.Instance
-	scene, ok := editor.client.sceneFor(change.Design)
-	if ok {
-		node = Object.To[Node3D.Instance](scene.Instantiate())
-	} else {
-		node = Node3D.New()
-	}
+	node := editor.client.instantiateDesign(change.Design)
 	node.
 		SetPosition(change.Offset).
 		SetRotation(change.Angles)

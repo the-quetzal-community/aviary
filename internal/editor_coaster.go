@@ -286,13 +286,7 @@ func (editor *CoasterEditor) Change(change musical.Change) error {
 			SetScale(scale)
 		return nil
 	}
-	var node Node3D.Instance
-	scene, ok := editor.client.sceneFor(change.Design)
-	if ok {
-		node = Object.To[Node3D.Instance](scene.Instantiate())
-	} else {
-		node = Node3D.New()
-	}
+	node := editor.client.instantiateDesign(change.Design)
 	node.
 		SetPosition(change.Offset).
 		SetRotation(change.Angles).

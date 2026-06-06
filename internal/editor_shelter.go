@@ -282,12 +282,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			node.AsNode().AddChild(cut.AsNode())
 		}
 	} else {
-		scene, ok := editor.client.sceneFor(change.Design)
-		if ok {
-			node = Object.To[Node3D.Instance](scene.Instantiate())
-		} else {
-			node = Node3D.New()
-		}
+		node = editor.client.instantiateDesign(change.Design)
 		kind := path.Base(path.Dir(design))
 		if kind == "hanging" || kind == "mounted" {
 			node.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))

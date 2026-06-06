@@ -272,6 +272,19 @@ func (client *Client) sceneFor(design musical.Design) (PackedScene.Instance, boo
 	return scene, true
 }
 
+// instantiateDesign returns a fresh node for design: its PackedScene instance
+// when the scene has loaded, or an empty Node3D placeholder otherwise (the
+// placement is re-applied once the design's Import streams in and sceneFor
+// resolves). Centralises the sceneFor + Instantiate/else-empty dance the
+// placement Change handlers (scenery/shelter/vehicle/coaster, world replay)
+// repeat verbatim.
+func (client *Client) instantiateDesign(design musical.Design) Node3D.Instance {
+	if scene, ok := client.sceneFor(design); ok {
+		return Object.To[Node3D.Instance](scene.Instantiate())
+	}
+	return Node3D.New()
+}
+
 func (world musicalImpl) Import(uri musical.Import) error {
 	world.enqueue(func() {
 		defer timeIn(&bucketImport)()
@@ -416,13 +429,7 @@ func (world musicalImpl) Change(con musical.Change) error {
 			}
 			return
 		}
-		var node Node3D.Instance
-		scene, ok := world.sceneFor(con.Design)
-		if ok {
-			node = Object.To[Node3D.Instance](scene.Instantiate())
-		} else {
-			node = Node3D.New()
-		}
+		node := world.instantiateDesign(con.Design)
 		if node.AsNode().HasNode("AnimationPlayer") {
 			anim := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
 			anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
