@@ -115,7 +115,7 @@ func loadStaticObjNode(objPath string) Node3D.Instance {
 	// origin. Without this, MakeHuman items render at human-world Y
 	// (head ≈ 1.7 m) and float well above the much shorter critter.
 	var shift citizen.Vec3
-	mhcloPath := strings.TrimSuffix(objPath, ".obj") + ".mhclo"
+	mhcloPath := mhcloSidecarPath(objPath)
 	if mhcloFile := FileAccess.Open(mhcloPath, FileAccess.Read); mhcloFile != FileAccess.Nil {
 		if mhclo, err := citizen.ParseMHClo(mhcloPath, strings.NewReader(mhcloFile.GetAsText())); err == nil {
 			if c, ok := mhcloAnchorCentroid(mhclo); ok {

@@ -699,7 +699,7 @@ func markCoveredWithDirs(covered []bool, dirs, body, cloth, clothNormals []citiz
 // every body rebuild. The caller positions the MeshInstance3D in the
 // scene tree.
 func loadCitizenDressing(objPath string) (*CitizenDressing, error) {
-	mhcloPath := strings.TrimSuffix(objPath, ".obj") + ".mhclo"
+	mhcloPath := mhcloSidecarPath(objPath)
 	objText, err := openCitizenText(objPath)
 	if err != nil {
 		return nil, err

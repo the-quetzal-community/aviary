@@ -43,6 +43,13 @@ func openCitizenText(path string) (string, error) {
 	return f.GetAsText(), nil
 }
 
+// mhcloSidecarPath returns the .mhclo sidecar path for a MakeHuman .obj. The
+// assets ship as <name>.obj + <name>.mhclo pairs, so the sidecar is the .obj
+// path with its extension swapped.
+func mhcloSidecarPath(objPath string) string {
+	return strings.TrimSuffix(objPath, ".obj") + ".mhclo"
+}
+
 func loadCitizenBase(path string) (*citizen.BaseMesh, error) {
 	text, err := openCitizenText(path)
 	if err != nil {
