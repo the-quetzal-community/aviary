@@ -55,6 +55,14 @@ func (preview *PreviewRenderer) Design() string {
 	return preview.design
 }
 
+// clearChild frees the preview's currently-attached mesh child, if any. A
+// PreviewRenderer holds at most one child — the active design's instance.
+func (preview *PreviewRenderer) clearChild() {
+	if preview.AsNode().GetChildCount() > 0 {
+		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
+	}
+}
+
 func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 	preview.design = design
 	preview.attached = "" // the new design's mesh hasn't attached yet
@@ -66,9 +74,7 @@ func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 	gen := preview.gen
 	// Clear the previous preview immediately so the old design doesn't
 	// linger while the new one loads.
-	if preview.AsNode().GetChildCount() > 0 {
-		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
-	}
+	preview.clearChild()
 	// MakeHuman clothing items (and other raw-OBJ assets) don't ship
 	// with .import companions, so Godot's resource loader spews
 	// "Resource file not found" errors before returning Nil. Detect
@@ -109,9 +115,7 @@ func (preview *PreviewRenderer) attach(instance Node3D.Instance, gen int) {
 	}
 	// A previous attach for this same generation shouldn't happen, but if
 	// any child slipped in, clear it so we never stack two previews.
-	if preview.AsNode().GetChildCount() > 0 {
-		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
-	}
+	preview.clearChild()
 	preview.remove_collisions(instance.AsNode())
 	preview.AsNode().AddChild(instance.AsNode())
 
@@ -162,9 +166,7 @@ func (preview *PreviewRenderer) AttachedDesign() string { return preview.attache
 
 func (preview *PreviewRenderer) Remove() {
 	preview.gen++ // invalidate any in-flight async load
-	if preview.AsNode().GetChildCount() > 0 {
-		Node.Instance(preview.AsNode().GetChild(0)).QueueFree()
-	}
+	preview.clearChild()
 	preview.design = ""
 	preview.attached = ""
 	preview.hasExplicitScale = false

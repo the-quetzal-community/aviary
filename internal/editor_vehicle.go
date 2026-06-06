@@ -323,12 +323,8 @@ func (*VehicleEditor) ChangeEditor() {}
 func (editor *VehicleEditor) SelectDesign(mode Mode, design string) {
 	switch mode {
 	case ModeGeometry, ModeDressing:
-		if editor.Preview.AsNode().GetChildCount() > 0 {
-			Node.Instance(editor.Preview.AsNode().GetChild(0)).QueueFree()
-		}
-		if editor.MirrorPreview.AsNode().GetChildCount() > 0 {
-			Node.Instance(editor.MirrorPreview.AsNode().GetChild(0)).QueueFree()
-		}
+		editor.Preview.clearChild()
+		editor.MirrorPreview.clearChild()
 		editor.Preview.
 			SetDesign(design).
 			SetRotation(Euler.Radians{})
