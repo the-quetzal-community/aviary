@@ -62,14 +62,13 @@ func snapshotPath(work musical.WorkID) string {
 	return UserDataDir + "/snapshots/" + name + ".snap"
 }
 
-// writeTerrainSnapshot atomically writes snap for the given world (temp file +
-// rename), so a crash mid-write never leaves a torn snapshot that would later
-// be read as valid.
-func writeTerrainSnapshot(work musical.WorkID, snap *terrainSnapshot) error {
+// writeSnapshotFile gob-encodes snap to path atomically (temp file + rename), so
+// a crash mid-write never leaves a torn snapshot that would later be read as
+// valid. Shared by the terrain and critter snapshot writers.
+func writeSnapshotFile(path string, snap any) error {
 	if err := os.MkdirAll(UserDataDir+"/snapshots", 0777); err != nil {
 		return err
 	}
-	path := snapshotPath(work)
 	tmp := path + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
@@ -85,6 +84,11 @@ func writeTerrainSnapshot(work musical.WorkID, snap *terrainSnapshot) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// writeTerrainSnapshot atomically writes snap for the given world.
+func writeTerrainSnapshot(work musical.WorkID, snap *terrainSnapshot) error {
+	return writeSnapshotFile(snapshotPath(work), snap)
 }
 
 // readTerrainSnapshot loads the snapshot for a world, or returns an error if it
@@ -138,25 +142,7 @@ func critterSnapshotPath(work musical.WorkID) string {
 }
 
 func writeCritterSnapshot(work musical.WorkID, snap *critterSnapshot) error {
-	if err := os.MkdirAll(UserDataDir+"/snapshots", 0777); err != nil {
-		return err
-	}
-	path := critterSnapshotPath(work)
-	tmp := path + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	if err := gob.NewEncoder(f).Encode(snap); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeSnapshotFile(critterSnapshotPath(work), snap)
 }
 
 func readCritterSnapshot(work musical.WorkID) (*critterSnapshot, error) {
