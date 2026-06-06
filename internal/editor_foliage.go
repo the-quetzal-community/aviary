@@ -2,7 +2,6 @@ package internal
 
 import (
 	"encoding/json"
-	"fmt"
 	"path"
 	"reflect"
 	"strings"
@@ -295,12 +294,6 @@ func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
 		slider = "timbers"
 	default:
 		return
-	}
-	fmt.Println("foliage select:", slider, design)
-	if strings.HasSuffix(design, ".region") {
-		if f := FileAccess.Open(design, FileAccess.Read); f != FileAccess.Nil {
-			fmt.Println("  region body:", f.GetAsText())
-		}
 	}
 	fe.client.emitDesignSculpt("foliage", slider, design)
 }
