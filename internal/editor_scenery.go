@@ -198,15 +198,7 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 func (fe *SceneryEditor) Name() string { return "scenery" }
 
 func (fe *SceneryEditor) EnableEditor() {
-	gizmos := []Gizmo{GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat}
-	if librarySizesFile() != "" {
-		// GizmoScale is exposed only in the library-sizing debug mode
-		// (AVIARY_LIBRARY_SIZES): dial a placed model's size (and lift,
-		// via GizmoFloat) until it looks right, then press F2 to persist
-		// the measurement into the library's sizes.txt.
-		gizmos = append(gizmos, GizmoScale)
-	}
-	fe.client.SetGizmos(append(gizmos, GizmoSpace, GizmoClone, GizmoTrash))
+	fe.client.SetGizmos(placementGizmosWithScale())
 	fe.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (fe *SceneryEditor) ChangeEditor() {

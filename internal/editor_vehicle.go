@@ -340,10 +340,7 @@ func (editor *VehicleEditor) PhysicsProcess(_ Float.X) {
 }
 
 func (editor *VehicleEditor) EnableEditor() {
-	editor.client.SetGizmos([]Gizmo{
-		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
-		GizmoSpace, GizmoClone, GizmoTrash,
-	})
+	editor.client.SetGizmos(placementGizmos)
 }
 func (*VehicleEditor) ChangeEditor() {}
 

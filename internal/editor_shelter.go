@@ -186,14 +186,7 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *ShelterEditor) EnableEditor() {
-	gizmos := []Gizmo{GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat}
-	if librarySizesFile() != "" {
-		// GizmoScale is exposed only in the library-sizing debug mode
-		// (AVIARY_LIBRARY_SIZES): dial a placed part's size with it, then
-		// press F2 to persist the measurement into the library's sizes.txt.
-		gizmos = append(gizmos, GizmoScale)
-	}
-	editor.client.SetGizmos(append(gizmos, GizmoSpace, GizmoClone, GizmoTrash))
+	editor.client.SetGizmos(placementGizmosWithScale())
 	shader := ShaderMaterial.New()
 	shader.SetShader(LoadSync[Shader.Instance]("res://shader/grid.gdshader"))
 	editor.grid_shader = shader.ID()

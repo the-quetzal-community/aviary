@@ -97,10 +97,7 @@ func (*CoasterEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *CoasterEditor) EnableEditor() {
-	editor.client.SetGizmos([]Gizmo{
-		GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
-		GizmoSpace, GizmoClone, GizmoTrash,
-	})
+	editor.client.SetGizmos(placementGizmos)
 	editor.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (editor *CoasterEditor) ChangeEditor() {

@@ -164,6 +164,28 @@ func (world *Client) SetGizmos(gizmos []Gizmo) {
 	world.ui.CloudControl.SetGizmos(gizmos)
 }
 
+// placementGizmos is the standard manipulation set every object-placement editor
+// (coaster/critter/vehicle) exposes: point/shift/twist/float to position the
+// selection, space/clone/trash to manage it. Read-only — pass it to SetGizmos,
+// never append to it (use placementGizmosWithScale to vary the set).
+var placementGizmos = []Gizmo{
+	GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat,
+	GizmoSpace, GizmoClone, GizmoTrash,
+}
+
+// placementGizmosWithScale returns placementGizmos with the debug-only GizmoScale
+// inserted (before the manage trio) when library-sizing mode is active. Scenery
+// and shelter use it so the user can dial a placed model's size with GizmoScale
+// (and lift with GizmoFloat), then press F2 to persist the measurement into the
+// library's sizes.txt.
+func placementGizmosWithScale() []Gizmo {
+	gizmos := []Gizmo{GizmoPoint, GizmoShift, GizmoTwist, GizmoFloat}
+	if librarySizesFile() != "" {
+		gizmos = append(gizmos, GizmoScale)
+	}
+	return append(gizmos, GizmoSpace, GizmoClone, GizmoTrash)
+}
+
 type Editor interface {
 	Node3D.Any
 
