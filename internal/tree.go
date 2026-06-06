@@ -177,64 +177,44 @@ func (tree *Tree) recalculate() {
 	defer Object.Instance(ArrayMesh.AsObject()).SetSignalsBlocked(false)
 
 	ArrayMesh.ClearSurfaces()
-	{
-		var vertices = Packed.New[Vector3.XYZ]()
-		for _, vertex := range tree.mesh.verts {
-			vertices.Append(vertex)
-		}
-		var indicies = Packed.New[int32]()
-		for _, index := range tree.mesh.faces {
-			indicies.Append(index.Z)
-			indicies.Append(index.Y)
-			indicies.Append(index.X)
-		}
-		var normals = Packed.New[Vector3.XYZ]()
-		for _, normal := range tree.mesh.normals {
-			normals.Append(normal)
-		}
-		var uvs = Packed.New[Vector2.XY]()
-		for _, uv := range tree.mesh.uvs {
-			uvs.Append(uv)
-		}
-		var arrays = [Mesh.ArrayMax]any{
-			Mesh.ArrayVertex: vertices,
-			Mesh.ArrayIndex:  indicies,
-			Mesh.ArrayNormal: normals,
-			Mesh.ArrayTexUv:  uvs,
-		}
-		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
-	}
-	{
-		var vertices = Packed.New[Vector3.XYZ]()
-		for _, vertex := range tree.twig.verts {
-			vertices.Append(vertex)
-		}
-		var indicies = Packed.New[int32]()
-		for _, index := range tree.twig.faces {
-			indicies.Append(index.Z)
-			indicies.Append(index.Y)
-			indicies.Append(index.X)
-		}
-		var normals = Packed.New[Vector3.XYZ]()
-		for _, normal := range tree.twig.normals {
-			normals.Append(normal)
-		}
-		var uvs = Packed.New[Vector2.XY]()
-		for _, uv := range tree.twig.uvs {
-			uvs.Append(uv)
-		}
-		var arrays = [Mesh.ArrayMax]any{
-			Mesh.ArrayVertex: vertices,
-			Mesh.ArrayIndex:  indicies,
-			Mesh.ArrayNormal: normals,
-			Mesh.ArrayTexUv:  uvs,
-		}
-		ArrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
-	}
+	addBufferSurface(ArrayMesh, tree.mesh)
+	addBufferSurface(ArrayMesh, tree.twig)
 	if restoreMats {
 		ArrayMesh.AsMesh().SurfaceSetMaterial(0, mat1)
 		ArrayMesh.AsMesh().SurfaceSetMaterial(1, mat2)
 	}
+}
+
+// addBufferSurface packs buf into Godot Packed arrays and appends it as a
+// triangle surface on mesh. The Tree builds its trunk/branch surface and its
+// twig surface this identical way; face indices are emitted Z,Y,X to flip the
+// winding to Godot's front-face order.
+func addBufferSurface(mesh ArrayMesh.Instance, buf buffer) {
+	var vertices = Packed.New[Vector3.XYZ]()
+	for _, vertex := range buf.verts {
+		vertices.Append(vertex)
+	}
+	var indicies = Packed.New[int32]()
+	for _, index := range buf.faces {
+		indicies.Append(index.Z)
+		indicies.Append(index.Y)
+		indicies.Append(index.X)
+	}
+	var normals = Packed.New[Vector3.XYZ]()
+	for _, normal := range buf.normals {
+		normals.Append(normal)
+	}
+	var uvs = Packed.New[Vector2.XY]()
+	for _, uv := range buf.uvs {
+		uvs.Append(uv)
+	}
+	var arrays = [Mesh.ArrayMax]any{
+		Mesh.ArrayVertex: vertices,
+		Mesh.ArrayIndex:  indicies,
+		Mesh.ArrayNormal: normals,
+		Mesh.ArrayTexUv:  uvs,
+	}
+	mesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }
 
 func scaleInDirection(vector, direction Vector3.XYZ, scale Float.X) Vector3.XYZ {
