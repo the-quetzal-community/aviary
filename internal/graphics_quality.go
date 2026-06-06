@@ -56,7 +56,7 @@ func (q GraphicsQuality) directionalShadowAtlasSize() int {
 		return 2048
 	case QualityRefined:
 		return 4096
-	default: // QualityFerrari
+	default: // QualityHighest
 		return 8192
 	}
 }
