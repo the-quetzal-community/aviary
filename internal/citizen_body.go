@@ -352,21 +352,21 @@ func clothRestNormals(verts []citizen.Vec3, indices []int32) []citizen.Vec3 {
 // Caller should ClearSurfaces() before calling this on a mesh that
 // already has surfaces.
 func (b *CitizenBody) surface() {
-	var arrays [Mesh.ArrayMax]any
-	arrays[Mesh.ArrayVertex] = b.vertexBuf
-	arrays[Mesh.ArrayIndex] = b.indices
-	if len(b.uvBuf) == len(b.vertexBuf) {
-		arrays[Mesh.ArrayTexUv] = b.uvBuf
-	}
-	b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
-	if len(b.eyeIndices) > 0 {
-		var eyeArrays [Mesh.ArrayMax]any
-		eyeArrays[Mesh.ArrayVertex] = b.vertexBuf
-		eyeArrays[Mesh.ArrayIndex] = b.eyeIndices
+	// Both surfaces share the vertex (and UV) buffer and differ only in their
+	// index buffer — surface 0 the body, surface 1 the eyes — so build them the
+	// same way to keep the UV-presence guard in one place.
+	addSurface := func(indices any) {
+		var arrays [Mesh.ArrayMax]any
+		arrays[Mesh.ArrayVertex] = b.vertexBuf
+		arrays[Mesh.ArrayIndex] = indices
 		if len(b.uvBuf) == len(b.vertexBuf) {
-			eyeArrays[Mesh.ArrayTexUv] = b.uvBuf
+			arrays[Mesh.ArrayTexUv] = b.uvBuf
 		}
-		b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, eyeArrays[:])
+		b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
+	}
+	addSurface(b.indices)
+	if len(b.eyeIndices) > 0 {
+		addSurface(b.eyeIndices)
 	}
 }
 
