@@ -705,15 +705,7 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 		ce.applySlider(editing, Float.X(value))
 		return
 	}
-	if err := ce.client.space.Sculpt(musical.Sculpt{
-		Author: ce.client.id,
-		Editor: "critter",
-		Slider: editing,
-		Amount: Float.X(value),
-		Commit: commit,
-	}); err != nil {
-		Engine.Raise(err)
-	}
+	ce.client.emitSliderSculpt("critter", editing, value, commit)
 }
 
 // Sculpt routes incoming sculpts. Anything starting with "bone/" is
@@ -721,10 +713,7 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 // Everything else falls through to the legacy macro slider system
 // (body shape sliders) so existing scenes replay correctly.
 func (ce *CritterEditor) Sculpt(brush musical.Sculpt) error {
-	if strings.HasPrefix(brush.Slider, "environment/") {
-		// World lighting is single-owned by the terrain editor (environment/*
-		// sculpts are stamped Editor "terrain"). Ignore any that reach a
-		// non-owner so per-editor caches can't diverge and clobber the look.
+	if isEnvironmentSculpt(brush) {
 		return nil
 	}
 	// During the initial bulk replay, buffer body-shape sculpts and fold

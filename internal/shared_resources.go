@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEventKey"
 	"graphics.gd/classdb/Node3D"
@@ -198,4 +199,57 @@ func reflectSliderConfig(rtype reflect.Type, prop string) (init, from, upto, ste
 		return init, from, upto, step, true
 	}
 	return 0, 0, 0, 0, false
+}
+
+// reflectSliderConfigOr returns reflectSliderConfig for the "<group>/<prop>"
+// editing key, falling back to the supplied defaults when the resource struct
+// carries no matching gd-tagged field. Replaces the
+// Cut("/") + reflectSliderConfig + hardcoded-default tail every procedural
+// editor's SliderConfig repeated.
+func reflectSliderConfigOr(rtype reflect.Type, editing string, init, from, upto, step float64) (float64, float64, float64, float64) {
+	_, prop, _ := strings.Cut(editing, "/")
+	if i, f, u, s, ok := reflectSliderConfig(rtype, prop); ok {
+		return i, f, u, s
+	}
+	return init, from, upto, step
+}
+
+// isEnvironmentSculpt reports whether brush targets world lighting
+// (environment/* sliders). Those are single-owned by the terrain editor
+// (stamped Editor "terrain"), so every other editor drops them on arrival —
+// otherwise a non-owner's per-editor lighting cache diverges and clobbers the
+// look. Each placement/procedural editor's Sculpt guards on this first.
+func isEnvironmentSculpt(brush musical.Sculpt) bool {
+	return strings.HasPrefix(brush.Slider, "environment/")
+}
+
+// emitSliderSculpt records a slider-amount Sculpt under editor/slider, raising
+// any storage error. Centralises the musical.Sculpt{Author, Editor, Slider,
+// Amount, Commit} block every procedural editor's SliderHandle repeated verbatim
+// (the per-editor throttle stays at the call site — its state differs per editor).
+func (client *Client) emitSliderSculpt(editor, slider string, value float64, commit bool) {
+	if err := client.space.Sculpt(musical.Sculpt{
+		Author: client.id,
+		Editor: editor,
+		Slider: slider,
+		Amount: Float.X(value),
+		Commit: commit,
+	}); err != nil {
+		Engine.Raise(err)
+	}
+}
+
+// emitDesignSculpt records a committed material-selection Sculpt: it maps the
+// library resource to a musical.Design (registering an Import if new) and emits
+// it under editor/slider. Shared by the material-tab editors' SelectDesign.
+func (client *Client) emitDesignSculpt(editor, slider, resource string) {
+	if err := client.space.Sculpt(musical.Sculpt{
+		Author: client.id,
+		Editor: editor,
+		Slider: slider,
+		Design: client.MusicalDesign(resource),
+		Commit: true,
+	}); err != nil {
+		Engine.Raise(err)
+	}
 }

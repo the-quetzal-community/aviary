@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"graphics.gd/classdb/BaseMaterial3D"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/StandardMaterial3D"
@@ -61,10 +60,7 @@ func (fe *BoulderEditor) ExitTree() {
 }
 
 func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
-	if strings.HasPrefix(brush.Slider, "environment/") {
-		// World lighting is single-owned by the terrain editor (environment/*
-		// sculpts are stamped Editor "terrain"). Ignore any that reach a
-		// non-owner so per-editor caches can't diverge and clobber the look.
+	if isEnvironmentSculpt(brush) {
 		return nil
 	}
 	editing := brush.Slider
@@ -131,23 +127,11 @@ func (fe *BoulderEditor) SelectDesign(mode Mode, design string) {
 	}
 	// Mineral has only one material slot, so the slider name is fixed
 	// — unlike foliage which keys on leaflet/timbers.
-	if err := fe.client.space.Sculpt(musical.Sculpt{
-		Author: fe.client.id,
-		Editor: "mineral",
-		Slider: "mineral",
-		Design: fe.client.MusicalDesign(design),
-		Commit: true,
-	}); err != nil {
-		Engine.Raise(err)
-	}
+	fe.client.emitDesignSculpt("mineral", "mineral", design)
 }
 
 func (fe *BoulderEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
-	_, prop, _ := strings.Cut(editing, "/")
-	if init, from, upto, step, ok := reflectSliderConfig(reflect.TypeFor[Rock](), prop); ok {
-		return init, from, upto, step
-	}
-	return 1, 0, 5, 0.01
+	return reflectSliderConfigOr(reflect.TypeFor[Rock](), editing, 1, 0, 5, 0.01)
 }
 
 func (fe *BoulderEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
@@ -155,13 +139,5 @@ func (fe *BoulderEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	fe.last_slider_sculpt = time.Now()
-	if err := fe.client.space.Sculpt(musical.Sculpt{
-		Author: fe.client.id,
-		Editor: "mineral",
-		Slider: editing,
-		Amount: Float.X(value),
-		Commit: commit,
-	}); err != nil {
-		Engine.Raise(err)
-	}
+	fe.client.emitSliderSculpt("mineral", editing, value, commit)
 }

@@ -10,7 +10,6 @@ import (
 
 	"graphics.gd/classdb/AtlasTexture"
 	"graphics.gd/classdb/BaseMaterial3D"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
@@ -20,7 +19,6 @@ import (
 	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
-	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Rect2"
 	"the.quetzal.community/aviary/internal/musical"
@@ -172,10 +170,7 @@ func (fe *FoliageEditor) applyMaterials() {
 }
 
 func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
-	if strings.HasPrefix(brush.Slider, "environment/") {
-		// World lighting is single-owned by the terrain editor (environment/*
-		// sculpts are stamped Editor "terrain"). Ignore any that reach a
-		// non-owner so per-editor caches can't diverge and clobber the look.
+	if isEnvironmentSculpt(brush) {
 		return nil
 	}
 	switch brush.Slider {
@@ -307,23 +302,11 @@ func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
 			fmt.Println("  region body:", f.GetAsText())
 		}
 	}
-	if err := fe.client.space.Sculpt(musical.Sculpt{
-		Author: fe.client.id,
-		Editor: "foliage",
-		Slider: slider,
-		Design: fe.client.MusicalDesign(design),
-		Commit: true,
-	}); err != nil {
-		Engine.Raise(err)
-	}
+	fe.client.emitDesignSculpt("foliage", slider, design)
 }
 
 func (fe *FoliageEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
-	_, prop, _ := strings.Cut(editing, "/")
-	if init, from, upto, step, ok := reflectSliderConfig(reflect.TypeFor[Tree](), prop); ok {
-		return init, from, upto, step
-	}
-	return 0, 0, 1, 0.01
+	return reflectSliderConfigOr(reflect.TypeFor[Tree](), editing, 0, 0, 1, 0.01)
 }
 
 func (fe *FoliageEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
@@ -331,13 +314,5 @@ func (fe *FoliageEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	fe.last_slider_sculpt = time.Now()
-	if err := fe.client.space.Sculpt(musical.Sculpt{
-		Author: fe.client.id,
-		Editor: "foliage",
-		Slider: editing,
-		Amount: Float.X(value),
-		Commit: commit,
-	}); err != nil {
-		Engine.Raise(err)
-	}
+	fe.client.emitSliderSculpt("foliage", editing, value, commit)
 }
