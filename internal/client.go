@@ -1603,6 +1603,15 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						if ok {
 							if node3d, ok := Object.As[Node3D.Instance](node); ok {
 								if entity, ok := world.object_to_entity[node3d.ID()]; ok {
+									// "Walk here" is only for the mobile dressing entities
+									// (critters, citizens, vehicles); static scenery stays
+									// where it's placed. Gate on the placed design's library
+									// category so a selected rock, fence, or building can't
+									// be dragged across the terrain by right-clicking.
+									design, placed := world.findDesignForObject(node3d.ID())
+									if !placed || !isMobileDesignCategory(designCategory(world.design_to_string[design])) {
+										break
+									}
 									// Plain right-click: walk straight to the point (replace any
 									// path). Shift: append a segment onto the end of the current
 									// path. Ctrl: append AND make the whole path a back-and-forth

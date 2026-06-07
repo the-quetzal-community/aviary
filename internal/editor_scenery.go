@@ -207,6 +207,42 @@ func (fe *SceneryEditor) ChangeEditor() {
 	fe.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeDisabled)
 }
 
+// sceneryDressingCategories are the ModeDressing ("vehicle") library
+// categories — the mobile things (creatures, citizens, vehicles) the dressing
+// tab drops onto the terrain. Kept as the single source of truth shared between
+// the Scenery tab list (below) and the right-click "walk here" gate: only a
+// placed entity in one of these categories accepts a move Action (see
+// Client._input). Static scenery (housing, fencing, boulders) stays put.
+var sceneryDressingCategories = []string{
+	"citizen",
+	"critter",
+	"swimmer",
+	"scooter",
+	"bicycle",
+	"roadway",
+	"railway",
+	"seaship",
+	"airship",
+	"rockets",
+}
+
+// mobileDesignCategories indexes sceneryDressingCategories for O(1) membership
+// tests by isMobileDesignCategory.
+var mobileDesignCategories = func() map[string]bool {
+	set := make(map[string]bool, len(sceneryDressingCategories))
+	for _, category := range sceneryDressingCategories {
+		set[category] = true
+	}
+	return set
+}()
+
+// isMobileDesignCategory reports whether a library category is one of the mobile
+// dressing categories — the only placed entities that may be walked to a point
+// with a right-click move Action.
+func isMobileDesignCategory(category string) bool {
+	return mobileDesignCategories[category]
+}
+
 func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
@@ -225,19 +261,8 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 			"fencing",
 		}
 	case ModeDressing:
-		return []string{
-			// vehicle
-			"citizen",
-			"critter",
-			"swimmer",
-			"scooter",
-			"bicycle",
-			"roadway",
-			"railway",
-			"seaship",
-			"airship",
-			"rockets",
-		}
+		// vehicle
+		return sceneryDressingCategories
 	case ModeMaterial:
 		return []string{
 			"colours",
