@@ -139,6 +139,17 @@ func (world *Client) armGizmoDrag() {
 				world.gizmoDrag.twistInitialY = Angle.Radians(a.Twist)
 			}
 		}
+		world.gizmoDrag.twistPivot = Vector3.Zero
+		world.gizmoDrag.twistPivotValid = false
+		if world.Editing == Editing.Shelter && librarySizesFile() != "" {
+			// Library-sizing debug mode: shelter twists pivot about the
+			// mesh's bounds centre so a part whose geometry sits at a cell
+			// edge spins in place (see twistPivot).
+			if bmin, bmax, found := worldVisualBounds(node.AsNode()); found {
+				world.gizmoDrag.twistPivot = Vector3.MulX(Vector3.Add(bmin, bmax), 0.5)
+				world.gizmoDrag.twistPivotValid = true
+			}
+		}
 		world.gizmoDrag.twistPlaneY = pos.Y
 
 		o, d := world.inputRay()
@@ -379,9 +390,11 @@ func (world *Client) updateGizmoDrag() {
 	delta := Vector3.Sub(hit, world.gizmoDrag.startGrab)
 	newPos := Vector3.Add(world.gizmoDrag.startPos, delta)
 
-	if world.Editing == Editing.Shelter {
+	if world.Editing == Editing.Shelter && librarySizesFile() == "" {
 		// Match the grid snapping used during shelter placement previews
-		// (most objects snap to integer grid on X/Z).
+		// (most objects snap to integer grid on X/Z). Library-sizing debug
+		// mode shifts smoothly instead (like scenery), so a part can be
+		// positioned precisely while measuring it for sizes.txt.
 		newPos.X = Float.Round(newPos.X)
 		newPos.Z = Float.Round(newPos.Z)
 	}
@@ -467,6 +480,12 @@ func (world *Client) updateGizmoDrag() {
 				Angles: rot,
 				Commit: false,
 			}
+			// Mesh-centre pivot (library-sizing shelter twists): orbit the
+			// node origin around the captured bounds centre so the mesh
+			// spins in place. See twistPivot.
+			if world.gizmoDrag.twistPivotValid {
+				twistCh.Offset = orbitAboutPivot(world.gizmoDrag.startPos, world.gizmoDrag.twistPivot, Angle.Radians(newY-world.gizmoDrag.twistInitialY))
+			}
 			world.stampRouting(&twistCh)
 			// Preserve the existing mirror offset (if any) so remirror()
 			// does not interpret the lack of Mirror field as "remove the twin".
@@ -513,8 +532,10 @@ func (world *Client) commitGizmoDrag() {
 	pos := node.AsNode3D().Position()
 	rot := node.AsNode3D().Rotation()
 
-	if world.Editing == Editing.Shelter {
+	if world.Editing == Editing.Shelter && librarySizesFile() == "" {
 		// Match the grid snapping used during shelter placement previews.
+		// Library-sizing debug mode keeps the smooth drag position (see
+		// updateGizmoDrag).
 		pos.X = Float.Round(pos.X)
 		pos.Z = Float.Round(pos.Z)
 	}
@@ -582,19 +603,26 @@ func (world *Client) commitGizmoDrag() {
 	if world.gizmoDrag.activeGizmo == GizmoTwist {
 		rot := node.AsNode3D().Rotation()
 
-		if world.Editing == Editing.Shelter {
+		if world.Editing == Editing.Shelter && librarySizesFile() == "" {
 			// On release, snap the final rotation to the nearest 90° increment
 			// relative to the orientation at the start of this drag.
+			// Library-sizing debug mode twists smoothly instead, so a
+			// model's authored facing can be dialled in for sizes.txt.
 			step := math.Pi / 2
 			deltaFromStart := rot.Y - world.gizmoDrag.twistInitialY
 			snapped := math.Round(float64(deltaFromStart)/step) * step
 			rot.Y = world.gizmoDrag.twistInitialY + Angle.Radians(snapped)
 		}
+		if world.gizmoDrag.twistPivotValid {
+			// Mesh-centre pivot: commit the orbited origin the preview
+			// drags showed (see twistPivot).
+			pos = orbitAboutPivot(world.gizmoDrag.startPos, world.gizmoDrag.twistPivot, rot.Y-world.gizmoDrag.twistInitialY)
+		}
 
 		twistCh := musical.Change{
 			Author: world.id,
 			Entity: ent,
-			Offset: pos, // position unchanged during pure twist
+			Offset: pos, // position unchanged during pure twist (unless pivoted)
 			Angles: rot,
 			Commit: true,
 		}
@@ -610,11 +638,13 @@ func (world *Client) commitGizmoDrag() {
 			}
 		}
 		_ = world.space.Change(twistCh)
-		// Undo of a twist = same Change but with Angles.Y restored
-		// to the pre-drag value. Position is unchanged during twist,
-		// so we reuse `pos`. Mirror field flows through as captured.
+		// Undo of a twist = same Change but with Angles.Y restored to the
+		// pre-drag value and the origin back at its pre-drag position (it
+		// only moved if the twist was mesh-centre pivoted). Mirror field
+		// flows through as captured.
 		undo := twistCh
 		undo.Angles.Y = world.gizmoDrag.twistInitialY
+		undo.Offset = world.gizmoDrag.startPos
 		world.RecordChange(twistCh, undo)
 		return
 	}
@@ -658,6 +688,15 @@ func (world *Client) commitGizmoDrag() {
 		undo.Offset = world.gizmoDrag.startPos
 	}
 	world.RecordChange(ch, undo)
+}
+
+// orbitAboutPivot returns pos rotated by angle about the vertical axis
+// through pivot (Y untouched) — where a mesh-centre-pivoted twist moves the
+// node origin so the mesh itself spins in place.
+func orbitAboutPivot(pos, pivot Vector3.XYZ, angle Angle.Radians) Vector3.XYZ {
+	c, s := Angle.Cos(angle), Angle.Sin(angle)
+	dx, dz := pos.X-pivot.X, pos.Z-pivot.Z
+	return Vector3.New(pivot.X+dx*c+dz*s, pos.Y, pivot.Z-dx*s+dz*c)
 }
 
 // updateCritterGizmoDrag handles GizmoShift / GizmoTwist for the

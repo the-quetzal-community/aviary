@@ -50,6 +50,9 @@ func (*SceneryEditor) SwitchToView(view string) {}
 
 func (editor *SceneryEditor) Ready() {
 	editor.Preview.setDefaultScale(sceneryLibraryScale)
+	// Scenery grounds placed entities against the terrain in library-sizing
+	// debug mode, so its ghost previews that grounding too.
+	editor.Preview.groundSizeOverride = true
 }
 
 func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
@@ -208,6 +211,9 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		return []string{
+			"foliage",
+			"boulder",
+
 			"housing",
 			"village",
 			"farming",

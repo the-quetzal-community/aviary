@@ -219,8 +219,10 @@ func (de *DesignExplorer) Ready() {
 				button.AsCanvasItem().SetVisible(false)
 				// Record explicit user choice as the new top-ranked preference
 				// and persist so the design explorer remembers across runs and
-				// editor switches.
-				if de.client != nil {
+				// editor switches. Skipped in the library-sizing debug mode so
+				// a sizing session doesn't reshuffle the saved preferences the
+				// explorer will use in normal play.
+				if de.client != nil && librarySizesFile() == "" {
 					bumpAuthorPreference(name)
 					de.client.saveUserState()
 				}
@@ -438,6 +440,12 @@ func (ui *DesignExplorer) applyRecency() {
 // placements by any client keep the ordering live and observable.
 func (ui *DesignExplorer) BumpDesign(resource string) {
 	if resource == "" {
+		return
+	}
+	// Library-sizing debug mode: keep every tab in its stable library
+	// order instead of floating placed designs to the front, so working
+	// through the catalogue sizing models stays trackable.
+	if librarySizesFile() != "" {
 		return
 	}
 	ui.placement_recency = slices.DeleteFunc(ui.placement_recency, func(s string) bool {

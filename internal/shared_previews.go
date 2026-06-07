@@ -40,6 +40,16 @@ type PreviewRenderer struct {
 	defaultScale     Vector3.XYZ
 	hasExplicitScale bool
 
+	// groundSizeOverride makes applySizeOverride (library-sizing debug mode)
+	// also shift the attached instance so the ghost previews the sizes.txt
+	// placement offsets at the preview origin — base at origin + offset,
+	// horizontal centre at origin + offsetX/Z. Set by the editors whose
+	// placement path applies the same offsets to the placed entity (scenery
+	// node-seats against terrain, shelter shifts the geometry children);
+	// other PreviewRenderer users (vehicle/coaster) leave it off so their
+	// ghost matches their unadjusted placement.
+	groundSizeOverride bool
+
 	// normalizeRotation, when set, makes attach discard the design root's
 	// intrinsic rotation so the preview shows the geometry the way the
 	// placement path orients it. client_musical.Change overwrites a spawned

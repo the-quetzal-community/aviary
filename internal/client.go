@@ -107,6 +107,13 @@ type Client struct {
 	// applyMoonState).
 	Moon DirectionalLight3D.Instance
 
+	// shadowMaxDistance is the directional-shadow far distance last pushed into
+	// both lights. It is driven by the camera zoom (see updateShadowDistance) so
+	// shadows reach as far as the view does when pulled out instead of fading at
+	// a fixed radius; cached so the per-frame update only pays the cgo SetParam
+	// when the zoom has actually moved it.
+	shadowMaxDistance Float.X
+
 	// Environment and WorldEnvironment are the live resources/nodes
 	// for global scene lighting + fog. They are mutated by editor-
 	// specific environment sliders (routed as special Sculpt records
@@ -241,6 +248,13 @@ type Client struct {
 		twistInitialY     Angle.Radians // original .Y component of the object's Euler rotation
 		twistPlaneY       Float.X       // Y level of the virtual horizontal plane used for angle calculation
 		twistInitialAngle Float.X       // atan2 angle of the initial mouse projection relative to object center
+		// twistPivot is the mesh's world-space bounds centre at drag start.
+		// In library-sizing debug mode shelter twists rotate the part about
+		// this point instead of the node origin (twistPivotValid), so a part
+		// whose geometry is offset to a cell edge spins in place rather than
+		// orbiting the cell anchor; the node origin follows the orbit.
+		twistPivot      Vector3.XYZ
+		twistPivotValid bool
 
 		// --- Uniform scale state (for GizmoScale) ---
 		// scaleInitial is the live Node3D scale captured at drag
@@ -647,7 +661,8 @@ func (world *Client) Ready() {
 		// quality-dependent (Toaster casts none; the small low-tier atlas needs
 		// more, mostly-normal, bias) and applied by applyShadowQuality below.
 		SetShadowBlur(2.0)
-	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
+	Light3D.Advanced(world.Light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, shadowDistanceBase)
+	world.shadowMaxDistance = shadowDistanceBase // updateShadowDistance grows this with zoom
 	// (The sun's ParamVolumetricFogEnergy, which only affects the FogVolume cloud
 	// layer, is set inside clouds.New together with the rest of the cloud wiring.)
 
@@ -664,7 +679,7 @@ func (world *Client) Ready() {
 		// Shadow enable + bias applied per quality tier by applyShadowQuality
 		// (see the sun above).
 		SetShadowBlur(2.0)
-	Light3D.Advanced(world.Moon.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, 30)
+	Light3D.Advanced(world.Moon.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, shadowDistanceBase)
 
 	// World Environment: ambient + tonemap + glow are scene-global (they reshape
 	// every surface), so they live here; the procedural sky, the volumetric-fog
@@ -1132,7 +1147,22 @@ func (world *Client) debugResourceUsage() {
 	}
 }
 
-const speed = 8
+const speed = 3
+
+// cameraDefaultZoom is the camera's starting distance from the focal point (the
+// Z set in SetPosition below). Pan speed and shadow distance are both normalised
+// against it so the world moves — and shadows reach — at the original rate at the
+// default zoom, scaling up when pulled out and down when zoomed in.
+const cameraDefaultZoom Float.X = 3
+
+// Directional-shadow far distance, scaled with the camera zoom by
+// updateShadowDistance. shadowDistanceBase is the reach at the default zoom (the
+// value Ready installs); zooming out grows it proportionally, up to
+// shadowDistanceMax, so distant ground keeps its shadows instead of fading at a
+// fixed radius. A larger atlas-covered area is blurrier, so it is capped rather
+// than left to grow without bound.
+const shadowDistanceBase = 30 // untyped: float64 for SetParam, Float.X in the zoom math
+const shadowDistanceMax = 240
 
 // cameraTerrainClearance is how far above the terrain the camera is held when it
 // would otherwise sink into the ground. The camera-terrain collision keeps the
@@ -1347,17 +1377,27 @@ func (world *Client) Process(dt Float.X) {
 	if Input.IsKeyPressed(Input.KeyE) {
 		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), Angle.Radians(dt))
 	}
+	// Scale pan speed by how far the camera is zoomed out so a keypress always
+	// covers a similar fraction of the screen: a gentle creep when zoomed right
+	// in, a brisk sweep when pulled far out. The camera's local Z is its distance
+	// from the focal point; clamp the floor so movement never stalls at extreme
+	// zoom-in.
+	zoom := max(world.FocalPoint.Lens.Camera.AsNode3D().Position().Z, cameraDefaultZoom/4)
+	moveSpeed := speed * dt * zoom / cameraDefaultZoom
+	// Grow the shadow reach with the same zoom so shadows don't fade out from
+	// under the far ground when the camera pulls back.
+	world.updateShadowDistance(zoom)
 	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(-speed*dt, 0, 0))
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(-moveSpeed, 0, 0))
 	}
 	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(speed*dt, 0, 0))
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(moveSpeed, 0, 0))
 	}
 	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, speed*dt))
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, moveSpeed))
 	}
 	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, -speed*dt))
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, -moveSpeed))
 	}
 	if Input.IsKeyPressed(Input.KeyR) {
 		world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(dt))
@@ -2155,6 +2195,28 @@ func (world *Client) applyShadowQuality(q GraphicsQuality) {
 		l.SetShadowEnabled(enabled)
 		l.SetShadowBias(Float.X(bias))
 		l.SetShadowNormalBias(Float.X(normalBias))
+	}
+}
+
+// updateShadowDistance scales the directional-shadow far distance with the
+// camera zoom so shadows reach as far as the view does. At the default zoom it
+// holds shadowDistanceBase (Ready's value); pulling the camera out grows it in
+// proportion, capped at shadowDistanceMax. The atlas size is fixed per quality
+// tier, so a larger distance trades sharpness for reach — acceptable next to
+// shadows visibly fading out from under distant ground. Both lights share one
+// atlas, so both get the same distance; the cached last value keeps this to a
+// no-op (no cgo SetParam) on the common frame where the zoom hasn't moved.
+func (world *Client) updateShadowDistance(zoom Float.X) {
+	dist := min(max(shadowDistanceBase*zoom/cameraDefaultZoom, shadowDistanceBase), shadowDistanceMax)
+	if dist == world.shadowMaxDistance {
+		return
+	}
+	world.shadowMaxDistance = dist
+	for _, light := range []DirectionalLight3D.Instance{world.Light, world.Moon} {
+		if light == DirectionalLight3D.Nil {
+			continue
+		}
+		Light3D.Advanced(light.AsLight3D()).SetParam(Light3D.ParamShadowMaxDistance, float64(dist))
 	}
 }
 

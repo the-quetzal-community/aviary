@@ -50,14 +50,36 @@ type ShelterEditor struct {
 	design_to_entity map[musical.Design][]Node3D.ID
 	entity_to_object map[musical.Entity]Node3D.ID
 	object_to_entity map[Node3D.ID]musical.Entity
+
+	// entity_placement remembers each part's creation Offset and rotation —
+	// the grid cell and facing it was FIRST placed with — for the
+	// library-sizing debug mode's F2 measurement: a part dialled exactly to
+	// a cell edge (±half a cell) must measure its in-cell displacement
+	// against its own cell (plain rounding of the current position would
+	// flip into the neighbouring cell), and a dialled twist measures
+	// relative to the placement facing. Only filled while
+	// AVIARY_LIBRARY_SIZES is set (replay re-fills it every load, so
+	// reloads keep their anchors).
+	entity_placement map[musical.Entity]shelterAnchor
+}
+
+// shelterAnchor is a part's first-placement pose (see entity_placement).
+type shelterAnchor struct {
+	offset Vector3.XYZ
+	angleY Angle.Radians
 }
 
 func (editor *ShelterEditor) Ready() {
 	editor.explore = true
 	editor.design_to_entity, editor.entity_to_object, editor.object_to_entity = newEntityMaps()
+	editor.entity_placement = map[musical.Entity]shelterAnchor{}
 
 	editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}}
 	editor.Preview.setDefaultScale(0.2)
+	// The placed part's geometry is shifted to the sizes.txt offsets in
+	// library-sizing debug mode (shiftGeometryToOverride), so the ghost
+	// previews the same placement.
+	editor.Preview.groundSizeOverride = true
 }
 
 func (editor *ShelterEditor) Views() []string {
@@ -247,6 +269,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	exists, ok := editor.entity_to_object[change.Entity].Instance()
 	if ok {
 		if change.Remove {
+			delete(editor.entity_placement, change.Entity)
 			removeEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, exists)
 			return nil
 		}
@@ -259,6 +282,23 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		// already incorporates any design root "preset scale").
 		if change.Bounds != Vector3.Zero {
 			exists.SetScale(change.Bounds)
+		}
+		// Library-sizing debug mode: keep the geometry PLACEMENT (facing/
+		// centre/base) consistent with the sizes.txt override across moves
+		// and twists (idempotent — a no-op when nothing changed). This is
+		// also what re-dresses a part right after F2 snaps its node back to
+		// the placement anchor. Deliberately NOT the full
+		// applyLibrarySizeOverride: its scale correction would re-pin the
+		// node to the recorded height on every preview Change, fighting the
+		// scale gizmo mid-dial (scale converges at creation/load instead).
+		// Gizmo Changes carry no Design, so resolve it from the editor map.
+		if librarySizesFile() != "" {
+			if design, found := findDesignInMap(editor.design_to_entity, editor.entity_to_object[change.Entity]); found {
+				if override, _, listed := editor.client.libraryOverrideFor(design); listed &&
+					(override.hasOffset || override.hasXZ || override.hasRotation) {
+					shiftGeometryToOverride(exists, override)
+				}
+			}
 		}
 		return nil
 	}
@@ -302,6 +342,11 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	}
 	registerEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, node)
 	container.AddChild(node.AsNode())
+	// Remember the pose this part was first placed with for the F2 in-cell
+	// displacement + rotation measurement (see entity_placement).
+	if librarySizesFile() != "" {
+		editor.entity_placement[change.Entity] = shelterAnchor{offset: change.Offset, angleY: change.Angles.Y}
+	}
 	// Library-sizing debug mode: preview the sizes.txt entry for this part
 	// (no-op outside debug mode). Shelter parts anchor to the level grid,
 	// not the terrain, hence terrainSeated=false.
