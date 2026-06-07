@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v4 v4.2.12
 	github.com/quaadgras/velopack-go v0.0.1358
-	graphics.gd v0.0.0-20260530063111-bd3a5a51932e
+	graphics.gd v0.0.0-20260607100607-97d4bd32f3f9
 	runtime.link v0.0.0-20260508003125-87c69e9c5b23
 )
 
