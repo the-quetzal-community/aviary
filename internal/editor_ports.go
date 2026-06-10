@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
 
 	"the.quetzal.community/aviary/internal/musical"
@@ -44,6 +45,10 @@ type Library interface {
 	// designURI is the reverse mapping. Empty when the design's Import
 	// hasn't been observed yet (e.g. instruction reordering during replay).
 	designURI(design musical.Design) string
+
+	// resolveMaterialTexture turns a material-selection design into a
+	// usable texture (plain image or shared-material atlas region).
+	resolveMaterialTexture(design musical.Design) Texture2D.Instance
 }
 
 // Workbench is the slice of the UI shell an editor may adjust.

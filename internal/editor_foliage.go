@@ -32,7 +32,11 @@ type FoliageEditor struct {
 	leafletMaterial ShaderMaterial.Instance
 	timbersMaterial BaseMaterial3D.Instance
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	lights    LightingConsole
 
 	last_slider_sculpt time.Time
 
@@ -95,8 +99,8 @@ func (fe *FoliageEditor) ExportSubtree() Node3D.Instance {
 	return root
 }
 func (fe *FoliageEditor) EnableEditor() {
-	fe.client.SetGizmos(nil)
-	fe.lighting.resync(fe.client)
+	fe.workbench.SetGizmos(nil)
+	fe.lighting.resync(fe.lights)
 }
 func (fe *FoliageEditor) ChangeEditor() {}
 
@@ -172,7 +176,7 @@ func (fe *FoliageEditor) Sculpt(brush musical.Sculpt) error {
 	}
 	switch brush.Slider {
 	case "leaflet", "timbers":
-		texture := fe.client.resolveMaterialTexture(brush.Design)
+		texture := fe.library.resolveMaterialTexture(brush.Design)
 		if texture == Texture2D.Nil {
 			return nil
 		}
@@ -293,7 +297,7 @@ func (fe *FoliageEditor) SelectDesign(mode Mode, design string) {
 	default:
 		return
 	}
-	fe.client.emitDesignSculpt("foliage", slider, design)
+	fe.recorder.emitDesignSculpt("foliage", slider, design)
 }
 
 func (fe *FoliageEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
@@ -305,5 +309,5 @@ func (fe *FoliageEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	fe.last_slider_sculpt = time.Now()
-	fe.client.emitSliderSculpt("foliage", editing, value, commit)
+	fe.recorder.emitSliderSculpt("foliage", editing, value, commit)
 }

@@ -24,7 +24,11 @@ type BoulderEditor struct {
 
 	mineralMaterial BaseMaterial3D.Instance
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	lights    LightingConsole
 
 	last_slider_sculpt time.Time
 
@@ -33,8 +37,8 @@ type BoulderEditor struct {
 
 func (fe *BoulderEditor) Name() string { return "boulder" }
 func (fe *BoulderEditor) EnableEditor() {
-	fe.client.SetGizmos(nil)
-	fe.lighting.resync(fe.client)
+	fe.workbench.SetGizmos(nil)
+	fe.lighting.resync(fe.lights)
 }
 func (fe *BoulderEditor) ChangeEditor() {
 
@@ -67,7 +71,7 @@ func (fe *BoulderEditor) Sculpt(brush musical.Sculpt) error {
 	value := float64(brush.Amount)
 	switch editing {
 	case "mineral":
-		texture := fe.client.resolveMaterialTexture(brush.Design)
+		texture := fe.library.resolveMaterialTexture(brush.Design)
 		if texture == Texture2D.Nil {
 			return nil
 		}
@@ -127,7 +131,7 @@ func (fe *BoulderEditor) SelectDesign(mode Mode, design string) {
 	}
 	// Mineral has only one material slot, so the slider name is fixed
 	// — unlike foliage which keys on leaflet/timbers.
-	fe.client.emitDesignSculpt("mineral", "mineral", design)
+	fe.recorder.emitDesignSculpt("mineral", "mineral", design)
 }
 
 func (fe *BoulderEditor) SliderConfig(mode Mode, editing string) (init, from, upto, step float64) {
@@ -139,5 +143,5 @@ func (fe *BoulderEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	fe.last_slider_sculpt = time.Now()
-	fe.client.emitSliderSculpt("mineral", editing, value, commit)
+	fe.recorder.emitSliderSculpt("mineral", editing, value, commit)
 }

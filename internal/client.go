@@ -650,8 +650,14 @@ func (world *Client) Ready() {
 		tile.client = world
 	}
 	world.VehicleEditor.client = world
-	world.FoliageEditor.client = world
-	world.MineralEditor.client = world
+	world.FoliageEditor.recorder = world
+	world.FoliageEditor.library = world
+	world.FoliageEditor.workbench = world
+	world.FoliageEditor.lights = world
+	world.MineralEditor.recorder = world
+	world.MineralEditor.library = world
+	world.MineralEditor.workbench = world
+	world.MineralEditor.lights = world
 	world.SceneryEditor.client = world
 	world.ShelterEditor.client = world
 	// CitizenEditor is migrated to capability ports (editor_ports.go): it
