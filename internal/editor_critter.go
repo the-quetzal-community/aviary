@@ -49,7 +49,14 @@ type CritterEditor struct {
 	Preview       PreviewRenderer
 	MirrorPreview PreviewRenderer
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go. Nil
+	// until Client.Ready wires them; sculpt/place paths guard on
+	// recorder == nil so single-user development applies edits locally.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	rig       CameraRig
+	lights    LightingConsole
 
 	loadOnce sync.Once
 	loadErr  error
@@ -478,9 +485,9 @@ func (*CritterEditor) Tabs(mode Mode) []string {
 }
 
 func (ce *CritterEditor) EnableEditor() {
-	ce.client.SetGizmos(placementGizmos)
+	ce.workbench.SetGizmos(placementGizmos)
 	ce.ensureLoaded()
-	ce.lighting.resync(ce.client)
+	ce.lighting.resync(ce.lights)
 }
 
 func (ce *CritterEditor) ChangeEditor() {
@@ -698,11 +705,11 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 	}
 	ce.last_slider_sculpt = time.Now()
 	ce.lastEditAt = time.Now()
-	if ce.client == nil {
+	if ce.recorder == nil {
 		ce.applySlider(editing, Float.X(value))
 		return
 	}
-	ce.client.emitSliderSculpt("critter", editing, value, commit)
+	ce.recorder.emitSliderSculpt("critter", editing, value, commit)
 }
 
 // Sculpt routes incoming sculpts. Anything starting with "bone/" is
@@ -775,8 +782,8 @@ func (ce *CritterEditor) flushCritterReplay() {
 	hash, count := hashCritterBuffer(buf)
 
 	restored := false
-	if snapshotEnabled && ce.client != nil {
-		if snap, err := readCritterSnapshot(ce.client.record); err == nil {
+	if snapshotEnabled && ce.recorder != nil {
+		if snap, err := readCritterSnapshot(ce.recorder.workID()); err == nil {
 			if snap.StrokeHash == hash && snap.StrokeCount == count {
 				ce.body.RestoreCritter(snap.Bones, snap.Legs, snap.Weights)
 				restored = true
@@ -797,7 +804,7 @@ func (ce *CritterEditor) flushCritterReplay() {
 	// they appear in the same frame the splash drops, not one frame later.
 	ce.retryPendingChanges()
 
-	if snapshotEnabled && ce.client != nil {
+	if snapshotEnabled && ce.recorder != nil {
 		c := ce.body.Critter()
 		snap := &critterSnapshot{
 			Version:     critterSnapshotVersion,
@@ -807,7 +814,7 @@ func (ce *CritterEditor) flushCritterReplay() {
 			Legs:        c.Legs(),
 			Weights:     c.Weights(),
 		}
-		if err := writeCritterSnapshot(ce.client.record, snap); err != nil {
+		if err := writeCritterSnapshot(ce.recorder.workID(), snap); err != nil {
 			profMark("critter snapshot: write failed: %v", err)
 		} else {
 			profMark("critter snapshot: wrote %d bones %d legs %d sculpts",
@@ -1122,7 +1129,7 @@ func (ce *CritterEditor) nearestLegFoot() (legIdx, side int, world Vector3.XYZ, 
 // follow-up sequence of per-axis sculpts.
 func (ce *CritterEditor) emitLegSculptAt(slider string, target Vector3.XYZ, amount float32) {
 	ce.lastEditAt = time.Now()
-	if ce.client == nil {
+	if ce.recorder == nil {
 		ce.applyLegSculptBrush(musical.Sculpt{
 			Editor: "critter",
 			Slider: slider,
@@ -1132,8 +1139,7 @@ func (ce *CritterEditor) emitLegSculptAt(slider string, target Vector3.XYZ, amou
 		})
 		return
 	}
-	if err := ce.client.space.Sculpt(musical.Sculpt{
-		Author: ce.client.id,
+	if err := ce.recorder.publishSculpt(musical.Sculpt{
 		Editor: "critter",
 		Slider: slider,
 		Target: target,
@@ -1150,12 +1156,11 @@ func (ce *CritterEditor) emitLegSculptAt(slider string, target Vector3.XYZ, amou
 // user dev (no client) it applies directly.
 func (ce *CritterEditor) emitBoneSculpt(slider string, amount float32) {
 	ce.lastEditAt = time.Now()
-	if ce.client == nil {
+	if ce.recorder == nil {
 		ce.applyBoneSculpt(slider, amount)
 		return
 	}
-	if err := ce.client.space.Sculpt(musical.Sculpt{
-		Author: ce.client.id,
+	if err := ce.recorder.publishSculpt(musical.Sculpt{
 		Editor: "critter",
 		Slider: slider,
 		Amount: Float.X(amount),
@@ -1293,10 +1298,10 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 	if kev, ok := Object.As[InputEventKey.Instance](event); ok {
 		if isDeletePress(kev) {
-			if ce.client == nil {
+			if ce.recorder == nil {
 				return
 			}
-			node, ok := ce.client.selection.Instance()
+			node, ok := ce.workbench.selectedNode()
 			if !ok {
 				return
 			}
@@ -1304,8 +1309,7 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 			if !ok {
 				return
 			}
-			if err := ce.client.space.Change(musical.Change{
-				Author: ce.client.id,
+			if err := ce.recorder.publishChange(musical.Change{
 				Entity: entity,
 				Editor: "critter",
 				Remove: true,
@@ -1768,7 +1772,7 @@ func (ce *CritterEditor) previewAnchor(p PreviewRenderer) PartAnchor {
 
 func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 	ce.ensureLoaded()
-	if ce.client == nil {
+	if ce.recorder == nil {
 		// Single-user dev path: apply directly without going through
 		// the musical Change/Import cycle. Procedural parts still
 		// need their owners wired up so selection works.
@@ -1781,7 +1785,7 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 		ce.body.AttachPart(anchor, PackedScene.Nil)
 		return
 	}
-	if ce.client.space == nil {
+	if !ce.recorder.recording() {
 		return
 	}
 	// Both library-imported and procedural designs ship through the
@@ -1791,9 +1795,8 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 	// skips the Resource.Load attempt, but still registers the URI
 	// in design_to_string so tryAttachChange can branch on it.
 	change := musical.Change{
-		Author: ce.client.id,
-		Entity: ce.client.NextEntity(),
-		Design: ce.client.MusicalDesign(design),
+		Entity: ce.recorder.NextEntity(),
+		Design: ce.library.MusicalDesign(design),
 		Offset: Vector3.XYZ{X: Float.X(anchor.T), Y: Float.X(anchor.Theta), Z: Float.X(anchor.Offset)},
 		Editor: "critter",
 		Commit: true,
@@ -1816,7 +1819,7 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 		// X stays 0 so decoders still see this as a body anchor.
 		change.Bounds = Vector3.XYZ{Z: Float.X(anchor.Scale)}
 	}
-	if err := ce.client.space.Change(change); err != nil {
+	if err := ce.recorder.publishChange(change); err != nil {
 		Engine.Raise(err)
 	}
 }
@@ -2035,7 +2038,7 @@ func anchorFromChange(change musical.Change) PartAnchor {
 // tryAttachChange attempts to materialise a Change into a placed
 // part. Returns true on success; false means the design's scene
 // hasn't been imported yet so the caller should queue the change
-// for retry. Always succeeds (returns true) when ce.client is
+// for retry. Always succeeds (returns true) when ce.library is
 // nil — in single-user dev there's no packed_scenes map to wait
 // on, so we just place a placeholder.
 func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
@@ -2051,8 +2054,9 @@ func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
 		}
 	}
 	var node Node3D.Instance
-	if ce.client != nil {
-		uri, hasURI := ce.client.design_to_string[change.Design]
+	if ce.library != nil {
+		uri := ce.library.designURI(change.Design)
+		hasURI := uri != ""
 		switch {
 		case hasURI && newProceduralPart(uri) != nil:
 			// Procedural design — build geometry locally. The
@@ -2063,7 +2067,7 @@ func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
 			setSubtreeOwner(node.AsNode(), node.AsNode())
 			ce.animatedParts[node.ID()] = part
 		default:
-			if s, ok := ce.client.sceneFor(change.Design); ok {
+			if s, ok := ce.library.sceneFor(change.Design); ok {
 				node = ce.body.AttachPart(anchor, s)
 			} else if hasURI && strings.HasSuffix(uri, ".obj") {
 				// MakeHuman-style .obj without a PackedScene

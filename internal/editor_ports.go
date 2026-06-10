@@ -43,6 +43,15 @@ type Recorder interface {
 
 	// NextEntity reserves the next entity id authored by this client.
 	NextEntity() musical.Entity
+
+	// recording reports whether the shared space is connected yet. Editors
+	// check this before side-effecting allocation (NextEntity/MusicalDesign)
+	// for a mutation that couldn't be recorded anyway.
+	recording() bool
+
+	// workID identifies the work being edited — used as a cache key for
+	// derived state (e.g. the critter snapshot).
+	workID() musical.WorkID
 }
 
 // Library resolves between library resource URIs and the numeric
@@ -99,9 +108,14 @@ type Workbench interface {
 // Viewport — that would shadow the graphics.gd/classdb/Viewport import.)
 type CameraRig interface {
 	focalNode() Node3D.Instance
+	lensNode() Node3D.Instance
 	viewportCamera() Camera3D.Instance
 	setCameraCover(material Material.Instance)
 	applyCoverDefault()
+
+	// setMovementLocked freezes the user's camera-movement input while a
+	// modal view (e.g. the critter chase-cam) drives the focal point itself.
+	setMovementLocked(locked bool)
 }
 
 // LightingConsole drives the live world-lighting renderer state. It is the
@@ -141,10 +155,15 @@ func (world *Client) selectedNode() (Node3D.Instance, bool) {
 	return world.selection.Instance()
 }
 
+func (world *Client) recording() bool        { return world.space != nil }
+func (world *Client) workID() musical.WorkID { return world.record }
+
 func (world *Client) focalNode() Node3D.Instance { return world.FocalPoint.Instance }
+func (world *Client) lensNode() Node3D.Instance  { return world.FocalPoint.Lens.Instance }
 func (world *Client) viewportCamera() Camera3D.Instance {
 	return world.FocalPoint.Lens.Camera.Instance
 }
 func (world *Client) setCameraCover(material Material.Instance) {
 	world.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, material)
 }
+func (world *Client) setMovementLocked(locked bool) { world.controlLockMovement = locked }

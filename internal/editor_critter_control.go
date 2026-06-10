@@ -129,22 +129,22 @@ func (ce *CritterEditor) controlEnter() {
 		cv.walkPos = cv.savedBodyPos
 		cv.walkBasis = cv.savedBodyBasis
 	}
-	if ce.client != nil {
-		cv.savedFocalPos = ce.client.FocalPoint.AsNode3D().Position()
-		cv.savedFocalRot = ce.client.FocalPoint.AsNode3D().Rotation()
-		cv.savedLensRot = ce.client.FocalPoint.Lens.AsNode3D().Rotation()
-		cv.savedCamPos = ce.client.FocalPoint.Lens.Camera.AsNode3D().Position()
-		cv.savedProjection = ce.client.FocalPoint.Lens.Camera.Projection()
-		ce.client.controlLockMovement = true
+	if ce.rig != nil {
+		cv.savedFocalPos = ce.rig.focalNode().Position()
+		cv.savedFocalRot = ce.rig.focalNode().Rotation()
+		cv.savedLensRot = ce.rig.lensNode().Rotation()
+		cv.savedCamPos = ce.rig.viewportCamera().AsNode3D().Position()
+		cv.savedProjection = ce.rig.viewportCamera().Projection()
+		ce.rig.setMovementLocked(true)
 		// Ribcage view may have flipped the camera to orthographic;
 		// chase cam wants depth cues, so force perspective on enter.
 		// Reasonable defaults for FOV / near / far — the existing
 		// restore on exit puts the user's prior settings back.
-		ce.client.FocalPoint.Lens.Camera.SetPerspective(75, 0.05, 1000)
-		ce.client.FocalPoint.Lens.AsNode3D().SetRotation(Euler.Radians{
+		ce.rig.viewportCamera().SetPerspective(75, 0.05, 1000)
+		ce.rig.lensNode().SetRotation(Euler.Radians{
 			X: Angle.Radians(controlCamPitch),
 		})
-		ce.client.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(
+		ce.rig.viewportCamera().AsNode3D().SetPosition(Vector3.New(
 			float32(0), controlCamHeight, controlCamDist,
 		))
 	}
@@ -154,11 +154,11 @@ func (ce *CritterEditor) controlEnter() {
 	// chase cam. After this, controlPhysicsProcess only re-pins the
 	// position; the user's middle-mouse drag is free to orbit, and
 	// the yaw lerps back toward "behind" only while walking.
-	if ce.client != nil && ce.body.mesh != MeshInstance3D.Nil {
+	if ce.rig != nil && ce.body.mesh != MeshInstance3D.Nil {
 		pos := ce.body.mesh.AsNode3D().GlobalPosition()
 		yaw := ce.body.mesh.AsNode3D().Rotation().Y
-		ce.client.FocalPoint.AsNode3D().SetGlobalPosition(pos)
-		ce.client.FocalPoint.AsNode3D().SetRotation(Euler.Radians{
+		ce.rig.focalNode().SetGlobalPosition(pos)
+		ce.rig.focalNode().SetRotation(Euler.Radians{
 			Y: yaw + Angle.Pi,
 		})
 	}
@@ -193,13 +193,13 @@ func (ce *CritterEditor) controlExit() {
 		ce.body.ClearAnimatedLegFeet()
 		ce.body.repositionParts()
 	}
-	if ce.client != nil {
-		ce.client.FocalPoint.AsNode3D().SetPosition(cv.savedFocalPos)
-		ce.client.FocalPoint.AsNode3D().SetRotation(cv.savedFocalRot)
-		ce.client.FocalPoint.Lens.AsNode3D().SetRotation(cv.savedLensRot)
-		ce.client.FocalPoint.Lens.Camera.AsNode3D().SetPosition(cv.savedCamPos)
-		ce.client.FocalPoint.Lens.Camera.SetProjection(cv.savedProjection)
-		ce.client.controlLockMovement = false
+	if ce.rig != nil {
+		ce.rig.focalNode().SetPosition(cv.savedFocalPos)
+		ce.rig.focalNode().SetRotation(cv.savedFocalRot)
+		ce.rig.lensNode().SetRotation(cv.savedLensRot)
+		ce.rig.viewportCamera().AsNode3D().SetPosition(cv.savedCamPos)
+		ce.rig.viewportCamera().SetProjection(cv.savedProjection)
+		ce.rig.setMovementLocked(false)
 	}
 	ce.control = nil
 }
@@ -350,11 +350,11 @@ func (ce *CritterEditor) applyBodyGait(cv *controlVis) {
 // Lens pitch is never touched here — middle-mouse-drag-Y already
 // adjusts it, and the user's tilt should survive across moves.
 func (ce *CritterEditor) controlTrackCamera(moving bool, delta float32) {
-	if ce.control == nil || ce.client == nil || ce.body.mesh == MeshInstance3D.Nil {
+	if ce.control == nil || ce.rig == nil || ce.body.mesh == MeshInstance3D.Nil {
 		return
 	}
 	pos := ce.body.mesh.AsNode3D().GlobalPosition()
-	ce.client.FocalPoint.AsNode3D().SetGlobalPosition(pos)
+	ce.rig.focalNode().SetGlobalPosition(pos)
 	if !moving || controlYawRecenterRate <= 0 {
 		return
 	}
@@ -368,7 +368,7 @@ func (ce *CritterEditor) controlTrackCamera(moving bool, delta float32) {
 	}
 	bodyYaw := ce.body.mesh.AsNode3D().Rotation().Y
 	target := bodyYaw + Angle.Pi
-	rot := ce.client.FocalPoint.AsNode3D().Rotation()
+	rot := ce.rig.focalNode().Rotation()
 	// Shortest-arc delta into (−π, π]. Without this, lerping across
 	// the ±π seam (e.g. cur=−3.0, target=3.0) would walk the long
 	// way around and look like a 360° spin.
@@ -386,5 +386,5 @@ func (ce *CritterEditor) controlTrackCamera(moving bool, delta float32) {
 	// feel of typical chase cams.
 	t := 1 - Angle.Radians(math.Exp(-float64(controlYawRecenterRate)*float64(delta)))
 	rot.Y += diff * t
-	ce.client.FocalPoint.AsNode3D().SetRotation(rot)
+	ce.rig.focalNode().SetRotation(rot)
 }

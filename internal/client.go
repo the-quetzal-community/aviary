@@ -671,7 +671,11 @@ func (world *Client) Ready() {
 	world.CitizenEditor.library = world
 	world.CitizenEditor.workbench = world
 	world.CitizenEditor.lights = world
-	world.CritterEditor.client = world
+	world.CritterEditor.recorder = world
+	world.CritterEditor.library = world
+	world.CritterEditor.workbench = world
+	world.CritterEditor.rig = world
+	world.CritterEditor.lights = world
 	world.CoasterEditor.recorder = world
 	world.CoasterEditor.library = world
 	world.CoasterEditor.workbench = world

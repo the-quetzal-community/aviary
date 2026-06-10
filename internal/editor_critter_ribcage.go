@@ -83,21 +83,21 @@ func (ce *CritterEditor) ribcageEnter() {
 	if ce.ribcage != nil {
 		return
 	}
-	if ce.client == nil {
+	if ce.rig == nil {
 		// Single-user dev path doesn't expose a camera through the
-		// editor (the world owns it), so without a client we can't
+		// editor (the world owns it), so without a camera rig we can't
 		// do the side-view lock. We still build the visualization
 		// so the mesh shows up — the lock just won't run.
 		ce.buildRibcageVis(nil)
 		return
 	}
-	ce.buildRibcageVis(ce.client)
+	ce.buildRibcageVis(ce.rig)
 }
 
 // buildRibcageVis is the half of ribcageEnter that doesn't touch the
 // camera. Split out so the no-client dev case can skip the camera
 // snapshot but still get the dark body + xray mesh.
-func (ce *CritterEditor) buildRibcageVis(world *Client) {
+func (ce *CritterEditor) buildRibcageVis(rig CameraRig) {
 	rv := &ribcageVis{}
 
 	container := Node3D.New()
@@ -165,11 +165,11 @@ func (ce *CritterEditor) buildRibcageVis(world *Client) {
 	}
 
 	// Snapshot + lock the world camera if we have one to work with.
-	if world != nil {
-		rv.savedFocalPos = world.FocalPoint.AsNode3D().Position()
-		rv.savedFocalRot = world.FocalPoint.AsNode3D().Rotation()
-		rv.savedLensRot = world.FocalPoint.Lens.AsNode3D().Rotation()
-		rv.savedProjection = world.FocalPoint.Lens.Camera.Projection()
+	if rig != nil {
+		rv.savedFocalPos = rig.focalNode().Position()
+		rv.savedFocalRot = rig.focalNode().Rotation()
+		rv.savedLensRot = rig.lensNode().Rotation()
+		rv.savedProjection = rig.viewportCamera().Projection()
 		ce.ribcage = rv
 		ce.ribcageSnapCamera()
 	} else {
@@ -199,11 +199,11 @@ func (ce *CritterEditor) ribcageExit() {
 	// Restore mirrored leg geometry so the world view sees both
 	// sides again.
 	ce.body.SetLegOneSided(false)
-	if ce.client != nil {
-		ce.client.FocalPoint.AsNode3D().SetPosition(rv.savedFocalPos)
-		ce.client.FocalPoint.AsNode3D().SetRotation(rv.savedFocalRot)
-		ce.client.FocalPoint.Lens.AsNode3D().SetRotation(rv.savedLensRot)
-		ce.client.FocalPoint.Lens.Camera.SetProjection(rv.savedProjection)
+	if ce.rig != nil {
+		ce.rig.focalNode().SetPosition(rv.savedFocalPos)
+		ce.rig.focalNode().SetRotation(rv.savedFocalRot)
+		ce.rig.lensNode().SetRotation(rv.savedLensRot)
+		ce.rig.viewportCamera().SetProjection(rv.savedProjection)
 	}
 	if rv.container != Node3D.Nil {
 		rv.container.AsNode().QueueFree()
@@ -221,20 +221,20 @@ func (ce *CritterEditor) ribcageExit() {
 // to the body origin. Zoom (Camera.position.z, set by mouse wheel
 // or magnify gesture) we never touch.
 func (ce *CritterEditor) ribcageSnapCamera() {
-	if ce.ribcage == nil || ce.client == nil {
+	if ce.ribcage == nil || ce.rig == nil {
 		return
 	}
 	bodyOrigin := Vector3.XYZ{}
 	if ce.body.mesh != MeshInstance3D.Nil {
 		bodyOrigin = ce.body.mesh.AsNode3D().GlobalPosition()
 	}
-	ce.client.FocalPoint.AsNode3D().SetGlobalPosition(bodyOrigin)
-	ce.client.FocalPoint.AsNode3D().SetRotation(Euler.Radians{
+	ce.rig.focalNode().SetGlobalPosition(bodyOrigin)
+	ce.rig.focalNode().SetRotation(Euler.Radians{
 		X: 0,
 		Y: ribcageSideYaw,
 		Z: 0,
 	})
-	ce.client.FocalPoint.Lens.AsNode3D().SetRotation(Euler.Radians{})
+	ce.rig.lensNode().SetRotation(Euler.Radians{})
 	// Force orthographic projection in this view — perspective
 	// foreshortening makes bones closer to the camera look bigger
 	// than equally-radiused bones at the far end, which is a lie
@@ -243,7 +243,7 @@ func (ce *CritterEditor) ribcageSnapCamera() {
 	// existing zoom-via-wheel / pinch input writes to that), so
 	// mouse-wheel zooming still works exactly as it did in
 	// perspective mode.
-	camNode := ce.client.FocalPoint.Lens.Camera
+	camNode := ce.rig.viewportCamera()
 	zoom := camNode.AsNode3D().Position().Z
 	if zoom < 0.1 {
 		zoom = 0.1
