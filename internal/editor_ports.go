@@ -1,14 +1,21 @@
 package internal
 
 import (
+	"iter"
+	"strings"
+
 	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/Material"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/PhysicsDirectSpaceState3D"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Vector3"
 
 	"the.quetzal.community/aviary/internal/musical"
 )
@@ -20,8 +27,11 @@ import (
 // coupling surface. Client implements all of them — wiring an editor is just
 // assigning the client into each port field (see Client.Ready).
 //
-// Adoption is incremental, editor by editor: an unmigrated editor keeps its
-// `client *Client` field and nothing changes for it.
+// Every editor is migrated: no editor holds a *Client. When an editor needs
+// a new client capability, add a method to the narrowest fitting port (or a
+// new port) rather than reintroducing a *Client field. Editor-to-editor
+// dependencies (e.g. scenery/coaster waking the terrain editor) are direct
+// fields, not ports — that coupling is real and named.
 
 // Recorder is the capability an editor uses to publish its mutations into the
 // shared musical space, stamped as the local author. Mutations published here
@@ -64,6 +74,19 @@ type Recorder interface {
 	// (or a grouped run of them) onto the undo stack with its inverse.
 	RecordChange(do, undo musical.Change)
 	RecordChangeGroup(dos, undos []musical.Change)
+
+	// commitSculpt is the identity+undo chokepoint for terrain-style
+	// sculpts: committed non-Revert strokes get a fresh (Author, Timing)
+	// stamp and an undo entry; previews and Reverts pass through.
+	commitSculpt(brush musical.Sculpt) error
+
+	// noteTiming records an observed mutation timestamp so locally
+	// generated timings stay ahead of everything already applied.
+	noteTiming(t musical.Timing)
+
+	// isJoining reports whether this client joined someone else's session
+	// (it follows the host's clock and skips host-only side effects).
+	isJoining() bool
 }
 
 // Library resolves between library resource URIs and the numeric
@@ -92,6 +115,10 @@ type Library interface {
 	// library-sizing debug mode (sizes.txt measurement workflow).
 	libraryOverrideFor(design musical.Design) (override librarySizeOverride, model string, listed bool)
 	applyLibrarySizeOverride(entity musical.Entity, design musical.Design, node Node3D.Instance, terrainSeated bool)
+
+	// designTexture returns the texture uploaded/imported for a design,
+	// ok=false when none is cached.
+	designTexture(design musical.Design) (Texture2D.Instance, bool)
 }
 
 // Workbench is the slice of the UI shell an editor may observe and adjust.
@@ -112,6 +139,30 @@ type Workbench interface {
 	// shelter's per-storey levels).
 	currentView() int
 	refreshViewSelector(view int, views []string)
+
+	// setSizeSliderVisible / setDensitySliderVisible / setPowerSliderVisible
+	// toggle the terrain-brush sliders in the gizmo toolbar. No-ops before
+	// the UI is built.
+	setSizeSliderVisible(visible bool)
+	setDensitySliderVisible(visible bool)
+	setPowerSliderVisible(visible bool)
+
+	// dismissBrushGizmo tears down the brush gizmo UI: clears the gizmo
+	// toolbar, hides the indicator, and removes the brush button (plus any
+	// leftover brush-named nodes). No-op before the UI is built.
+	dismissBrushGizmo()
+}
+
+// SceneIndex exposes the client-global placed-entity bookkeeping to the
+// terrain editor, which re-seats every placed object when the ground
+// moves and clears scenery under the dressing eraser.
+type SceneIndex interface {
+	// placedObjectIDs iterates the scene node of every world-placed entity.
+	placedObjectIDs() iter.Seq[Node3D.ID]
+
+	// clearSceneryInDisc removes every world-placed scenery entity within
+	// radius of center (the dressing clear tool's scenery sweep).
+	clearSceneryInDisc(center Vector3.XYZ, radius Float.X)
 }
 
 // CameraRig is the camera rig: the focal point the camera orbits, ray
@@ -152,6 +203,7 @@ var (
 	_ Library         = (*Client)(nil)
 	_ Workbench       = (*Client)(nil)
 	_ CameraRig       = (*Client)(nil)
+	_ SceneIndex      = (*Client)(nil)
 	_ LightingConsole = (*Client)(nil)
 )
 
@@ -165,7 +217,14 @@ func (world *Client) publishChange(change musical.Change) error {
 	return world.space.Change(change)
 }
 
-func (world *Client) uiMode() Mode     { return world.ui.mode }
+// uiMode is nil-safe (the terrain tiles consult it during Ready, before the
+// UI scene is instantiated): without a UI the mode is the default Geometry.
+func (world *Client) uiMode() Mode {
+	if world.ui == nil {
+		return ModeGeometry
+	}
+	return world.ui.mode
+}
 func (world *Client) editing() Subject { return world.Editing }
 func (world *Client) currentView() int { return world.ui.ViewSelector.view }
 func (world *Client) refreshViewSelector(view int, views []string) {
@@ -178,6 +237,69 @@ func (world *Client) selectedNode() (Node3D.Instance, bool) {
 func (world *Client) recording() bool             { return world.space != nil }
 func (world *Client) workID() musical.WorkID      { return world.record }
 func (world *Client) localAuthor() musical.Author { return world.id }
+func (world *Client) isJoining() bool             { return world.joining }
+
+func (world *Client) designTexture(design musical.Design) (Texture2D.Instance, bool) {
+	return world.textures[design].Instance()
+}
+
+func (world *Client) placedObjectIDs() iter.Seq[Node3D.ID] {
+	return func(yield func(Node3D.ID) bool) {
+		for id := range world.object_to_entity {
+			if !yield(id) {
+				return
+			}
+		}
+	}
+}
+
+func (world *Client) setSizeSliderVisible(visible bool) {
+	if world.ui != nil && world.ui.CloudControl != nil {
+		world.ui.CloudControl.setSizeSliderVisible(visible)
+	}
+}
+func (world *Client) setDensitySliderVisible(visible bool) {
+	if world.ui != nil && world.ui.CloudControl != nil {
+		world.ui.CloudControl.setDensitySliderVisible(visible)
+	}
+}
+func (world *Client) setPowerSliderVisible(visible bool) {
+	if world.ui != nil && world.ui.CloudControl != nil {
+		world.ui.CloudControl.setPowerSliderVisible(visible)
+	}
+}
+
+// dismissBrushGizmo consolidates the brush-toolbar teardown the terrain
+// editor's two cancel paths used to inline: clear the gizmo column, hide the
+// indicator, remove the brush button outright (visibility alone left a
+// phantom in the column), and sweep any leftover brush-named nodes.
+func (world *Client) dismissBrushGizmo() {
+	if world.ui == nil || world.ui.CloudControl == nil {
+		return
+	}
+	cc := world.ui.CloudControl
+	world.SetGizmos(nil)
+	if cc.GizmoIndicator != TextureRect.Nil {
+		cc.GizmoIndicator.AsCanvasItem().SetVisible(false)
+	}
+	if btn, ok := cc.gizmoButtons[GizmoBrush]; ok && btn != Control.Nil {
+		btn.AsCanvasItem().SetVisible(false)
+		if p := btn.AsNode().GetParent(); p != Node.Nil {
+			p.RemoveChild(btn.AsNode())
+		}
+		delete(cc.gizmoButtons, GizmoBrush)
+	}
+	vbox := cc.GizmoTypes.AsNode()
+	if vbox != Node.Nil {
+		for i := vbox.GetChildCount() - 1; i >= 0; i-- {
+			child := vbox.GetChild(i)
+			if strings.Contains(strings.ToLower(child.Name()), "brush") {
+				vbox.RemoveChild(child)
+				child.QueueFree()
+			}
+		}
+	}
+}
 
 func (world *Client) focalNode() Node3D.Instance { return world.FocalPoint.Instance }
 func (world *Client) lensNode() Node3D.Instance  { return world.FocalPoint.Lens.Instance }

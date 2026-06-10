@@ -642,13 +642,14 @@ func (world *Client) Ready() {
 	world.updates = make(chan []byte, 20)
 	world.mouseOver = make(chan Vector3.XYZ, 100)
 	world.TerrainEditor.texture = make(chan Path.ToResource, 1)
-	world.TerrainEditor.client = world
-	// Child Ready runs before parent Ready, so any chunk created in
-	// TerrainEditor.Ready (the starter tile) was wired with a nil
-	// client — propagate now that ours is known.
-	for _, tile := range world.TerrainEditor.tiles {
-		tile.client = world
-	}
+	// Tiles route through their editor back-pointer, so wiring the editor's
+	// ports here covers chunks created in TerrainEditor.Ready (which runs
+	// before this parent Ready) as well as all later ones.
+	world.TerrainEditor.recorder = world
+	world.TerrainEditor.library = world
+	world.TerrainEditor.workbench = world
+	world.TerrainEditor.scenes = world
+	world.TerrainEditor.lights = world
 	world.VehicleEditor.recorder = world
 	world.VehicleEditor.library = world
 	world.VehicleEditor.workbench = world

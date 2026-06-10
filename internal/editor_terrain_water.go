@@ -98,7 +98,7 @@ func (tr *TerrainEditor) PaintRiver() {
 	orient := Angle.Atan2(dz, dx) // painted heading => downstream flow
 	tr.dressLast = tr.BrushTarget
 	brush := musical.Sculpt{
-		Author: tr.client.id,
+		Author: tr.recorder.localAuthor(),
 		Editor: "terrain",
 		Slider: riverSlider,
 		Target: tr.BrushTarget,
@@ -117,7 +117,7 @@ func (tr *TerrainEditor) PaintRiver() {
 		}
 		brush.Amount = -depth // negative carve depth; overwrites on repaint
 	}
-	tr.client.commitSculpt(brush)
+	tr.recorder.commitSculpt(brush)
 }
 
 // riverBrushActive reports whether a river paint or erase tool is selected.
@@ -323,7 +323,7 @@ func (vr *TerrainEditor) applyWaterLevel(level Float.X) {
 	// slider's discrete steps. During the join replay there are no frames to ease
 	// over and a glide would just read as a load-time animation (cf. the bomb
 	// explosion guard), so snap the displayed level to match instead.
-	if vr.client != nil && vr.client.joining {
+	if vr.recorder != nil && vr.recorder.isJoining() {
 		vr.waterDisplayed = level
 	}
 	// Rebuild the mesh at the NEW level, then push the residual offset so the

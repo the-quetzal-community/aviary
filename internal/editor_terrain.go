@@ -11,7 +11,6 @@ import (
 	"graphics.gd/classdb/BoxShape3D"
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/CollisionShape3D"
-	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/CylinderMesh"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/GPUParticles3D"
@@ -24,7 +23,6 @@ import (
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
-	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/ParticleProcessMaterial"
 	"graphics.gd/classdb/QuadMesh"
@@ -35,7 +33,6 @@ import (
 	"graphics.gd/classdb/StaticBody3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Texture2DArray"
-	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
@@ -330,7 +327,12 @@ type TerrainEditor struct {
 	// across a commit. Empty when nothing is being previewed.
 	objectPreviewOffsets map[Node3D.ID]Float.X
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	scenes    SceneIndex
+	lights    LightingConsole
 
 	// lighting holds the shared world lighting used by both Terrain and
 	// Scenery. All other editors that embed lighting get their own private
@@ -398,7 +400,6 @@ func (tr *TerrainEditor) tileAt(coord tileCoord) *TerrainTile {
 	}
 	tile := new(TerrainTile)
 	tile.coord = coord
-	tile.client = tr.client
 	tile.editor = tr
 	tile.shader = tr.shader
 	tile.side_shader = tr.shader_buried
@@ -510,10 +511,10 @@ func (fe *TerrainEditor) Name() string { return "terrain" }
 // dressing only expose the brush-size gizmo; terrain/river height tools
 // also expose the power gizmo.
 func (fe *TerrainEditor) brushGizmosForCurrentMode() []Gizmo {
-	if fe.client == nil || fe.client.ui == nil {
+	if fe.workbench == nil {
 		return nil
 	}
-	mode := fe.client.ui.mode
+	mode := fe.workbench.uiMode()
 
 	// Height/river sculpt tools (only relevant while in Geometry mode).
 	if mode == ModeGeometry && fe.TerrainBrush != "" {
@@ -544,18 +545,18 @@ func (fe *TerrainEditor) brushGizmosForCurrentMode() []Gizmo {
 
 func (fe *TerrainEditor) EnableEditor() {
 	fe.setArrowsVisible(true)
-	fe.lighting.apply(fe.client)
+	fe.lighting.apply(fe.lights)
 	// Only show the terrain brush highlight overlay (ring) and the appropriate
 	// brush gizmo(s) when an actual brush tool has been selected. Texture
 	// painting and dressing only need the size (Brush) gizmo; height/river
 	// sculpt tools also get the power gizmo.
 	gizmos := fe.brushGizmosForCurrentMode()
 	if len(gizmos) > 0 {
-		fe.client.SetGizmos(gizmos)
+		fe.workbench.SetGizmos(gizmos)
 		fe.shader.SetShaderParameter("brush_active", true)
 		fe.shader_buried.SetShaderParameter("brush_active", true)
 	} else {
-		fe.client.SetGizmos(nil)
+		fe.workbench.SetGizmos(nil)
 	}
 	fe.syncBrushSliders()
 }
@@ -565,13 +566,11 @@ func (fe *TerrainEditor) EnableEditor() {
 // It also toggles the terrain brush ring highlight (brush_active) so the
 // overlay only appears when a brush tool is selected for the active mode.
 func (fe *TerrainEditor) syncBrushSliders() {
-	if fe.client == nil || fe.client.ui == nil || fe.client.ui.CloudControl == nil {
+	if fe.workbench == nil {
 		return
 	}
-	ui := fe.client.ui
-	cc := ui.CloudControl
-	editing := fe.client.Editing == Editing.Terrain
-	mode := ui.mode
+	editing := fe.workbench.editing() == Editing.Terrain
+	mode := fe.workbench.uiMode()
 	// A brush tool is "active for the current task" only when its mode matches.
 	// TerrainBrush (height/river) is only relevant in ModeGeometry.
 	// Paint is relevant in ModeMaterial once a texture has been selected (PaintActive).
@@ -581,9 +580,9 @@ func (fe *TerrainEditor) syncBrushSliders() {
 	hasClear := (mode == ModeDressing) && fe.ClearActive
 	hasGeomBrush := (mode == ModeGeometry) && (fe.TerrainBrush != "")
 	hasBrushForMode := hasPaint || hasDress || hasClear || hasGeomBrush
-	cc.setSizeSliderVisible(editing && hasBrushForMode)
-	cc.setDensitySliderVisible(editing && mode == ModeDressing && hasDress)
-	cc.setPowerSliderVisible(editing && mode == ModeGeometry && hasGeomBrush)
+	fe.workbench.setSizeSliderVisible(editing && hasBrushForMode)
+	fe.workbench.setDensitySliderVisible(editing && mode == ModeDressing && hasDress)
+	fe.workbench.setPowerSliderVisible(editing && mode == ModeGeometry && hasGeomBrush)
 	// Keep the shader brush ring in sync with the current mode's brush state.
 	if editing && fe.shader != ShaderMaterial.Nil && fe.shader_buried != ShaderMaterial.Nil {
 		fe.shader.SetShaderParameter("brush_active", hasBrushForMode)
@@ -595,8 +594,8 @@ func (fe *TerrainEditor) syncBrushSliders() {
 	// power button at the right times (e.g. no power button while painting
 	// textures, but it appears when you switch back to Geometry with a height
 	// brush selected).
-	if editing && fe.client.ui.CloudControl != nil {
-		fe.client.SetGizmos(fe.brushGizmosForCurrentMode())
+	if editing {
+		fe.workbench.SetGizmos(fe.brushGizmosForCurrentMode())
 	}
 }
 
@@ -633,7 +632,7 @@ func (fe *TerrainEditor) ChangeEditor() {
 	// Make sure the toolbar gizmos + sliders reflect the cleared brush state.
 	// (CancelPaint has explicit teardown; ChangeEditor must also keep the UI
 	// chrome consistent when the editor itself is resetting brush state.)
-	if fe.client != nil && fe.client.Editing == Editing.Terrain {
+	if fe.workbench != nil && fe.workbench.editing() == Editing.Terrain {
 		fe.syncBrushSliders()
 	}
 }
@@ -820,8 +819,8 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 		fe.BrushDesign = design
 		// Resolve (and kick off the import of) the design ONCE here, so the live
 		// preview and each paint segment reuse the same id instead of re-importing.
-		if fe.client != nil {
-			fe.dressDesignID = fe.client.MusicalDesign(design)
+		if fe.library != nil {
+			fe.dressDesignID = fe.library.MusicalDesign(design)
 		}
 		// Roll a fresh scatter seed for this tool selection so the previewed
 		// arrangement is fixed (no per-move reshuffle) until it commits.
@@ -898,7 +897,7 @@ func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, 
 		// The water level is a shared mutation: route it through the space
 		// so every client observes the same level. Without a space (e.g.
 		// before joining) apply it locally instead.
-		if fe.client == nil {
+		if fe.recorder == nil {
 			fe.applyWaterLevel(Float.X(value))
 			return
 		}
@@ -906,8 +905,8 @@ func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, 
 			return
 		}
 		fe.lastWaterSync = time.Now()
-		fe.client.commitSculpt(musical.Sculpt{
-			Author: fe.client.id,
+		fe.recorder.commitSculpt(musical.Sculpt{
+			Author: fe.recorder.localAuthor(),
 			Editor: "terrain",
 			Slider: "editing/water_level",
 			Amount: Float.X(value),
@@ -978,14 +977,14 @@ func (fe *TerrainEditor) GizmoPowerEditing() string {
 // terrain tools updates it. No-op unless the terrain editor is active in
 // ModeGeometry (where the slider is shown).
 func (fe *TerrainEditor) refreshGizmoPowerSlider() {
-	if fe.client == nil || fe.client.ui == nil || fe.client.ui.CloudControl == nil {
+	if fe.workbench == nil {
 		return
 	}
-	if fe.client.Editing != Editing.Terrain || fe.client.ui.mode != ModeGeometry || fe.TerrainBrush == "" {
-		fe.client.ui.CloudControl.setPowerSliderVisible(false)
+	if fe.workbench.editing() != Editing.Terrain || fe.workbench.uiMode() != ModeGeometry || fe.TerrainBrush == "" {
+		fe.workbench.setPowerSliderVisible(false)
 		return
 	}
-	fe.client.ui.CloudControl.setPowerSliderVisible(true)
+	fe.workbench.setPowerSliderVisible(true)
 }
 
 // NudgeGizmoPower changes the active brush's GizmoPower parameter (sculpt power
@@ -1135,7 +1134,7 @@ func (tr *TerrainEditor) uploadDesign(design musical.Design) int {
 	if idx, ok := tr.mapper[design]; ok {
 		return idx
 	}
-	texture, ok := tr.client.textures[design].Instance()
+	texture, ok := tr.library.designTexture(design)
 	if !ok {
 		return 0
 	}
@@ -1225,12 +1224,12 @@ func (tr *TerrainEditor) Paint() {
 	if tr.BrushDesign == "" {
 		return
 	}
-	tr.client.commitSculpt(musical.Sculpt{
-		Author: tr.client.id,
+	tr.recorder.commitSculpt(musical.Sculpt{
+		Author: tr.recorder.localAuthor(),
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
 		Amount: tr.BrushAmount,
-		Design: tr.client.MusicalDesign(tr.BrushDesign),
+		Design: tr.library.MusicalDesign(tr.BrushDesign),
 		Commit: true,
 	})
 }
@@ -1261,33 +1260,9 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		// the painting case. This guarantees the toolbar button disappears
 		// on right-click cancel even if later sync/force logic has ordering
 		// subtleties with parked brushes or UI refresh.
-		if tr.client != nil && tr.client.ui != nil && tr.client.ui.CloudControl != nil {
-			cc := tr.client.ui.CloudControl
-			cc.setSizeSliderVisible(false)
-			tr.client.SetGizmos(nil)
-			if cc.GizmoIndicator != TextureRect.Nil {
-				cc.GizmoIndicator.AsCanvasItem().SetVisible(false)
-			}
-			// Extra-targeted removal for the exact brush button.
-			if btn, ok := cc.gizmoButtons[GizmoBrush]; ok && btn != Control.Nil {
-				btn.AsCanvasItem().SetVisible(false)
-				if p := btn.AsNode().GetParent(); p != Node.Nil {
-					p.RemoveChild(btn.AsNode())
-				}
-				delete(cc.gizmoButtons, GizmoBrush)
-			}
-			// Sweep for any leftover "brush" named nodes.
-			vbox := cc.GizmoTypes.AsNode()
-			if vbox != Node.Nil {
-				for i := vbox.GetChildCount() - 1; i >= 0; i-- {
-					child := vbox.GetChild(i)
-					n := strings.ToLower(child.Name())
-					if strings.Contains(n, "brush") {
-						vbox.RemoveChild(child)
-						child.QueueFree()
-					}
-				}
-			}
+		if tr.workbench != nil {
+			tr.workbench.setSizeSliderVisible(false)
+			tr.workbench.dismissBrushGizmo()
 		}
 		// Also make sure the ring is off on the water shader for painting.
 		if tr.water_shader != ShaderMaterial.Nil {
@@ -1337,22 +1312,8 @@ func (tr *TerrainEditor) CancelPaint() bool {
 	// a just-selected terrain texture (or dressing/height brush), the overlay
 	// and buttons go away even if another brush type remains "parked" in the
 	// background state.
-	if active && tr.client != nil && tr.client.Editing == Editing.Terrain {
-		if tr.client.ui != nil && tr.client.ui.CloudControl != nil {
-			cc := tr.client.ui.CloudControl
-			tr.client.SetGizmos(nil)
-			if cc.GizmoIndicator != TextureRect.Nil {
-				cc.GizmoIndicator.AsCanvasItem().SetVisible(false)
-			}
-			// Targeted removal of the brush button in the general cancel path too.
-			if btn, ok := cc.gizmoButtons[GizmoBrush]; ok && btn != Control.Nil {
-				btn.AsCanvasItem().SetVisible(false)
-				if p := btn.AsNode().GetParent(); p != Node.Nil {
-					p.RemoveChild(btn.AsNode())
-				}
-				delete(cc.gizmoButtons, GizmoBrush)
-			}
-		}
+	if active && tr.workbench != nil && tr.workbench.editing() == Editing.Terrain {
+		tr.workbench.dismissBrushGizmo()
 	}
 	return active
 }
@@ -1379,8 +1340,8 @@ func (tr *TerrainEditor) PaintDressing() {
 	}
 	tr.dressLast = tr.BrushTarget
 	tr.dressLastSet = true
-	tr.client.commitSculpt(musical.Sculpt{
-		Author: tr.client.id,
+	tr.recorder.commitSculpt(musical.Sculpt{
+		Author: tr.recorder.localAuthor(),
 		Editor: "terrain",
 		Slider: tr.DressTab,
 		Target: tr.BrushTarget,
@@ -1419,8 +1380,8 @@ func (tr *TerrainEditor) EraseDressing() {
 	}
 	tr.dressLast = tr.BrushTarget
 	tr.dressLastSet = true
-	tr.client.commitSculpt(musical.Sculpt{
-		Author: tr.client.id,
+	tr.recorder.commitSculpt(musical.Sculpt{
+		Author: tr.recorder.localAuthor(),
 		Editor: "terrain",
 		Slider: tr.DressTab,
 		Target: tr.BrushTarget,
@@ -1454,8 +1415,8 @@ func (tr *TerrainEditor) EraseDressingCategory(category string) {
 	tr.dressLast = tr.BrushTarget
 	tr.dressLastSet = true
 
-	tr.client.commitSculpt(musical.Sculpt{
-		Author: tr.client.id,
+	tr.recorder.commitSculpt(musical.Sculpt{
+		Author: tr.recorder.localAuthor(),
 		Editor: "terrain",
 		Slider: category, // either a real category or ClearAllDressingCategory ("*")
 		Target: tr.BrushTarget,
@@ -1469,8 +1430,8 @@ func (tr *TerrainEditor) EraseDressingCategory(category string) {
 	// same disc. We do the sweep only on the authoring client (here); the
 	// resulting Remove Changes are normal musical messages so everyone sees
 	// the props disappear, and RecordChange gives proper per-prop undo.
-	if category == ClearAllDressingCategory && tr.client != nil {
-		tr.client.clearSceneryInDisc(tr.BrushTarget, tr.BrushRadius)
+	if category == ClearAllDressingCategory && tr.scenes != nil {
+		tr.scenes.clearSceneryInDisc(tr.BrushTarget, tr.BrushRadius)
 	}
 }
 
@@ -1499,8 +1460,8 @@ func (tr *TerrainEditor) CancelClearBrush() {
 	tr.ClearCategory = ""
 	tr.brushStrokeActive = false
 	// Hide any brush ring / size slider that the clear tool may have enabled.
-	if tr.client != nil && tr.client.ui != nil && tr.client.ui.CloudControl != nil {
-		tr.client.ui.CloudControl.setSizeSliderVisible(false)
+	if tr.workbench != nil {
+		tr.workbench.setSizeSliderVisible(false)
 	}
 }
 
@@ -1629,18 +1590,18 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 			vr.shader.SetShaderParameter("uplift", event.BrushTarget)
 			vr.shader_buried.SetShaderParameter("uplift", event.BrushTarget)
 			vr.water_shader.SetShaderParameter("uplift", event.BrushTarget)
-			if vr.client.Editing != Editing.Terrain {
+			if vr.workbench.editing() != Editing.Terrain {
 				vr.BrushActive = false
 				break
 			}
 			if vr.PaintActive && Input.IsMouseButtonPressed(Input.MouseButtonLeft) {
 				vr.BrushTarget = Vector3.Round(event.BrushTarget)
-			} else if vr.client.ui.mode == ModeDressing {
+			} else if vr.workbench.uiMode() == ModeDressing {
 				// Dressing only needs the brush ring to track the cursor;
 				// strokes are committed by the client's throttle loop
 				// (PaintDressing). Never arm the height brush here.
 				vr.BrushTarget = event.BrushTarget
-			} else if !vr.PaintActive && vr.client.ui.mode != ModeMaterial {
+			} else if !vr.PaintActive && vr.workbench.uiMode() != ModeMaterial {
 				// Height sculpt input is only accepted when a terrain brush
 				// tool has been explicitly selected in ModeGeometry, or we
 				// are already mid-stroke (BrushActive). A press carries the
@@ -1660,7 +1621,7 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		}
 		break
 	}
-	if !vr.PaintActive && vr.client.ui.mode == ModeGeometry && vr.TerrainBrush != "" {
+	if !vr.PaintActive && vr.workbench.uiMode() == ModeGeometry && vr.TerrainBrush != "" {
 		// Height-sculpt preview: deform the terrain the way a click will, before
 		// the user commits. brush_mode selects the deformation so the preview
 		// matches the committed stroke: 0 additive (raise/lower), 1 plateau
@@ -1814,8 +1775,8 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	}
 	// Seed the local Timing counter from our own replayed strokes so a fresh
 	// session never reissues an identity an undo could later collide with.
-	if brush.Commit && vr.client != nil && brush.Author == vr.client.id {
-		vr.client.noteTiming(brush.Timing)
+	if brush.Commit && vr.recorder != nil && brush.Author == vr.recorder.localAuthor() {
+		vr.recorder.noteTiming(brush.Timing)
 	}
 	// Water-level slider sculpts are routed through the terrain editor but
 	// are not height/paint/dressing edits, so handle them up front.
@@ -1870,7 +1831,7 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		// entered Terrain mode) sets the axis only for apply()'s lazy
 		// ensureSeeded to immediately overwrite it. Routing every environment
 		// sculpt here makes that path reachable from any mode, so seed up front.
-		vr.lighting.ensureSeeded(vr.client)
+		vr.lighting.ensureSeeded(vr.lights)
 		if vr.lighting.handleEnvironmentSlider(brush.Slider, Float.X(brush.Amount)) {
 			// Lighting is last-writer-wins, so during the bulk replay just update
 			// the state and apply ONCE at the flush. Applying per-sculpt fired ~20
@@ -1880,7 +1841,7 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 			if vr.bulkReplay {
 				vr.lightingApplyPending = true
 			} else {
-				vr.lighting.apply(vr.client)
+				vr.lighting.apply(vr.lights)
 			}
 			return nil
 		}
@@ -1920,7 +1881,7 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 		if brush.Amount <= 0 {
 			vr.eraseGrass(brush)
 			if brush.Slider == ClearAllDressingCategory && brush.Commit && !brush.Revert &&
-				(vr.client == nil || !vr.client.joining) {
+				(vr.recorder == nil || !vr.recorder.isJoining()) {
 				// Live bomb usage (by self or remote peers) triggers the visual explosion.
 				// We deliberately skip it:
 				// - on Revert (undo/redo)
@@ -1947,7 +1908,7 @@ func (vr *TerrainEditor) Sculpt(brush musical.Sculpt) error {
 	// stroke is pure graphics.gd command-ring traffic for ~60k self-authored
 	// sculpts (the very ring pressure that gates the load). Skip while replaying;
 	// apply state to Godot at the flush, not per buffered mutation.
-	if !vr.bulkReplay && brush.Author == vr.client.id {
+	if !vr.bulkReplay && brush.Author == vr.recorder.localAuthor() {
 		vr.shader.SetShaderParameter("height", 0.0)
 		vr.shader.SetShaderParameter("river_carve", 0.0)
 		vr.shader.SetShaderParameter("brush_mode", 0.0)
@@ -2021,12 +1982,12 @@ type objectHeightCapture struct {
 // re-applied. Objects at exactly the rim see no terrain change (the brush falloff
 // is 0 there), so including them is harmless.
 func (vr *TerrainEditor) captureObjectHeights(target Vector3.XYZ, radius Float.X) []objectHeightCapture {
-	if vr.client == nil || radius <= 0 {
+	if vr.scenes == nil || radius <= 0 {
 		return nil
 	}
 	r2 := float64(radius) * float64(radius)
 	var caps []objectHeightCapture
-	for _, id := range vr.client.entity_to_object {
+	for id := range vr.scenes.placedObjectIDs() {
 		node, ok := id.Instance()
 		if !ok {
 			continue
@@ -2092,7 +2053,7 @@ func (vr *TerrainEditor) setGrassBrushPreview(target Vector3.XYZ, radius, height
 // the plateau's flat-topped falloff vs smooth's soft cone. Pass amount 0 to
 // settle every object back to its committed position.
 func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount Float.X, flatten, flatTop bool, targetY Float.X) {
-	if vr.client == nil {
+	if vr.scenes == nil {
 		return
 	}
 	r2 := float64(radius) * float64(radius)
@@ -2103,7 +2064,7 @@ func (vr *TerrainEditor) updateObjectPreview(target Vector3.XYZ, radius, amount 
 		vr.restoreObjectPreview()
 		return
 	}
-	for _, id := range vr.client.entity_to_object {
+	for id := range vr.scenes.placedObjectIDs() {
 		node, ok := id.Instance()
 		if !ok {
 			// Node gone (e.g. deleted while previewing); drop its stale offset.
@@ -2317,7 +2278,7 @@ func (tr *TerrainEditor) OnCreate() {
 }
 
 func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
-	if tr.client.Editing != Editing.Terrain {
+	if tr.workbench.editing() != Editing.Terrain {
 		return
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok {
@@ -2325,8 +2286,8 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 			// Single-shot raise/lower commit on release. Plateau/smooth are drag-paint
 			// (PaintTerrainSculpt) and never arm BrushActive, so they don't reach here.
 			if tr.BrushAmount != 0 {
-				tr.client.commitSculpt(musical.Sculpt{
-					Author: tr.client.id,
+				tr.recorder.commitSculpt(musical.Sculpt{
+					Author: tr.recorder.localAuthor(),
 					Target: tr.BrushTarget,
 					Radius: tr.BrushRadius,
 					Amount: tr.BrushAmount,
@@ -2528,7 +2489,7 @@ func (tr *TerrainEditor) specialTerrainBrushActive() bool {
 // preview showed rather than chasing the terrain under each segment. Smooth needs
 // no lock (it pulls toward the local neighbour average; Target.Y is unused).
 func (tr *TerrainEditor) PaintTerrainSculpt() {
-	if !tr.specialTerrainBrushActive() || tr.client == nil {
+	if !tr.specialTerrainBrushActive() || tr.recorder == nil {
 		return
 	}
 	if !tr.sculptStroke {
@@ -2548,7 +2509,7 @@ func (tr *TerrainEditor) PaintTerrainSculpt() {
 		tr.sculptLast = tr.BrushTarget
 	}
 	s := musical.Sculpt{
-		Author: tr.client.id,
+		Author: tr.recorder.localAuthor(),
 		Target: tr.BrushTarget,
 		Radius: tr.BrushRadius,
 		Orient: Angle.Radians(tr.BrushPower),
@@ -2565,7 +2526,7 @@ func (tr *TerrainEditor) PaintTerrainSculpt() {
 		// large-scale shape while shaving local bumps toward the local average.
 		s.Target.Y = tr.discGroundMean(tr.BrushTarget, tr.BrushRadius, tr.BrushTarget.Y)
 	}
-	tr.client.commitSculpt(s)
+	tr.recorder.commitSculpt(s)
 }
 
 // terrainBrushDelta returns the signed height amount one click applies for the
@@ -2614,8 +2575,7 @@ type TerrainTile struct {
 	// terrain floor (CUSTOM0.r) clamps the water above the terrain.
 	water_shader ShaderMaterial.Instance
 
-	client    *Client
-	editor    *TerrainEditor // back-pointer for shared mapper/albedos
+	editor    *TerrainEditor // back-pointer for shared mapper/albedos and ports
 	coord     tileCoord      // grid position; world center = coord * size
 	generated bool
 	// revealed reports whether this tile is an explicit part of the world.
@@ -3055,12 +3015,12 @@ func (vr *TerrainEditor) debugTerrainSignature() {
 	profMark("[sig] tiles=%d heightSum=%.4f (%d) textureSum=%.0f (%d) | grassPatches=%d instances=%d designs=%d mmNodes=%d",
 		tiles, hSum, nH, tSum, nT, len(vr.grassPatches), instances, len(vr.grassRenders), mmNodes)
 	// What ARE the paint designs in the mapper? (answer: preview vs library vs region)
-	if vr.client != nil {
+	if vr.library != nil {
 		byCat := map[string]int{}
 		unique := map[string]bool{}
 		var sample []string
 		for d := range vr.mapper {
-			uri := vr.client.design_to_string[d]
+			uri := vr.library.designURI(d)
 			unique[uri] = true
 			lu := strings.ToLower(uri)
 			cat := "other"
@@ -3407,7 +3367,7 @@ func (tile *TerrainTile) performReload() {
 			}
 		}
 		if heightEdited {
-			for id := range tile.client.object_to_entity {
+			for id := range tile.editor.scenes.placedObjectIDs() {
 				object, ok := id.Instance()
 				if !ok {
 					continue
@@ -3455,7 +3415,7 @@ func (vr *TerrainEditor) flushBulkReloads() {
 	// Sculpt) — replaces the per-sculpt apply that overflowed the command ring.
 	if vr.lightingApplyPending {
 		vr.lightingApplyPending = false
-		vr.lighting.apply(vr.client)
+		vr.lighting.apply(vr.lights)
 	}
 	// Build the shared paint-texture arrays once, now that every design seen
 	// during the replay has been registered (uploadDesign skipped the per-design
@@ -3488,8 +3448,8 @@ func (vr *TerrainEditor) flushBulkReloads() {
 	// Pass 1: restore the rasterised <=Cutoff grids from a valid snapshot and fold
 	// only the newer strokes; otherwise full recompute (reset + replay history).
 	restored := false
-	if snapshotEnabled && vr.client != nil {
-		if snap, err := readTerrainSnapshot(vr.client.record); err == nil {
+	if snapshotEnabled && vr.recorder != nil {
+		if snap, err := readTerrainSnapshot(vr.recorder.workID()); err == nil {
 			restored = vr.applySnapshot(snap, pending)
 		}
 	}
@@ -3532,9 +3492,9 @@ func (vr *TerrainEditor) flushBulkReloads() {
 
 	// Bake a fresh snapshot of the just-built terrain so the NEXT load can skip
 	// re-folding these strokes (see snapshot.go).
-	if snapshotEnabled && vr.client != nil {
+	if snapshotEnabled && vr.recorder != nil {
 		if snap := vr.buildSnapshot(pending); snap != nil {
-			if err := writeTerrainSnapshot(vr.client.record, snap); err != nil {
+			if err := writeTerrainSnapshot(vr.recorder.workID(), snap); err != nil {
 				profMark("snapshot: write failed: %v", err)
 			} else {
 				profMark("snapshot: wrote cutoff=%d %d strokes %d tiles", snap.Cutoff, snap.StrokeCount, len(snap.Tiles))
@@ -4141,7 +4101,7 @@ func (tile *TerrainTile) NormalAt(pos Vector3.XYZ) Vector3.XYZ {
 }
 
 func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.Instance, pos, normal Vector3.XYZ, shape int) {
-	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && tile.client.Editing == Editing.Terrain {
+	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && tile.editor.workbench.editing() == Editing.Terrain {
 		if event.ButtonIndex() == Input.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
 				// A left press that actually hit terrain geometry is the
@@ -4154,7 +4114,7 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				deltaV := Float.X(0)
 				if tile.editor.PaintActive || tile.editor.DressActive || tile.editor.ClearActive {
 					deltaV = 2
-				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" && !tile.editor.specialTerrainBrushActive() {
+				} else if tile.editor.workbench.uiMode() == ModeGeometry && tile.editor.TerrainBrush != "" && !tile.editor.specialTerrainBrushActive() {
 					// Single-shot raise/lower: LMB applies the tool's primary direction
 					// (raise vs lower) in one shot. Plateau/smooth are drag-paint
 					// (brushStrokeActive above drives PaintTerrainSculpt), so they send
@@ -4186,7 +4146,7 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 				} else if tile.editor.DressActive {
 					// RMB during dressing is erase (negative density).
 					deltaV = -2
-				} else if tile.editor.client.ui.mode == ModeGeometry && tile.editor.TerrainBrush != "" && !tile.editor.specialTerrainBrushActive() {
+				} else if tile.editor.workbench.uiMode() == ModeGeometry && tile.editor.TerrainBrush != "" && !tile.editor.specialTerrainBrushActive() {
 					// RMB with a single-shot raise/lower brush applies the inverse of
 					// the tool's primary direction. Plateau/smooth (drag-paint) ignore
 					// RMB — it just tracks the brush position.
@@ -4387,7 +4347,7 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 		}
 		slider, coord = hideSlider, a.tile.coord
 	}
-	if ed.client == nil || ed.client.space == nil {
+	if ed.recorder == nil || !ed.recorder.recording() {
 		if a.hide {
 			ed.hideTile(coord)
 		} else {
@@ -4395,8 +4355,8 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 		}
 		return
 	}
-	ed.client.commitSculpt(musical.Sculpt{
-		Author: ed.client.id,
+	ed.recorder.commitSculpt(musical.Sculpt{
+		Author: ed.recorder.localAuthor(),
 		Editor: "terrain",
 		Slider: slider,
 		Target: Vector3.New(

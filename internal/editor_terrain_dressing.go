@@ -622,7 +622,7 @@ func qmm(f Float.X) int64 { return int64(math.Round(float64(f) * 1000)) }
 // and the user is NOT mid-stroke; otherwise it tears the preview down. Called
 // once per frame from Process.
 func (vr *TerrainEditor) updateDressPreview() {
-	if vr.client == nil || vr.client.ui.mode != ModeDressing ||
+	if vr.workbench == nil || vr.workbench.uiMode() != ModeDressing ||
 		(!vr.DressActive && !vr.ClearActive) ||
 		(vr.DressActive && vr.DressDesign == "") ||
 		vr.brushStrokeActive ||
@@ -654,7 +654,7 @@ func (vr *TerrainEditor) updateDressPreview() {
 	// Random, so what is shown here is exactly what PaintDressing lands — and so
 	// the arrangement only translates with the brush (no per-move reshuffle).
 	brush := musical.Sculpt{
-		Author: vr.client.id,
+		Author: vr.recorder.localAuthor(),
 		Editor: "terrain",
 		Slider: vr.DressTab,
 		Target: vr.BrushTarget,
@@ -819,7 +819,7 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 	if a, ok := vr.grassMeshes[design]; ok {
 		return a, len(a.parts) > 0
 	}
-	scene, ok := vr.client.sceneFor(design)
+	scene, ok := vr.library.sceneFor(design)
 	if !ok {
 		return grassAsset{}, false
 	}
