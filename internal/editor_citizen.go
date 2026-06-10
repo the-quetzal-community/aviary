@@ -18,7 +18,13 @@ type CitizenEditor struct {
 	Node3D.Extension[CitizenEditor]
 	musical.Stubbed
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go. Nil
+	// until Client.Ready wires them; methods guard on recorder == nil so
+	// single-user development works while the plumbing comes online.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	lights    LightingConsole
 
 	loadOnce sync.Once
 	body     CitizenBody
@@ -46,9 +52,9 @@ func (*CitizenEditor) Views() []string { return nil }
 // so a session that never opens the citizen editor never builds
 // the citizen body at all.
 func (ce *CitizenEditor) EnableEditor() {
-	ce.client.SetGizmos(nil)
+	ce.workbench.SetGizmos(nil)
 	ce.ensureLoaded()
-	ce.lighting.resync(ce.client)
+	ce.lighting.resync(ce.lights)
 	if len(ce.pendingSculpts) == 0 {
 		return
 	}
@@ -165,7 +171,7 @@ func (ce *CitizenEditor) SelectDesign(mode Mode, design string) {
 	// dir; the .obj is virtual — we never load it, just detect the
 	// suffix and route to the clear path.
 	clearSlot := strings.HasSuffix(design, "/"+clearDesignName)
-	if ce.client == nil {
+	if ce.recorder == nil {
 		// Editor not yet wired into Client; apply locally so single-user
 		// development still works while the multiplayer plumbing comes
 		// online.
@@ -178,10 +184,9 @@ func (ce *CitizenEditor) SelectDesign(mode Mode, design string) {
 	}
 	var musicalDesign musical.Design
 	if !clearSlot {
-		musicalDesign = ce.client.MusicalDesign(design)
+		musicalDesign = ce.library.MusicalDesign(design)
 	}
-	if err := ce.client.space.Sculpt(musical.Sculpt{
-		Author: ce.client.id,
+	if err := ce.recorder.publishSculpt(musical.Sculpt{
 		Editor: "citizen",
 		Slider: dressingSliderPrefix + slot,
 		Design: musicalDesign,
@@ -306,14 +311,14 @@ func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	ce.last_slider_sculpt = time.Now()
-	if ce.client == nil {
+	if ce.recorder == nil {
 		// Editor not yet wired into Client; apply locally so single-user
 		// development still works while the multiplayer plumbing comes
 		// online.
 		ce.applySlider(editing, Float.X(value))
 		return
 	}
-	ce.client.emitSliderSculpt("citizen", editing, value, commit)
+	ce.recorder.emitSliderSculpt("citizen", editing, value, commit)
 }
 
 // Sculpt overrides musical.Stubbed's no-op so slider changes — local or
@@ -357,8 +362,8 @@ func (ce *CitizenEditor) applyDressing(slot string, design musical.Design) {
 		return
 	}
 	uri := ""
-	if (design != musical.Design{}) && ce.client != nil {
-		uri = ce.client.design_to_string[design]
+	if (design != musical.Design{}) && ce.library != nil {
+		uri = ce.library.designURI(design)
 		if uri == "" {
 			// Import hasn't landed yet — the Sculpt arrived before the
 			// Design URI mapping. Skip; a retry will follow when the

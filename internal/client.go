@@ -654,7 +654,12 @@ func (world *Client) Ready() {
 	world.MineralEditor.client = world
 	world.SceneryEditor.client = world
 	world.ShelterEditor.client = world
-	world.CitizenEditor.client = world
+	// CitizenEditor is migrated to capability ports (editor_ports.go): it
+	// holds only the narrow interfaces it uses, not the whole client.
+	world.CitizenEditor.recorder = world
+	world.CitizenEditor.library = world
+	world.CitizenEditor.workbench = world
+	world.CitizenEditor.lights = world
 	world.CritterEditor.client = world
 	world.CoasterEditor.client = world
 	profMark("Ready: loading editor.tscn")

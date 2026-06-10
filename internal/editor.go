@@ -296,9 +296,16 @@ func (l *lighting) handleEnvironmentSlider(slider string, v Float.X) bool {
 	return true
 }
 
-// apply pushes the current values to the live renderer via the Client.
-func (l *lighting) apply(c *Client) {
-	if c == nil {
+// lightingUnwired reports whether the console an editor handed us is absent:
+// either a nil interface (port field never wired) or a typed-nil *Client (an
+// unmigrated editor passing its not-yet-wired client field).
+func lightingUnwired(c LightingConsole) bool {
+	return c == nil || c == (*Client)(nil)
+}
+
+// apply pushes the current values to the live renderer via the console.
+func (l *lighting) apply(c LightingConsole) {
+	if lightingUnwired(c) {
 		return
 	}
 	l.ensureSeeded(c)
@@ -308,8 +315,8 @@ func (l *lighting) apply(c *Client) {
 // ensureSeeded copies the current world lighting state into this lighting the
 // first time it is used, so a newly-activated editor inherits the world look
 // instead of snapping to zero values (midnight / energy 0 / black).
-func (l *lighting) ensureSeeded(c *Client) {
-	if l.seeded || c == nil {
+func (l *lighting) ensureSeeded(c LightingConsole) {
+	if l.seeded || lightingUnwired(c) {
 		return
 	}
 	l.timeOfDay, l.sunAngle, l.fog, l.clouds, l.rain, l.snow, l.wind, l.moon = c.GetLightingMenuState()
@@ -323,7 +330,7 @@ func (l *lighting) ensureSeeded(c *Client) {
 // another mode in the meantime. A plain apply() would then push those stale
 // values and clobber the live look; clearing seeded forces ensureSeeded to pull
 // the current state first, making the re-apply a faithful refresh instead.
-func (l *lighting) resync(c *Client) {
+func (l *lighting) resync(c LightingConsole) {
 	l.seeded = false
 	l.apply(c)
 }

@@ -132,6 +132,12 @@ func designCategory(uri string) string {
 	return path.Base(path.Dir(uri))
 }
 
+// designURI maps a design reference back to its library resource URI.
+// Empty when the design's Import hasn't been observed yet.
+func (client *Client) designURI(design musical.Design) string {
+	return client.design_to_string[design]
+}
+
 func (client *Client) MusicalDesign(resource string) musical.Design {
 	design, ok := client.loaded[resource]
 	if !ok {
@@ -242,6 +248,18 @@ func reflectSliderConfigOr(rtype reflect.Type, editing string, init, from, upto,
 // look. Each placement/procedural editor's Sculpt guards on this first.
 func isEnvironmentSculpt(brush musical.Sculpt) bool {
 	return strings.HasPrefix(brush.Slider, "environment/")
+}
+
+// publishSculpt stamps the local author onto brush and records it in the
+// shared space. Unlike commitSculpt it stamps no Timing and records no undo
+// entry — for editors (citizen, critter, …) whose sculpts don't participate
+// in terrain-style undo.
+func (client *Client) publishSculpt(brush musical.Sculpt) error {
+	if client.space == nil {
+		return nil
+	}
+	brush.Author = client.id
+	return client.space.Sculpt(brush)
 }
 
 // emitSliderSculpt records a slider-amount Sculpt under editor/slider, raising
