@@ -112,9 +112,16 @@ func (c client) handle(replica UsersSpace3D) {
 	}
 }
 
-func Host(name string, network iter.Seq[Networking], initial WorkID, storage Storage, replica UsersSpace3D, reports ErrorReporter) (UsersSpace3D, chan<- WorkID, error) {
+// Host runs a scene host. `self` is the author this host adopts for its own
+// contributions: pass a stable per-device value so two offline devices editing
+// the same work don't both write as author 0 (which collides their entity ids
+// when their save parts are later merged). Joining clients are still assigned
+// sequential authors and told `self` (via Member.Host) so they can follow the
+// host's clock.
+func Host(name string, network iter.Seq[Networking], initial WorkID, storage Storage, replica UsersSpace3D, reports ErrorReporter, self Author) (UsersSpace3D, chan<- WorkID, error) {
 	var srv = server{
 		name: name,
+		self: self,
 
 		initial: initial,
 		storage: storage,
@@ -136,6 +143,7 @@ func Host(name string, network iter.Seq[Networking], initial WorkID, storage Sto
 
 type server struct {
 	name string
+	self Author // author the host adopts for its own contributions
 
 	initial WorkID
 	storage Storage
@@ -169,9 +177,10 @@ func (srv server) run() {
 	if err := srv.replica.Member(Member{
 		Record: current,
 		Number: tracker.value,
-		Author: 0,
+		Author: srv.self,
 		Server: srv.name,
 		Assign: true,
+		Host:   srv.self,
 	}); err != nil {
 		srv.reports.ReportError(xray.New(err))
 		return
@@ -183,6 +192,16 @@ func (srv server) run() {
 				return
 			}
 			assign++
+			if assign > 255 {
+				// Authors 256+ are reserved for device-derived host authors
+				// (and 0 for legacy), so a joiner must never be assigned one;
+				// past 255 the counter would also eventually wrap to 0.
+				srv.reports.ReportError(xray.New(errors.New("session full: joiner authors are limited to 1..255")))
+				assign = 255
+				client.Instructions.Close()
+				client.MediaUploads.Close()
+				continue
+			}
 			orc, ok := authors[assign]
 			if !ok {
 				orc = Member{
@@ -191,6 +210,7 @@ func (srv server) run() {
 					Author: assign,
 					Server: srv.name,
 					Assign: true,
+					Host:   srv.self,
 				}
 				authors[assign] = orc
 			}

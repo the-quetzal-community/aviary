@@ -85,6 +85,15 @@ type Member struct {
 	Server string // server identifier.
 
 	Assign bool // if true, the receiver should adopt the specified [Author].
+
+	// Host is the author the session host has itself adopted. Sent alongside an
+	// Assign so a joiner can follow the host's clock without assuming host==0
+	// (each offline device now adopts a unique device-derived author). Added at
+	// the end of the struct so the layout-mask encoding stays backward
+	// compatible: older records simply leave it 0, which decodes to the legacy
+	// "follow author 0" behaviour. Member{Assign} is never persisted, so this
+	// never touches on-disk format.
+	Host Author
 }
 
 type Import struct {

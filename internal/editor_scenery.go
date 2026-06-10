@@ -243,6 +243,25 @@ func isMobileDesignCategory(category string) bool {
 	return mobileDesignCategories[category]
 }
 
+// airOrWaterDesignCategories are the mobile categories that live ABOVE the
+// terrain or on water rather than walking the ground, so their absolute Y must
+// be preserved (an airship at altitude or a ship on a lake must not be snapped
+// down to the seabed). Every other mobile category is ground-walking and is
+// kept terrain-relative on reload (see Client.reseatMobileEntities).
+var airOrWaterDesignCategories = map[string]bool{
+	"swimmer": true,
+	"seaship": true,
+	"airship": true,
+	"rockets": true,
+}
+
+// isTerrainWalkingCategory reports whether a mobile category walks the ground (so
+// its placed entities should sit on the terrain surface) as opposed to flying or
+// floating on water.
+func isTerrainWalkingCategory(category string) bool {
+	return mobileDesignCategories[category] && !airOrWaterDesignCategories[category]
+}
+
 func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:

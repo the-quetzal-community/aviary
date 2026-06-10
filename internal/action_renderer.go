@@ -224,7 +224,10 @@ func (ar *ActionRenderer) processRepeat(delta Float.X) {
 	parent := Object.To[Node3D.Instance](ar.AsNode().GetParent())
 	var pos, dir Vector3.XYZ
 	if chosen.turn {
-		ar.play("Idle")
+		// Keep the walk clip running through the swivel: the model is still
+		// "stepping" as it rotates on the spot — dropping to Idle made it
+		// glide around the turn with frozen legs.
+		ar.play("Walk")
 		pos = chosen.from
 		// Rotate the incoming heading 180° around world-up across the pause: starts
 		// matching the arriving walk, ends matching the departing one, so OrientModel
@@ -303,9 +306,21 @@ func (ar *ActionRenderer) OrientModel(model Node3D.Instance, pos Vector3.XYZ, mo
 	ar.CurrentUp = Vector3.Lerp(ar.CurrentUp, targetUp, Float.X(12)*delta)
 	ar.CurrentUp = Vector3.Normalized(ar.CurrentUp)
 
-	// Project the movement direction onto the tangent plane for target forward
+	// Drop the movement direction onto the tangent plane for target forward.
+	// Shear it vertically (solve f.Y so f·up = 0) rather than projecting
+	// orthogonally: both land in the plane, but the shear preserves the
+	// horizontal heading exactly, while orthogonal projection skews the yaw
+	// toward the slope's contour line — on steep terrain the model banks
+	// correctly but visibly faces away from its direction of travel. On
+	// near-vertical terrain (up.Y ~ 0) the shear blows up, so fall back to
+	// the orthogonal projection there.
 	proj := Vector3.Dot(movementDir, targetUp)
-	targetProjectedForward := Vector3.Sub(movementDir, Vector3.MulX(targetUp, proj))
+	var targetProjectedForward Vector3.XYZ
+	if targetUp.Y > 0.2 {
+		targetProjectedForward = Vector3.Sub(movementDir, Vector3.XYZ{Y: proj / targetUp.Y})
+	} else {
+		targetProjectedForward = Vector3.Sub(movementDir, Vector3.MulX(targetUp, proj))
+	}
 	targetProjectedForwardLengthSq := Vector3.LengthSquared(targetProjectedForward)
 
 	if targetProjectedForwardLengthSq > 0 {

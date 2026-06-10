@@ -171,9 +171,15 @@ func (c *countingFile) Read(p []byte) (int, error) {
 
 func (c *countingFile) Write(p []byte) (int, error) { return c.w.Write(p) }
 
+// parseVersion extracts the semantic version from either a bare version
+// string ("v1.2.3") or a server name ("Aviary v1.2.3"). Anything that
+// doesn't parse comes back as 0.0.0, which the mismatch check treats as
+// "unknown, don't warn".
 func parseVersion(version string) (major, minor, patch int) {
-	_, version, _ = strings.Cut(version, " ")
-	version = strings.TrimPrefix(version, ".")
+	if _, after, found := strings.Cut(version, " "); found {
+		version = after
+	}
+	version = strings.TrimLeft(version, "v")
 	splits := strings.Split(version, ".")
 	if len(splits) != 3 {
 		return 0, 0, 0
@@ -191,7 +197,10 @@ func (world musicalImpl) Member(req musical.Member) error {
 		if req.Server != "" {
 			our_major, our_minor, our_patch := parseVersion(version)
 			srv_major, srv_minor, srv_patch := parseVersion(req.Server)
-			if srv_major > our_major || srv_major > srv_minor || srv_patch > our_patch {
+			server_is_newer := srv_major > our_major ||
+				(srv_major == our_major && srv_minor > our_minor) ||
+				(srv_major == our_major && srv_minor == our_minor && srv_patch > our_patch)
+			if server_is_newer {
 				if !(our_major == 0 && our_minor == 0 && our_patch == 0) && !(srv_major == 0 && srv_minor == 0 && srv_patch == 0) {
 					OS.ShellOpen("https://the.quetzal.community/aviary/mismatch")
 				}
@@ -199,6 +208,7 @@ func (world musicalImpl) Member(req musical.Member) error {
 		}
 		Callable.Defer(Callable.New(func() {
 			world.id = req.Author
+			world.host = req.Host
 			world.record = req.Record
 			world.member = true
 		}))
@@ -592,7 +602,7 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 		}
 		editor.LookAt(view)
 
-		if world.joining && view.Author == 0 {
+		if world.joining && view.Author == world.host {
 			world.time.Follow(view.Timing)
 		}
 		if view.Author == world.id {

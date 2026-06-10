@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"math"
@@ -197,6 +198,7 @@ type Client struct {
 	println chan string
 
 	id     musical.Author
+	host   musical.Author // author the session host adopted (0 when we are the host / offline); the joiner follows its clock
 	record musical.WorkID
 	space  musical.UsersSpace3D
 
@@ -434,6 +436,25 @@ func NewClient() *Client {
 	return client
 }
 
+// deviceAuthor maps this install's stable device id to the musical.Author it
+// adopts when hosting/editing offline, so two devices editing the same cloud
+// scene don't both write as author 0 and collide their entity numbers when the
+// per-device save parts are merged on load. Mapped into [256, 65535]: 0 is the
+// legacy/default author and 1..255 stay reserved for the host's sequentially
+// assigned live joiners, so an offline device-author can never alias a live
+// joiner. uint16 is the Author width, so distinct devices can in principle hash
+// alike, but the birthday odds across a single user's handful of devices are
+// negligible.
+func deviceAuthor(device string) musical.Author {
+	if device == "" {
+		return 0
+	}
+	h := fnv.New32a()
+	h.Write([]byte(device))
+	const reserved = 256
+	return musical.Author(reserved + h.Sum32()%(65536-reserved))
+}
+
 var UserState struct {
 	Aviary signalling.User
 	Editor Subject
@@ -594,7 +615,9 @@ func (world *Client) Ready() {
 		}
 		var err error
 		var hosted musical.UsersSpace3D
-		hosted, _, err = musical.Host("Aviary v"+version, clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}) // FIXME race?
+		// version already carries its "v" prefix (velopack sets "v1.2.3"),
+		// and is empty in dev builds.
+		hosted, _, err = musical.Host(strings.TrimSpace("Aviary "+version), clients_iter, world.record, musicalImpl{world}, musicalImpl{world}, musicalImpl{world}, deviceAuthor(UserState.Device)) // FIXME race?
 		if err != nil {
 			Engine.Raise(err)
 		}
@@ -927,6 +950,63 @@ func (world *Client) reseatFloats() {
 	}
 }
 
+// reseatMobileEntities re-seats mobile dressing entities against the FINAL
+// composed terrain, so ground critters are terrain-relative on reload.
+//
+// A mobile entity records an absolute Y at placement (Editor=""), and objects
+// only re-seat against terrain during LIVE edits (TerrainEditor.reprojectObjects,
+// HeightAt+delta). On reload there's no live edit and a cloud scene is stitched
+// from several device parts replayed non-causally, so another part's terrain
+// raise can apply after a critter's placement — the scorpions that "vanished"
+// were actually under the ground. Floats carry their own terrain-relative delta
+// (reseatFloats) and may sit intentionally low/high, so they're skipped here.
+//
+//   - Ground-walking categories (critter/citizen/scooter/…) are snapped onto the
+//     surface (delta 0, matching reprojectObjects for a ground-seated object), so
+//     they're never buried and never float, regardless of how the terrain was
+//     composed.
+//   - Air/water categories (airship/rockets/seaship/swimmer) keep their absolute
+//     Y and are only lifted when strictly BELOW the surface (nothing can be under
+//     the ground/seabed), so an airship at altitude or a ship on a lake stays put.
+//
+// Static scenery is untouched (it may be intentionally embedded).
+func (world *Client) reseatMobileEntities() {
+	if world.TerrainEditor == nil {
+		return
+	}
+	for design, ids := range world.design_to_entity {
+		uri, ok := world.design_to_string[design]
+		if !ok {
+			continue
+		}
+		category := designCategory(uri)
+		if !isMobileDesignCategory(category) {
+			continue
+		}
+		walksTerrain := isTerrainWalkingCategory(category)
+		for _, id := range ids {
+			if _, isFloat := world.entity_float_delta[world.object_to_entity[id]]; isFloat {
+				continue
+			}
+			node, ok := id.Instance()
+			if !ok {
+				continue
+			}
+			pos := node.Position()
+			terrainY := world.TerrainEditor.HeightAt(Vector3.New(pos.X, 0, pos.Z))
+			switch {
+			case walksTerrain:
+				pos.Y = terrainY // terrain-relative: ride the surface
+			case pos.Y < terrainY:
+				pos.Y = terrainY // air/water: only un-bury, never lower
+			default:
+				continue
+			}
+			node.SetPosition(pos)
+		}
+	}
+}
+
 func (world *Client) finishLoading() {
 	if !world.loading {
 		return
@@ -943,6 +1023,12 @@ func (world *Client) finishLoading() {
 		// height instead of near y=0 (the "lifted props are too high/low on
 		// reload" bug).
 		world.reseatFloats()
+		// Mobile critters/vehicles record an absolute Y, so a cloud scene's
+		// non-causal terrain replay (another part's raise landing after the
+		// placement) can bury them. Lift any that ended up under the final
+		// terrain back to the surface (the "placed scorpions are under the
+		// terrain after reload" bug).
+		world.reseatMobileEntities()
 		// Library-sizing debug mode: settle every sizes.txt override against
 		// the final terrain (replay-time applications grounded to HeightAt==0).
 		world.applyLibrarySizeOverrides()
