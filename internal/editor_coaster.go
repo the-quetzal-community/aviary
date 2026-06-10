@@ -34,7 +34,14 @@ type CoasterEditor struct {
 	Objects Node3D.Instance
 	Preview PreviewRenderer
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+
+	// terrain is the terrain editor, woken while coastering so track
+	// pieces can be seated against live ground heights.
+	terrain *TerrainEditor
 
 	// cursor is the world-space transform of the end of the last
 	// placed piece. When cursorValid is true, non-startable pieces
@@ -94,11 +101,11 @@ func (*CoasterEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *CoasterEditor) EnableEditor() {
-	editor.client.SetGizmos(placementGizmos)
-	editor.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeInherit)
+	editor.workbench.SetGizmos(placementGizmos)
+	editor.terrain.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (editor *CoasterEditor) ChangeEditor() {
-	editor.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeDisabled)
+	editor.terrain.AsNode().SetProcessMode(Node.ProcessModeDisabled)
 }
 
 func (editor *CoasterEditor) SelectDesign(mode Mode, design string) {
@@ -146,10 +153,9 @@ func (editor *CoasterEditor) commitPreview() {
 	}
 	piece, ok := coasterPieceForPath(design)
 	if !ok {
-		editor.client.space.Change(musical.Change{
-			Author: editor.client.id,
-			Entity: editor.client.NextEntity(),
-			Design: editor.client.MusicalDesign(design),
+		editor.recorder.publishChange(musical.Change{
+			Entity: editor.recorder.NextEntity(),
+			Design: editor.library.MusicalDesign(design),
 			Offset: editor.Preview.AsNode3D().Position(),
 			Angles: editor.Preview.AsNode3D().Rotation(),
 			Editor: "coaster",
@@ -178,7 +184,7 @@ func (editor *CoasterEditor) commitPreview() {
 	priorValid := editor.cursorValid
 	worldTransform, nextCursor := editor.computePlacement(piece, place)
 
-	entity := editor.client.NextEntity()
+	entity := editor.recorder.NextEntity()
 	editor.cursor = nextCursor
 	editor.cursorValid = true
 	editor.chain = append(editor.chain, coasterChainEntry{
@@ -187,10 +193,9 @@ func (editor *CoasterEditor) commitPreview() {
 		priorValid:  priorValid,
 	})
 
-	editor.client.space.Change(musical.Change{
-		Author: editor.client.id,
+	editor.recorder.publishChange(musical.Change{
 		Entity: entity,
-		Design: editor.client.MusicalDesign(design),
+		Design: editor.library.MusicalDesign(design),
 		Offset: worldTransform.Origin,
 		Angles: Basis.AsEulerAngles(worldTransform.Basis, Angle.OrderXYZ),
 		Editor: "coaster",
@@ -222,8 +227,7 @@ func (editor *CoasterEditor) undoLast() {
 	editor.chain = editor.chain[:len(editor.chain)-1]
 	editor.cursor = last.priorCursor
 	editor.cursorValid = last.priorValid
-	editor.client.space.Change(musical.Change{
-		Author: editor.client.id,
+	editor.recorder.publishChange(musical.Change{
 		Entity: last.entity,
 		Editor: "coaster",
 		Remove: true,
@@ -283,7 +287,7 @@ func (editor *CoasterEditor) Change(change musical.Change) error {
 			SetScale(scale)
 		return nil
 	}
-	node := editor.client.instantiateDesign(change.Design)
+	node := editor.library.instantiateDesign(change.Design)
 	node.
 		SetPosition(change.Offset).
 		SetRotation(change.Angles).
@@ -299,8 +303,8 @@ func (editor *CoasterEditor) Change(change musical.Change) error {
 // known coaster path (park props in dressing tabs).
 func (editor *CoasterEditor) designScale(design musical.Design) Vector3.XYZ {
 	scale := Vector3.New(coasterPieceScale, coasterPieceScale, coasterPieceScale)
-	resource, ok := editor.client.design_to_string[design]
-	if !ok {
+	resource := editor.library.designURI(design)
+	if resource == "" {
 		return scale
 	}
 	piece, ok := coasterPieceForPath(resource)

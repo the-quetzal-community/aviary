@@ -30,7 +30,10 @@ type VehicleEditor struct {
 	Preview       PreviewRenderer
 	MirrorPreview PreviewRenderer
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
 
 	design_to_entity map[musical.Design][]Node3D.ID
 	entity_to_object map[musical.Entity]Node3D.ID
@@ -131,10 +134,9 @@ func (editor *VehicleEditor) UnhandledInput(event InputEvent.Instance) {
 		if editor.MirrorPreview.Visible() {
 			mirror = Vector3.Sub(editor.MirrorPreview.AsNode3D().Position(), editor.Preview.AsNode3D().Position())
 		}
-		editor.client.space.Change(musical.Change{
-			Author: editor.client.id,
-			Entity: editor.client.NextEntity(),
-			Design: editor.client.MusicalDesign(editor.Preview.Design()),
+		editor.recorder.publishChange(musical.Change{
+			Entity: editor.recorder.NextEntity(),
+			Design: editor.library.MusicalDesign(editor.Preview.Design()),
 			Offset: editor.Preview.AsNode3D().Position(),
 			Angles: editor.Preview.AsNode3D().Rotation(),
 			Editor: "vehicle",
@@ -148,11 +150,10 @@ func (editor *VehicleEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if isDeletePress(event) {
-			node, ok := editor.client.selection.Instance()
+			node, ok := editor.workbench.selectedNode()
 			if ok {
 				if entity, ok := editor.object_to_entity[Node3D.ID(node.ID())]; ok {
-					editor.client.space.Change(musical.Change{
-						Author: editor.client.id,
+					editor.recorder.publishChange(musical.Change{
 						Entity: entity,
 						Editor: "vehicle",
 						Remove: true,
@@ -168,7 +169,7 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 	node, ok := editor.entity_to_mirror[change.Entity].Instance()
 	switch {
 	case !ok && change.Mirror != (Vector3.XYZ{}):
-		node = editor.client.instantiateDesign(change.Design)
+		node = editor.library.instantiateDesign(change.Design)
 		switch {
 		case change.Mirror.X != 0:
 			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(-0.3, 0.3, 0.3)))
@@ -178,7 +179,7 @@ func (editor *VehicleEditor) remirror(parent Node3D.Instance, change musical.Cha
 			node.AsNode3D().SetScale(Vector3.Mul(node.Scale(), Vector3.New(0.3, 0.3, -0.3)))
 		}
 		editor.entity_to_mirror[change.Entity] = node.ID()
-		if designCategory(editor.client.design_to_string[change.Design]) == "spinner" {
+		if designCategory(editor.library.designURI(change.Design)) == "spinner" {
 			editor.Spinner.AsNode().AddChild(node.AsNode())
 		} else {
 			editor.Objects.AsNode().AddChild(node.AsNode())
@@ -232,7 +233,7 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 		}
 		return nil
 	}
-	node := editor.client.instantiateDesign(change.Design)
+	node := editor.library.instantiateDesign(change.Design)
 	node.
 		SetPosition(change.Offset).
 		SetRotation(change.Angles)
@@ -243,7 +244,7 @@ func (editor *VehicleEditor) Change(change musical.Change) error {
 	}
 	registerEntity(editor.design_to_entity, editor.entity_to_object, editor.object_to_entity, change.Design, change.Entity, node)
 	editor.remirror(node, change)
-	if path.Base(path.Dir(editor.client.design_to_string[change.Design])) == "spinner" {
+	if path.Base(path.Dir(editor.library.designURI(change.Design))) == "spinner" {
 		editor.Spinner.AsNode().AddChild(node.AsNode())
 	} else {
 		container.AddChild(node.AsNode())
@@ -283,7 +284,7 @@ func (editor *VehicleEditor) PhysicsProcess(_ Float.X) {
 			} else {
 				editor.MirrorPreview.AsNode3D().SetVisible(false)
 			}
-			if editor.client.ui.mode == ModeDressing {
+			if editor.workbench.uiMode() == ModeDressing {
 				scale := editor.Preview.AsNode3D().Scale() // Capture existing scale
 
 				up := Vector3.Normalized(hover.Normal)
@@ -316,7 +317,7 @@ func (editor *VehicleEditor) PhysicsProcess(_ Float.X) {
 }
 
 func (editor *VehicleEditor) EnableEditor() {
-	editor.client.SetGizmos(placementGizmos)
+	editor.workbench.SetGizmos(placementGizmos)
 }
 func (*VehicleEditor) ChangeEditor() {}
 

@@ -42,7 +42,11 @@ type ShelterEditor struct {
 
 	grid_shader ShaderMaterial.ID
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	rig       CameraRig
 
 	last_angle_change Angle.Radians
 	last_mouse_change time.Time
@@ -116,7 +120,7 @@ func (editor *ShelterEditor) SwitchToView(view string) {
 		}
 	case "unicode/+":
 		editor.levels++
-		editor.client.ui.ViewSelector.Refresh(editor.levels+1, editor.Views())
+		editor.workbench.refreshViewSelector(editor.levels+1, editor.Views())
 	default:
 		if level_str, ok := strings.CutPrefix(view, "unicode/"); ok {
 			level, err := strconv.Atoi(level_str)
@@ -164,9 +168,9 @@ func (editor *ShelterEditor) setActiveLevel(level int) {
 	editor.current_plane = Plane.NormalD{Normal: Vector3.XYZ{0, 1, 0}, D: Float.X(level)}
 	shader, _ := editor.grid_shader.Instance()
 	shader.SetShaderParameter("center_offset", Vector3.New(0, float64(level), 0))
-	pos := editor.client.FocalPoint.Position()
+	pos := editor.rig.focalNode().Position()
 	pos.Y = Float.X(level)
-	editor.client.FocalPoint.SetPosition(pos)
+	editor.rig.focalNode().SetPosition(pos)
 }
 
 func (*ShelterEditor) Name() string { return "shelter" }
@@ -205,16 +209,16 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 }
 
 func (editor *ShelterEditor) EnableEditor() {
-	editor.client.SetGizmos(placementGizmosWithScale())
+	editor.workbench.SetGizmos(placementGizmosWithScale())
 	shader := ShaderMaterial.New()
 	shader.SetShader(LoadSync[Shader.Instance]("res://shader/grid.gdshader"))
 	editor.grid_shader = shader.ID()
-	editor.client.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, shader.AsMaterial())
+	editor.rig.setCameraCover(shader.AsMaterial())
 }
 func (editor *ShelterEditor) ChangeEditor() {
 	// Hand the cover back to the default underwater post-process rather than
 	// clearing it, so the waterline/underwater effect survives leaving shelter.
-	editor.client.applyCoverDefault()
+	editor.rig.applyCoverDefault()
 }
 
 func (editor *ShelterEditor) SelectDesign(mode Mode, design string) {
@@ -294,7 +298,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 		// Gizmo Changes carry no Design, so resolve it from the editor map.
 		if librarySizesFile() != "" {
 			if design, found := findDesignInMap(editor.design_to_entity, editor.entity_to_object[change.Entity]); found {
-				if override, _, listed := editor.client.libraryOverrideFor(design); listed &&
+				if override, _, listed := editor.library.libraryOverrideFor(design); listed &&
 					(override.hasOffset || override.hasXZ || override.hasRotation) {
 					shiftGeometryToOverride(exists, override)
 				}
@@ -304,10 +308,10 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	}
 	var node Node3D.Instance
 	level := int(Float.Round(change.Offset.Y))
-	design := editor.client.design_to_string[change.Design]
+	design := editor.library.designURI(change.Design)
 	if FileAccess.FileExists(strings.TrimSuffix(design, path.Ext(design)) + "_cut.glb.import") {
 		node = Node3D.New()
-		scene, ok := editor.client.sceneFor(change.Design)
+		scene, ok := editor.library.sceneFor(change.Design)
 		if ok {
 			full := Object.To[Node3D.Instance](scene.Instantiate())
 			full.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
@@ -319,7 +323,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 			node.AsNode().AddChild(cut.AsNode())
 		}
 	} else {
-		node = editor.client.instantiateDesign(change.Design)
+		node = editor.library.instantiateDesign(change.Design)
 		kind := designCategory(design)
 		if kind == "hanging" || kind == "mounted" {
 			node.AsNode().AddToGroup("floor_whole_" + strconv.Itoa(level))
@@ -327,8 +331,8 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	}
 	if level > editor.levels {
 		editor.levels = level
-		if editor.client.Editing == Editing.Shelter {
-			editor.client.ui.ViewSelector.Refresh(editor.client.ui.ViewSelector.view, editor.Views())
+		if editor.workbench.editing() == Editing.Shelter {
+			editor.workbench.refreshViewSelector(editor.workbench.currentView(), editor.Views())
 		}
 	}
 	node.AsNode().AddToGroup("floor_" + strconv.Itoa(level))
@@ -350,7 +354,7 @@ func (editor *ShelterEditor) Change(change musical.Change) error {
 	// Library-sizing debug mode: preview the sizes.txt entry for this part
 	// (no-op outside debug mode). Shelter parts anchor to the level grid,
 	// not the terrain, hence terrainSeated=false.
-	editor.client.applyLibrarySizeOverride(change.Entity, change.Design, node, false)
+	editor.library.applyLibrarySizeOverride(change.Entity, change.Design, node, false)
 	return nil
 }
 
@@ -362,10 +366,9 @@ func (editor *ShelterEditor) UnhandledInput(event InputEvent.Instance) {
 		editor.Preview.Remove()
 	}
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && event.ButtonIndex() == Input.MouseButtonLeft && event.AsInputEvent().IsPressed() {
-		editor.client.space.Change(musical.Change{
-			Author: editor.client.id,
-			Entity: editor.client.NextEntity(),
-			Design: editor.client.MusicalDesign(editor.Preview.Design()),
+		editor.recorder.publishChange(musical.Change{
+			Entity: editor.recorder.NextEntity(),
+			Design: editor.library.MusicalDesign(editor.Preview.Design()),
 			Offset: editor.Preview.AsNode3D().Position(),
 			Angles: editor.Preview.AsNode3D().Rotation(),
 			Editor: "shelter",
@@ -380,15 +383,14 @@ func (editor *ShelterEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
 		if isDeletePress(event) {
-			node, ok := editor.client.selection.Instance()
+			node, ok := editor.workbench.selectedNode()
 			if ok {
 				entity, ok := editor.object_to_entity[Node3D.ID(node.ID())]
 				if !ok {
 					entity, ok = editor.object_to_entity[node.GetParentNode3d().ID()]
 				}
 				if ok {
-					editor.client.space.Change(musical.Change{
-						Author: editor.client.id,
+					editor.recorder.publishChange(musical.Change{
 						Entity: entity,
 						Editor: "shelter",
 						Remove: true,
@@ -404,7 +406,7 @@ func (editor *ShelterEditor) PhysicsProcess(_ Float.X) {
 	if design := editor.Preview.Design(); design != "" {
 		mouse := Viewport.Get(editor.AsNode()).GetMousePosition()
 		kind := designCategory(design)
-		switch editor.client.ui.mode {
+		switch editor.workbench.uiMode() {
 		case ModeDressing:
 			if hover := MousePicker(editor.AsNode3D()); hover.Collider != Object.Nil {
 				point := hover.Position
@@ -435,8 +437,8 @@ func (editor *ShelterEditor) PhysicsProcess(_ Float.X) {
 			}
 		case ModeGeometry:
 			if point, ok := Plane.IntersectsRay(editor.current_plane,
-				editor.client.FocalPoint.Lens.Camera.ProjectRayOrigin(mouse),
-				editor.client.FocalPoint.Lens.Camera.ProjectRayNormal(mouse),
+				editor.rig.viewportCamera().ProjectRayOrigin(mouse),
+				editor.rig.viewportCamera().ProjectRayNormal(mouse),
 			); ok {
 				var angle Angle.Radians
 				// Determine which triangular quadrant the intersection point is in and set angle accordingly

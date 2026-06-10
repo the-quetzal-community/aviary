@@ -649,7 +649,9 @@ func (world *Client) Ready() {
 	for _, tile := range world.TerrainEditor.tiles {
 		tile.client = world
 	}
-	world.VehicleEditor.client = world
+	world.VehicleEditor.recorder = world
+	world.VehicleEditor.library = world
+	world.VehicleEditor.workbench = world
 	world.FoliageEditor.recorder = world
 	world.FoliageEditor.library = world
 	world.FoliageEditor.workbench = world
@@ -659,7 +661,10 @@ func (world *Client) Ready() {
 	world.MineralEditor.workbench = world
 	world.MineralEditor.lights = world
 	world.SceneryEditor.client = world
-	world.ShelterEditor.client = world
+	world.ShelterEditor.recorder = world
+	world.ShelterEditor.library = world
+	world.ShelterEditor.workbench = world
+	world.ShelterEditor.rig = world
 	// CitizenEditor is migrated to capability ports (editor_ports.go): it
 	// holds only the narrow interfaces it uses, not the whole client.
 	world.CitizenEditor.recorder = world
@@ -667,7 +672,10 @@ func (world *Client) Ready() {
 	world.CitizenEditor.workbench = world
 	world.CitizenEditor.lights = world
 	world.CritterEditor.client = world
-	world.CoasterEditor.client = world
+	world.CoasterEditor.recorder = world
+	world.CoasterEditor.library = world
+	world.CoasterEditor.workbench = world
+	world.CoasterEditor.terrain = world.TerrainEditor
 	profMark("Ready: loading editor.tscn")
 	editor_scene := LoadSync[PackedScene.Instance]("res://ui/editor.tscn")
 	first := editor_scene.Instantiate()

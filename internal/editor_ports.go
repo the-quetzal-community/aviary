@@ -1,6 +1,10 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Camera3D"
+	"graphics.gd/classdb/Material"
+	"graphics.gd/classdb/Node3D"
+	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Float"
 
@@ -33,6 +37,12 @@ type Recorder interface {
 	// emitDesignSculpt records a committed design-selection Sculpt under
 	// editor/slider, registering an Import for the resource if it's new.
 	emitDesignSculpt(editor, slider, resource string)
+
+	// publishChange stamps the local author onto change and records it.
+	publishChange(change musical.Change) error
+
+	// NextEntity reserves the next entity id authored by this client.
+	NextEntity() musical.Entity
 }
 
 // Library resolves between library resource URIs and the numeric
@@ -49,11 +59,49 @@ type Library interface {
 	// resolveMaterialTexture turns a material-selection design into a
 	// usable texture (plain image or shared-material atlas region).
 	resolveMaterialTexture(design musical.Design) Texture2D.Instance
+
+	// sceneFor returns the loaded PackedScene for a design, if available.
+	sceneFor(design musical.Design) (PackedScene.Instance, bool)
+
+	// instantiateDesign instantiates a design's scene (with the library's
+	// per-model processing applied), ready to be parented.
+	instantiateDesign(design musical.Design) Node3D.Instance
+
+	// libraryOverrideFor / applyLibrarySizeOverride expose the
+	// library-sizing debug mode (sizes.txt measurement workflow).
+	libraryOverrideFor(design musical.Design) (override librarySizeOverride, model string, listed bool)
+	applyLibrarySizeOverride(entity musical.Entity, design musical.Design, node Node3D.Instance, terrainSeated bool)
 }
 
-// Workbench is the slice of the UI shell an editor may adjust.
+// Workbench is the slice of the UI shell an editor may observe and adjust.
 type Workbench interface {
 	SetGizmos(gizmos []Gizmo)
+
+	// uiMode is the current geometry/dressing/material mode.
+	uiMode() Mode
+
+	// editing is the currently active editor subject.
+	editing() Subject
+
+	// selectedNode resolves the current viewport selection, if any.
+	selectedNode() (Node3D.Instance, bool)
+
+	// currentView / refreshViewSelector observe and repopulate the
+	// view-selector strip (used by editors with dynamic views, e.g.
+	// shelter's per-storey levels).
+	currentView() int
+	refreshViewSelector(view int, views []string)
+}
+
+// CameraRig is the camera rig: the focal point the camera orbits, ray
+// projection for cursor picking, and the fullscreen cover quad that editors
+// may temporarily borrow (handing it back via applyCoverDefault). (Not named
+// Viewport — that would shadow the graphics.gd/classdb/Viewport import.)
+type CameraRig interface {
+	focalNode() Node3D.Instance
+	viewportCamera() Camera3D.Instance
+	setCameraCover(material Material.Instance)
+	applyCoverDefault()
 }
 
 // LightingConsole drives the live world-lighting renderer state. It is the
@@ -69,5 +117,34 @@ var (
 	_ Recorder        = (*Client)(nil)
 	_ Library         = (*Client)(nil)
 	_ Workbench       = (*Client)(nil)
+	_ CameraRig       = (*Client)(nil)
 	_ LightingConsole = (*Client)(nil)
 )
+
+// publishChange stamps the local author onto change and records it in the
+// shared space (Timing is stamped by the stampedSpace wrapper on commit).
+func (world *Client) publishChange(change musical.Change) error {
+	if world.space == nil {
+		return nil
+	}
+	change.Author = world.id
+	return world.space.Change(change)
+}
+
+func (world *Client) uiMode() Mode     { return world.ui.mode }
+func (world *Client) editing() Subject { return world.Editing }
+func (world *Client) currentView() int { return world.ui.ViewSelector.view }
+func (world *Client) refreshViewSelector(view int, views []string) {
+	world.ui.ViewSelector.Refresh(view, views)
+}
+func (world *Client) selectedNode() (Node3D.Instance, bool) {
+	return world.selection.Instance()
+}
+
+func (world *Client) focalNode() Node3D.Instance { return world.FocalPoint.Instance }
+func (world *Client) viewportCamera() Camera3D.Instance {
+	return world.FocalPoint.Lens.Camera.Instance
+}
+func (world *Client) setCameraCover(material Material.Instance) {
+	world.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, material)
+}
