@@ -6,7 +6,6 @@ import (
 	"graphics.gd/classdb/InputEventMouseButton"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
-	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
@@ -34,7 +33,15 @@ type SceneryEditor struct {
 	// for every other design. See editor_scenery_fence.go.
 	fence fenceTool
 
-	client *Client
+	// Capability ports into the wider client — see editor_ports.go.
+	recorder  Recorder
+	library   Library
+	workbench Workbench
+	rig       CameraRig
+
+	// terrain is the terrain editor, woken while placing scenery so
+	// previews and fence runs can be seated against live ground heights.
+	terrain *TerrainEditor
 }
 
 // sceneryLibraryScale is the "library placement" factor every scenery design is
@@ -114,9 +121,9 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 		return false
 	}
 	placement := musical.Change{
-		Author: editor.client.id,
-		Entity: editor.client.NextEntity(),
-		Design: editor.client.MusicalDesign(editor.Preview.Design()),
+		Author: editor.recorder.localAuthor(),
+		Entity: editor.recorder.NextEntity(),
+		Design: editor.library.MusicalDesign(editor.Preview.Design()),
 		Offset: editor.Preview.AsNode3D().Position(),
 		Angles: editor.Preview.AsNode3D().Rotation(),
 		// Carry the preview's scale forward so a duplicate-from-
@@ -130,9 +137,9 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 		Bounds: editor.Preview.AsNode3D().Scale(),
 		Commit: true,
 	}
-	editor.client.space.Change(placement)
-	editor.client.RecordChange(placement, musical.Change{
-		Author: editor.client.id,
+	editor.recorder.publishChange(placement)
+	editor.recorder.RecordChange(placement, musical.Change{
+		Author: placement.Author,
 		Entity: placement.Entity,
 		Remove: true,
 	})
@@ -156,7 +163,7 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 	//     feedback so the user can see what they're holding, while
 	//     keeping previewOnTerrain=false so a trigger pull won't
 	//     commit it in mid-air.
-	hover := editor.client.PreviewPicker()
+	hover := editor.rig.PreviewPicker()
 	onTerrain := Object.Is[*TerrainTile](hover.Collider)
 	editor.previewOnTerrain = onTerrain
 	if editor.fence.previewing {
@@ -186,8 +193,8 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 		editor.Preview.AsNode3D().SetGlobalPosition(pos)
 		return
 	}
-	if editor.client.xr && editor.client.xrRight != XRController3D.Nil {
-		t := editor.client.xrRight.AsNode3D().GlobalTransform()
+	if pointer, ok := editor.rig.xrPointer(); ok {
+		t := pointer.AsNode3D().GlobalTransform()
 		forward := Vector3.XYZ{X: -t.Basis.Z.X, Y: -t.Basis.Z.Y, Z: -t.Basis.Z.Z}
 		pos := Vector3.Add(t.Origin, Vector3.MulX(forward, 3.0))
 		editor.Preview.AsNode3D().SetVisible(true)
@@ -200,11 +207,11 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 func (fe *SceneryEditor) Name() string { return "scenery" }
 
 func (fe *SceneryEditor) EnableEditor() {
-	fe.client.SetGizmos(placementGizmosWithScale())
-	fe.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeInherit)
+	fe.workbench.SetGizmos(placementGizmosWithScale())
+	fe.terrain.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (fe *SceneryEditor) ChangeEditor() {
-	fe.client.TerrainEditor.AsNode().SetProcessMode(Node.ProcessModeDisabled)
+	fe.terrain.AsNode().SetProcessMode(Node.ProcessModeDisabled)
 }
 
 // sceneryDressingCategories are the ModeDressing ("vehicle") library

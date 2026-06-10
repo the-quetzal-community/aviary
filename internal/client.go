@@ -660,7 +660,11 @@ func (world *Client) Ready() {
 	world.MineralEditor.library = world
 	world.MineralEditor.workbench = world
 	world.MineralEditor.lights = world
-	world.SceneryEditor.client = world
+	world.SceneryEditor.recorder = world
+	world.SceneryEditor.library = world
+	world.SceneryEditor.workbench = world
+	world.SceneryEditor.rig = world
+	world.SceneryEditor.terrain = world.TerrainEditor
 	world.ShelterEditor.recorder = world
 	world.ShelterEditor.library = world
 	world.ShelterEditor.workbench = world

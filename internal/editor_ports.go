@@ -5,7 +5,9 @@ import (
 	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/PhysicsDirectSpaceState3D"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/classdb/XRController3D"
 	"graphics.gd/variant/Float"
 
 	"the.quetzal.community/aviary/internal/musical"
@@ -52,6 +54,16 @@ type Recorder interface {
 	// workID identifies the work being edited — used as a cache key for
 	// derived state (e.g. the critter snapshot).
 	workID() musical.WorkID
+
+	// localAuthor is the author this client's mutations are stamped with.
+	// Editors only need it when a published Change's value is reused (e.g.
+	// to build the matching undo record); publishing itself stamps it.
+	localAuthor() musical.Author
+
+	// RecordChange / RecordChangeGroup push an already-published Change
+	// (or a grouped run of them) onto the undo stack with its inverse.
+	RecordChange(do, undo musical.Change)
+	RecordChangeGroup(dos, undos []musical.Change)
 }
 
 // Library resolves between library resource URIs and the numeric
@@ -116,6 +128,14 @@ type CameraRig interface {
 	// setMovementLocked freezes the user's camera-movement input while a
 	// modal view (e.g. the critter chase-cam) drives the focal point itself.
 	setMovementLocked(locked bool)
+
+	// PreviewPicker raycasts from the active pointer (mouse projection on
+	// desktop, right-controller aim in VR) into the scene.
+	PreviewPicker() PhysicsDirectSpaceState3D.PhysicsDirectSpaceState3D_Intersection
+
+	// xrPointer returns the VR aim controller, ok when XR is active and
+	// the controller is present.
+	xrPointer() (XRController3D.Instance, bool)
 }
 
 // LightingConsole drives the live world-lighting renderer state. It is the
@@ -155,8 +175,9 @@ func (world *Client) selectedNode() (Node3D.Instance, bool) {
 	return world.selection.Instance()
 }
 
-func (world *Client) recording() bool        { return world.space != nil }
-func (world *Client) workID() musical.WorkID { return world.record }
+func (world *Client) recording() bool             { return world.space != nil }
+func (world *Client) workID() musical.WorkID      { return world.record }
+func (world *Client) localAuthor() musical.Author { return world.id }
 
 func (world *Client) focalNode() Node3D.Instance { return world.FocalPoint.Instance }
 func (world *Client) lensNode() Node3D.Instance  { return world.FocalPoint.Lens.Instance }
@@ -167,3 +188,6 @@ func (world *Client) setCameraCover(material Material.Instance) {
 	world.FocalPoint.Lens.Camera.Cover.SetSurfaceOverrideMaterial(0, material)
 }
 func (world *Client) setMovementLocked(locked bool) { world.controlLockMovement = locked }
+func (world *Client) xrPointer() (XRController3D.Instance, bool) {
+	return world.xrRight, world.xr && world.xrRight != XRController3D.Nil
+}

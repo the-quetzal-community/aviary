@@ -263,7 +263,7 @@ func (f *fenceTool) loadScene(design string) {
 // from it (rather than the panel flipping to the other side of the cursor). With
 // Shift held and a previous run present, the start is that run's end instead.
 func (f *fenceTool) begin(editor *SceneryEditor) {
-	hover := editor.client.PreviewPicker()
+	hover := editor.rig.PreviewPicker()
 	if !Object.Is[*TerrainTile](hover.Collider) {
 		return
 	}
@@ -338,28 +338,28 @@ func (f *fenceTool) commit(editor *SceneryEditor) {
 	}
 	segs, runEnd, runYaw := f.segments(editor, f.end)
 	if len(segs) > 0 {
-		design := editor.client.MusicalDesign(f.design)
+		design := editor.library.MusicalDesign(f.design)
 		dos := make([]musical.Change, 0, len(segs))
 		undos := make([]musical.Change, 0, len(segs))
 		for _, s := range segs {
 			change := musical.Change{
-				Author: editor.client.id,
-				Entity: editor.client.NextEntity(),
+				Author: editor.recorder.localAuthor(),
+				Entity: editor.recorder.NextEntity(),
 				Design: design,
 				Offset: s.pos,
 				Angles: Euler.Radians{Y: s.yaw},
 				Bounds: f.scale,
 				Commit: true,
 			}
-			editor.client.space.Change(change)
+			editor.recorder.publishChange(change)
 			dos = append(dos, change)
 			undos = append(undos, musical.Change{
-				Author: editor.client.id,
+				Author: change.Author,
 				Entity: change.Entity,
 				Remove: true,
 			})
 		}
-		editor.client.RecordChangeGroup(dos, undos)
+		editor.recorder.RecordChangeGroup(dos, undos)
 		f.lastEnd, f.hasLastEnd = runEnd, true
 	}
 	// Shift held: continue the fence from this run's end without leaving preview
@@ -491,14 +491,14 @@ func (f *fenceTool) segments(editor *SceneryEditor, end Vector3.XYZ) (segs []fen
 		// Sample terrain at the pivot (the post), and place the node origin offset
 		// back so the geometry pivots there. Origin Y stays on the surface (assets
 		// base at y=0).
-		py := editor.client.TerrainEditor.HeightAt(Vector3.New(lx, 0, lz))
+		py := editor.terrain.HeightAt(Vector3.New(lx, 0, lz))
 		segs = append(segs, fenceSeg{pos: Vector3.New(lx-offX, py, lz-offZ), yaw: yaw})
 	}
 	// Far end of the run (one panel past the last post) — the seamless point to
 	// continue from when chaining with Shift.
 	ex := f.start.X + ux*Float.X(count)*f.seg
 	ez := f.start.Z + uz*Float.X(count)*f.seg
-	runEnd = Vector3.New(ex, editor.client.TerrainEditor.HeightAt(Vector3.New(ex, 0, ez)), ez)
+	runEnd = Vector3.New(ex, editor.terrain.HeightAt(Vector3.New(ex, 0, ez)), ez)
 	runYaw = yaw
 	return segs, runEnd, runYaw
 }
