@@ -12,6 +12,7 @@ import (
 
 	"graphics.gd/classdb/BaseButton"
 	"graphics.gd/classdb/Button"
+	"graphics.gd/classdb/Control"
 	"graphics.gd/classdb/DirAccess"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GridContainer"
@@ -20,7 +21,9 @@ import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Panel"
 	"graphics.gd/classdb/SceneTree"
+	"graphics.gd/classdb/ScrollContainer"
 	"graphics.gd/classdb/TextEdit"
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Object"
@@ -38,6 +41,18 @@ type FlightPlanner struct {
 	Plus Button.Instance        `gd:"%Plus"`
 
 	Maps GridContainer.Instance `gd:"%Maps"`
+
+	// Avatar switcher (built programmatically in Ready, no scene nodes):
+	// AvatarButton sits under the dialpad showing the player's current avatar;
+	// clicking it swaps the right-hand maps area (mapsPanel) for avatarPanel, a
+	// design-explorer-style grid of avatar previews. Picking one updates the
+	// client's broadcast avatar design and restores the maps view.
+	AvatarButton  TextureButton.Instance
+	Avatars       GridContainer.Instance
+	avatarPanel   ScrollContainer.Instance
+	mapsPanel     Control.Instance
+	avatarsBuilt  bool
+	switcherReady bool
 
 	client      *Client
 	clientReady sync.WaitGroup
@@ -74,7 +89,120 @@ func (fl *FlightPlanner) Reload() {
 			)
 		}
 	}
+	if fl.switcherReady {
+		// Re-opening the planner always starts on the maps view, never a
+		// half-open avatar picker left from a previous session.
+		fl.showMaps()
+	}
 	go fl.fetchCloudSnaps()
+}
+
+// avatarPreviewURI maps an avatar library URI (res://library/.../x.glb) to its
+// baked preview thumbnail (res://preview/.../x.glb.png).
+func avatarPreviewURI(libraryURI string) string {
+	return strings.Replace(libraryURI, "res://library/", "res://preview/", 1) + ".png"
+}
+
+const (
+	avatarLibraryDir = "res://library/everything/avatar"
+	avatarPreviewDir = "res://preview/everything/avatar"
+)
+
+// buildAvatarSwitcher creates the avatar preview button (under the dialpad) and
+// the hidden right-hand picker panel. Called once from Ready; the picker grid
+// itself is filled lazily on first open (buildAvatars).
+func (fl *FlightPlanner) buildAvatarSwitcher() {
+	// Preview button, slotted into the dialpad's Column VBox right under Keys.
+	column := fl.Keys.AsNode().GetParent()
+	fl.AvatarButton = TextureButton.New().
+		SetIgnoreTextureSize(true).
+		SetStretchMode(TextureButton.StretchKeepAspectCentered)
+	fl.AvatarButton.SetTextureNormal(LoadSync[Texture2D.Instance](avatarPreviewURI(defaultAvatarURI)))
+	fl.AvatarButton.AsControl().SetCustomMinimumSize(Vector2.New(0, 140))
+	fl.AvatarButton.AsControl().SetSizeFlagsHorizontal(Control.SizeExpandFill)
+	fl.AvatarButton.AsControl().SetTooltipText("Choose your avatar")
+	fl.AvatarButton.AsBaseButton().OnPressed(fl.toggleAvatarPicker)
+	column.AddChild(fl.AvatarButton.AsNode())
+
+	// Right-hand picker panel: a scrollable grid added to the Layout HBox,
+	// toggled against the existing maps area (the GridFlowContainer).
+	fl.mapsPanel = Object.To[Control.Instance](fl.AsNode().GetNode("Layout/GridFlowContainer"))
+	fl.avatarPanel = ScrollContainer.New()
+	fl.avatarPanel.AsControl().SetSizeFlagsHorizontal(Control.SizeExpandFill)
+	fl.avatarPanel.AsControl().SetSizeFlagsVertical(Control.SizeExpandFill)
+	fl.Avatars = GridContainer.New()
+	fl.Avatars.AsControl().SetSizeFlagsHorizontal(Control.SizeExpandFill)
+	fl.avatarPanel.AsNode().AddChild(fl.Avatars.AsNode())
+	fl.AsNode().GetNode("Layout").AddChild(fl.avatarPanel.AsNode())
+	fl.avatarPanel.AsCanvasItem().SetVisible(false)
+	fl.switcherReady = true
+}
+
+// showMaps restores the saved-games view (and hides the avatar picker).
+func (fl *FlightPlanner) showMaps() {
+	fl.avatarPanel.AsCanvasItem().SetVisible(false)
+	fl.mapsPanel.AsCanvasItem().SetVisible(true)
+}
+
+// toggleAvatarPicker swaps between the saved-games maps and the avatar picker.
+func (fl *FlightPlanner) toggleAvatarPicker() {
+	if fl.avatarPanel.AsCanvasItem().Visible() {
+		fl.showMaps()
+		return
+	}
+	fl.buildAvatars()
+	fl.mapsPanel.AsCanvasItem().SetVisible(false)
+	fl.avatarPanel.AsCanvasItem().SetVisible(true)
+}
+
+// buildAvatars fills the picker grid from the baked avatar previews, once.
+func (fl *FlightPlanner) buildAvatars() {
+	if fl.avatarsBuilt {
+		return
+	}
+	fl.avatarsBuilt = true
+	fl.Avatars.SetColumns(max(1, int(fl.AsControl().Size().X/256)-1))
+	dir := DirAccess.Open(avatarPreviewDir)
+	if dir == DirAccess.Nil {
+		return
+	}
+	for name := range dir.Iter() {
+		name = strings.TrimSuffix(name, ".import")
+		if !strings.HasSuffix(name, ".png") || strings.HasSuffix(name, "_cut.glb.png") {
+			continue
+		}
+		previewPath := avatarPreviewDir + "/" + name
+		resource := avatarLibraryDir + "/" + strings.TrimSuffix(name, ".png")
+		tile := TextureButton.New().
+			SetIgnoreTextureSize(true).
+			SetStretchMode(TextureButton.StretchKeepAspectCentered)
+		tileID := tile.ID()
+		// Thumbnails load off the main thread (they stream from library.pck);
+		// the tile shows immediately and its texture pops in when ready.
+		LoadAsync(previewPath, func(tex Texture2D.Instance) {
+			if tex == Texture2D.Nil {
+				return
+			}
+			if b, ok := tileID.Instance(); ok {
+				b.SetTextureNormal(tex)
+			}
+		})
+		tile.AsBaseButton().OnPressed(func() {
+			fl.pickAvatar(resource, previewPath)
+		})
+		fl.Avatars.AsNode().AddChild(tile.
+			AsControl().SetCustomMinimumSize(Vector2.New(256, 256)).AsNode())
+	}
+}
+
+// pickAvatar records the chosen avatar on the client (broadcast in the next
+// LookAt — see Client.Process), updates the preview button, and returns to the
+// maps view. avatar is reset to zero so Process re-registers the new design.
+func (fl *FlightPlanner) pickAvatar(resource, previewPath string) {
+	fl.client.avatarResource = resource
+	fl.client.avatar = musical.Design{}
+	fl.AvatarButton.SetTextureNormal(LoadSync[Texture2D.Instance](previewPath))
+	fl.showMaps()
 }
 
 func (fl *FlightPlanner) fetchCloudSnaps() {
@@ -153,6 +281,7 @@ func (fl *FlightPlanner) Ready() {
 	fl.clientReady.Add(1)
 	fl.on_process = make(chan func(), 10)
 	fl.processed = make(map[string]struct{})
+	fl.buildAvatarSwitcher()
 	fl.Reload()
 	fl.Code.SetText("")
 	fl.Back.AsBaseButton().OnPressed(func() {

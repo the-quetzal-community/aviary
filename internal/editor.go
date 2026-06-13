@@ -74,7 +74,7 @@ func (world *Client) StartEditing(subject Subject) {
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/foliage.svg"))
 	case Editing.Mineral:
 		editor = world.MineralEditor
-		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/mineral.svg"))
+		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/boulder.svg"))
 	case Editing.Shelter:
 		editor = world.ShelterEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/shelter.svg"))

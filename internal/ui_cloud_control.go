@@ -149,6 +149,12 @@ const (
 	GizmoPower
 	GizmoScale
 	GizmoErase
+
+	// GizmoEnter is an action (like GizmoClone/GizmoTrash), not a modal drag
+	// tool: pressing its toolbar button — or the Enter key — possesses the
+	// selected mobile entity (critter/citizen/swimmer) for direct third-person
+	// control. See Client.toggleEnter / client_possess.go.
+	GizmoEnter
 )
 
 var setting_up atomic.Bool
@@ -598,6 +604,8 @@ func gizmoIconName(g Gizmo) string {
 		return "clone"
 	case GizmoTrash:
 		return "trash"
+	case GizmoEnter:
+		return "enter"
 	default:
 		return ""
 	}
@@ -628,6 +636,14 @@ func (ui *CloudControl) newGizmoButton(g Gizmo) TextureButton.Instance {
 	// The closure captures the specific Gizmo value for this button.
 	gVal := g
 	btn.AsBaseButton().OnPressed(func() {
+		// GizmoEnter is an action, not a modal tool: it toggles possession of
+		// the selected mobile entity rather than arming a drag gizmo.
+		if gVal == GizmoEnter {
+			if ui.client != nil {
+				ui.client.toggleEnter()
+			}
+			return
+		}
 		ui.set_gizmo(gVal)
 	})
 

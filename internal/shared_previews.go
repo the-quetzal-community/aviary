@@ -3,6 +3,7 @@ package internal
 import (
 	"strings"
 
+	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/CollisionObject3D"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
@@ -128,6 +129,14 @@ func (preview *PreviewRenderer) attach(instance Node3D.Instance, gen int) {
 	preview.clearChild()
 	preview.remove_collisions(instance.AsNode())
 	preview.AsNode().AddChild(instance.AsNode())
+
+	// Critters animate, so the ghost would otherwise show the design's authored
+	// default frame (often a random clip). Pose it for placement: a dropped
+	// critter falls in (Fall), else sits, else idles. No-op for inanimate designs.
+	if instance.AsNode().HasNode("AnimationPlayer") {
+		player := Object.To[AnimationPlayer.Instance](instance.AsNode().GetNode("AnimationPlayer"))
+		playCritterClip(instance, player, "place")
+	}
 
 	// Normalize the freshly instantiated design root to scale 1, folding
 	// any non-1 root scale ("preset scale") that the design (e.g. a

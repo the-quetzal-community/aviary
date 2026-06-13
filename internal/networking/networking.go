@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,7 +17,10 @@ import (
 	"runtime.link/api/xray"
 )
 
-const debug = false
+// debug enables verbose signalling/ICE logging. Set AVIARY_NET_DEBUG to any
+// non-empty value to trace the handshake (ICE server count, candidate exchange,
+// connection-state transitions) when diagnosing connection failures.
+var debug = os.Getenv("AVIARY_NET_DEBUG") != ""
 
 type Server func(client Client)
 
@@ -113,6 +118,19 @@ func (c *Connectivity) setup() (err error) {
 		return xray.New(err)
 	}
 	c.ice = ice.Servers
+	if debug {
+		c.Print("Received %d ICE server(s) from the signalling service.\n", len(c.ice))
+		for _, s := range c.ice {
+			c.Print("  ICE server: %v\n", s.URLs)
+		}
+	}
+	if len(c.ice) == 0 {
+		// No STUN/TURN means ICE can only try host candidates, which fails across
+		// any NAT or between IPv4/IPv6-only peers — the connection then sits in
+		// "connecting" until it times out to "failed". Surface it rather than let
+		// the caller see only a downstream "connection closed".
+		return xray.New(errors.New("signalling service returned no ICE servers (STUN/TURN); cannot traverse NAT"))
+	}
 	return nil
 }
 
@@ -156,18 +174,27 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	}
 	c.closed = make(chan struct{})
 	var closeOnce sync.Once
+	var sessionDown atomic.Bool
 	// closeSession tears the joined session down exactly once, signalling the
 	// server (via c.closed) so its Recv/Send unblock, and releasing the peer and
 	// signalling socket. Safe to call from the data-channel and connection-state
-	// callbacks, which may race on an abrupt disconnect.
+	// callbacks, which may race on an abrupt disconnect. sessionDown lets the
+	// signalling read loop tell our own close (a benign "use of closed network
+	// connection") apart from a real signalling error, so the join surfaces the
+	// genuine failure reason rather than that symptom.
 	closeSession := func() {
 		closeOnce.Do(func() {
+			sessionDown.Store(true)
 			close(c.closed)
 			signalling.Close()
 			go c.peer.Close()
 		})
 	}
 	var issues = make(chan error, 2)
+	// mutex serialises every write to the signalling socket. Gorilla allows only
+	// one concurrent writer, but the trickle-ICE candidate callback (below) and
+	// the answer send race otherwise — a real data race that corrupts the
+	// websocket framing and silently breaks the handshake.
 	var mutex sync.Mutex
 	c.peer.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		mutex.Lock()
@@ -217,7 +244,15 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 			c.Print("Connection state changed: %s\n", state.String())
 		}
 		switch state {
-		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+		case webrtc.PeerConnectionStateFailed:
+			// Push the real reason before tearing down, so the join reports the ICE
+			// failure rather than the closed-socket read error it triggers.
+			select {
+			case issues <- fmt.Errorf("peer connection failed: ICE could not establish a path to the host (NAT/TURN); %d ICE server(s) configured", len(c.ice)):
+			default:
+			}
+			closeSession()
+		case webrtc.PeerConnectionStateClosed:
 			closeSession()
 		}
 	})
@@ -235,8 +270,9 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 		for {
 			msg, err := wsRecv[iceMessage](signalling)
 			if err != nil {
-				if errors.Is(err, websocket.ErrCloseSent) {
-					close(issues)
+				if errors.Is(err, websocket.ErrCloseSent) || sessionDown.Load() {
+					// Our own closeSession shut the socket; the real reason (ICE
+					// failure / data-channel close) is already queued on issues.
 					return
 				}
 				issues <- xray.New(err)
@@ -259,11 +295,14 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 			}
 		}
 	}()
-	if err := wsSend(signalling, iceMessage{
+	mutex.Lock()
+	err = wsSend(signalling, iceMessage{
 		Type:      string(iceMessageTypeAnswer),
 		SessionID: message.SessionID,
 		SDP:       *c.peer.LocalDescription(),
-	}); err != nil {
+	})
+	mutex.Unlock()
+	if err != nil {
 		return xray.New(err)
 	}
 	for {
@@ -280,22 +319,46 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 	}
 }
 
-// offerTimeout bounds how long a parked offer waits for an answer. If a peer
-// grabs the offer but never completes the handshake (e.g. it disconnects part
-// way through), the offer slot is reclaimed so new peers can still join, rather
-// than the host wedging forever on one half-open peer.
-const offerTimeout = 30 * time.Second
+// offerTimeout bounds how long a parked offer sits before its slot is recycled,
+// so a host that nobody joins keeps refreshing its offer rather than wedging on
+// one stale one. offerGrace is how long the half-open peer is kept alive past
+// that, so an answer already in flight (the joiner grabbed the offer just before
+// it expired) still completes instead of being dropped.
+//
+// Crucially, the timer only ever reclaims an *idle* offer — one no joiner has
+// engaged. The moment a joiner sends its first candidate or answer (see engage),
+// the timer is cancelled and that peer's lifetime is governed by its
+// connection-state teardown instead. This is what fixes the join that "times out
+// after a while": previously the timer could fire mid-handshake (e.g. when a
+// long-idle host's offer had aged near the timeout just as someone joined and
+// the scene was still loading), delete the session, and strand the answer.
+const (
+	offerTimeout = 30 * time.Second
+	offerGrace   = 10 * time.Second
+)
 
 func (c *Connectivity) addPeers(sock *websocket.Conn) {
 	type peerState struct {
 		conn     *webrtc.PeerConnection
 		timer    *time.Timer
 		resolved bool // the offer slot has already been handed back for this session
+		engaged  bool // a joiner has sent a candidate/answer — don't time this peer out
 	}
 	var mutex sync.Mutex
 	var pending = make(map[string]*peerState)
 	var make_offer = make(chan struct{}, 1)
 	var stop = make(chan struct{})
+
+	// sendSig serialises writes to the signalling socket. Gorilla allows only one
+	// concurrent writer, but the offer send and every per-peer ICE-candidate
+	// callback (one set per joiner) all write to sock — without this they race,
+	// corrupting the framing and breaking the handshake for everyone.
+	var writeMu sync.Mutex
+	sendSig := func(msg iceMessage) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return wsSend(sock, msg)
+	}
 	make_offer <- struct{}{}
 
 	// returnToken hands the single offer slot back so the next peer can be
@@ -323,6 +386,24 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 		}
 		return true
 	}
+	// engage marks that a joiner has begun the handshake for a session (its first
+	// candidate or answer arrived) and cancels the offer/grace timer, so the timer
+	// can never reclaim or close a peer that's mid-handshake. An engaged peer is
+	// torn down only by its connection-state callback (Failed/Closed). Independent
+	// of resolved: the slot may already have been recycled while the answer was in
+	// flight, but the peer must still be kept and completed.
+	engage := func(sessionID string) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		ps, ok := pending[sessionID]
+		if !ok || ps.engaged {
+			return
+		}
+		ps.engaged = true
+		if ps.timer != nil {
+			ps.timer.Stop()
+		}
+	}
 
 	go func() {
 		defer close(stop)
@@ -339,6 +420,7 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 			}
 			switch msg.Type {
 			case string(iceMessageTypeAnswer):
+				engage(msg.SessionID) // a joiner is handshaking; don't let the timer reclaim it
 				mutex.Lock()
 				ps, ok := pending[msg.SessionID]
 				mutex.Unlock()
@@ -354,6 +436,7 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 					returnToken() // a peer claimed the offer; allow the next one
 				}
 			case string(iceMessageTypeCandidate):
+				engage(msg.SessionID) // a joiner is handshaking; don't let the timer reclaim it
 				mutex.Lock()
 				ps, ok := pending[msg.SessionID]
 				mutex.Unlock()
@@ -448,7 +531,7 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 		mutex.Lock()
 		pending[sessionID] = ps
 		mutex.Unlock()
-		if err := wsSend(sock, iceMessage{
+		if err := sendSig(iceMessage{
 			Type:      string(iceMessageTypeOffer),
 			SessionID: sessionID,
 			SDP:       offer,
@@ -472,7 +555,7 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 				SessionID: sessionID,
 				Candidate: candidate.ToJSON(),
 			}
-			if err := wsSend(sock, msg); err != nil {
+			if err := sendSig(msg); err != nil {
 				c.Raise(xray.New(err))
 			}
 		})
@@ -509,15 +592,32 @@ func (c *Connectivity) addPeers(sock *websocket.Conn) {
 			}
 		})
 		mutex.Lock()
-		if !ps.resolved {
+		if !ps.resolved && !ps.engaged {
 			ps.timer = time.AfterFunc(offerTimeout, func() {
-				if claim(sessionID) {
-					if debug {
-						c.Print("Offer %s timed out with no answer.\n", sessionID)
-					}
-					returnToken()
-					cleanup()
+				mutex.Lock()
+				if ps.resolved || ps.engaged {
+					mutex.Unlock() // a joiner already claimed/engaged this offer
+					return
 				}
+				// Idle offer: free the slot now so new joiners can be offered, but
+				// keep the peer for offerGrace so an answer racing the timeout still
+				// lands (engage will cancel this grace timer). Only if still nobody
+				// has engaged after the grace do we close the abandoned peer.
+				ps.resolved = true
+				ps.timer = time.AfterFunc(offerGrace, func() {
+					mutex.Lock()
+					engaged := ps.engaged
+					mutex.Unlock()
+					if engaged {
+						return // a late answer arrived; teardown owns this peer now
+					}
+					if debug {
+						c.Print("Offer %s expired with no joiner; reclaiming.\n", sessionID)
+					}
+					cleanup()
+				})
+				mutex.Unlock()
+				returnToken()
 			})
 		}
 		mutex.Unlock()

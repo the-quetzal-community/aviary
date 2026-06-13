@@ -2,6 +2,7 @@ package internal
 
 import (
 	"math"
+	"strings"
 
 	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
@@ -31,6 +32,36 @@ type ActionRenderer struct {
 
 	CurrentUp      Vector3.XYZ
 	CurrentForward Vector3.XYZ
+
+	// snake caches whether this entity uses the snake rig (lazily, on first
+	// orient), so its side-winding movement facing gets the snakeMovementYaw
+	// offset without re-walking the skeleton every frame.
+	snakeChecked bool
+	snake        bool
+
+	// swimmer is set once when the renderer is created (from the design category):
+	// a fish moves through the full 3D water column — it lerps straight to the
+	// action target (Y included, no terrain snap), pitches toward the 3D heading,
+	// and leaves the swim clip to its EntityAnimator rather than driving Walk/Idle.
+	swimmer bool
+}
+
+// snakeMovementYaw rotates a snake's facing while it moves: the "Side winding"
+// clip travels at ~45° to the body, so the body is angled off the straight-line
+// path. Negative = clockwise viewed from above (flip the sign to turn the other
+// way). Applied in OrientModel for snake-rig models only.
+const snakeMovementYaw = Float.X(-math.Pi / 4)
+
+// swimTargetAbs reconstructs a swimmer action target's absolute world position
+// from its stored, terrain-relative form: a swimmer's Action.Target.Y is the
+// depth ABOVE the seabed at Target.XZ (not an absolute Y), so the fish's resting
+// depth rides terrain edits and reload, and a dropping water level can strand it
+// above the surface. Ground-walker targets aren't stored this way (their Y is
+// re-snapped to the surface every frame), so this is only used on the swimmer
+// path.
+func swimTargetAbs(te *TerrainEditor, t Vector3.XYZ) Vector3.XYZ {
+	t.Y = te.HeightAt(Vector3.New(t.X, 0, t.Z)) + t.Y
+	return t
 }
 
 func (ar *ActionRenderer) Ready() {
@@ -45,7 +76,14 @@ func (ar *ActionRenderer) Add(action musical.Action) {
 		}
 		if action.Cancel {
 			previous := ar.actions[ar.current]
-			ar.Initial = Vector3.Lerp(ar.Initial, previous.Target, ar.progress(previous))
+			// Fold the current interpolated spot into Initial. A swimmer's target is
+			// seabed-relative, so reconstruct its absolute Y first — Initial is kept in
+			// absolute world space (the lerp endpoints and pathStart all are).
+			prevTarget := previous.Target
+			if ar.swimmer {
+				prevTarget = swimTargetAbs(ar.client.TerrainEditor, previous.Target)
+			}
+			ar.Initial = Vector3.Lerp(ar.Initial, prevTarget, ar.progress(previous))
 			ar.actions = ar.actions[0:0:cap(ar.actions)]
 			ar.current = 0
 		}
@@ -92,6 +130,17 @@ func (ar *ActionRenderer) cancel() {
 	ar.actions = ar.actions[0:0:cap(ar.actions)]
 	ar.current = 0
 	ar.AsNode().SetProcess(false)
+	// Leave the locomotion clip to an EntityAnimator when one is attached: it
+	// reconstructs walk/idle from the entity's motion, so forcing "Idle" here
+	// would fight it. During a GizmoEnter possession every move calls cancel()
+	// (the future-stamped moves supersede this path), which otherwise stomped the
+	// player back to Idle ~10×/s — the animator, having already latched "walk",
+	// never re-asserted, so the possessed critter looked frozen on peers. Without
+	// an animator (legacy / non-mobile) keep the old "finished walking → Idle".
+	if parent := Object.To[Node3D.Instance](ar.AsNode().GetParent()); parent != Node3D.Nil &&
+		parent.AsNode().HasNode("EntityAnimator") {
+		return
+	}
 	ar.play("Idle")
 }
 
@@ -102,22 +151,28 @@ func (ar *ActionRenderer) play(name string) {
 		return
 	}
 	player := Object.To[AnimationPlayer.Instance](parent.AsNode().GetNode("AnimationPlayer"))
+	// name is an intent ("Walk"/"Idle"); resolve it to whatever clip THIS model
+	// actually ships (a snake's "Walk" is "Side winding"). No clip → nothing to do.
+	intent := strings.ToLower(name)
+	clip, ok := resolveCritterClip(player, intent)
+	if !ok {
+		return
+	}
 	// Key off the player's REAL state, not a cached flag. On reload the renderer's
 	// first play("Walk") can land while the model is still streaming in during the
 	// load drain, so the clip never actually starts; a cached `playing == name`
 	// would then latch forever and the bear slides to its target un-animated. Re-
 	// asserting whenever the player isn't already looping this clip self-heals once
 	// the AnimationPlayer is live, and is a no-op while it is (looped → IsPlaying).
-	if player.IsPlaying() && player.CurrentAnimation() == name {
+	if player.IsPlaying() && player.CurrentAnimation() == clip {
 		ar.playing = name
 		return
 	}
 	mixer := player.AsAnimationMixer()
-	if !mixer.HasAnimation(name) {
-		return
-	}
-	mixer.GetAnimation(name).SetLoopMode(Animation.LoopLinear)
-	player.PlayNamed(name)
+	mixer.GetAnimation(clip).SetLoopMode(Animation.LoopLinear)
+	player.SetSpeedScale(critterClipSpeed(parent.AsNode(), intent))
+	player.SetPlaybackDefaultBlendTime(critterAnimBlend)
+	player.PlayNamed(clip)
 	ar.playing = name
 }
 
@@ -164,7 +219,13 @@ func (ar *ActionRenderer) processRepeat(delta Float.X) {
 	periods := make([]musical.Timing, n)
 	var total musical.Timing
 	for i := 0; i < n; i++ {
-		way[i+1] = ar.actions[i].Target
+		// Waypoints are absolute world positions; a swimmer's target stores a
+		// seabed-relative depth, so reconstruct it (pathStart is already absolute).
+		if ar.swimmer {
+			way[i+1] = swimTargetAbs(ar.client.TerrainEditor, ar.actions[i].Target)
+		} else {
+			way[i+1] = ar.actions[i].Target
+		}
 		p := musical.Timing(ar.actions[i].Period)
 		if p < 0 {
 			p = 0
@@ -226,17 +287,31 @@ func (ar *ActionRenderer) processRepeat(delta Float.X) {
 	if chosen.turn {
 		// Keep the walk clip running through the swivel: the model is still
 		// "stepping" as it rotates on the spot — dropping to Idle made it
-		// glide around the turn with frozen legs.
-		ar.play("Walk")
+		// glide around the turn with frozen legs. (Swimmers leave the clip to
+		// their EntityAnimator, so skip play for them.)
+		if !ar.swimmer {
+			ar.play("Walk")
+		}
 		pos = chosen.from
 		// Rotate the incoming heading 180° around world-up across the pause: starts
 		// matching the arriving walk, ends matching the departing one, so OrientModel
 		// sweeps the model around instead of jumping.
 		dir = rotateY(chosen.inDir, math.Pi*float64(frac))
 	} else {
-		ar.play("Walk")
+		if !ar.swimmer {
+			ar.play("Walk")
+		}
 		pos = Vector3.Lerp(chosen.from, chosen.to, frac)
 		dir = Vector3.Sub(chosen.to, chosen.from)
+	}
+	if ar.swimmer {
+		// 3D loop: waypoints carry their own Y, so keep the lerped 3D position and
+		// pitch toward the 3D heading instead of flattening onto the terrain.
+		parent.SetPosition(pos)
+		if Vector3.LengthSquared(dir) > 0 {
+			faceFlightDirection(parent, Vector3.Normalized(dir))
+		}
+		return
 	}
 	dir.Y = 0
 	pos.Y = ar.client.TerrainEditor.HeightAt(pos)
@@ -257,6 +332,34 @@ func rotateY(v Vector3.XYZ, ang float64) Vector3.XYZ {
 	return Vector3.XYZ{X: v.X*c + v.Z*s, Y: v.Y, Z: -v.X*s + v.Z*c}
 }
 
+// critterTurnRate is how fast a walking critter/citizen pivots toward its
+// heading, in radians/second. A 90° turn takes ~0.22s and a 180° about-face
+// ~0.45s — fast enough to feel responsive, slow enough to read as a deliberate
+// turn in place rather than an instant snap.
+const critterTurnRate = Float.X(7.0)
+
+// signedAngleAround returns the signed angle (radians) that rotates `from` onto
+// `to` about `axis`, in [-π, π]. Both vectors are expected in the plane normal
+// to axis (the terrain tangent plane here); the sign picks the short way round.
+func signedAngleAround(from, to, axis Vector3.XYZ) Float.X {
+	cross := Vector3.Cross(from, to)
+	return Float.X(math.Atan2(
+		float64(Vector3.Dot(cross, Vector3.Normalized(axis))),
+		float64(Vector3.Dot(from, to)),
+	))
+}
+
+// rotateAround rotates v by ang radians about axis (Rodrigues' formula), so the
+// turn follows the terrain normal on slopes instead of only world-up.
+func rotateAround(v, axis Vector3.XYZ, ang Float.X) Vector3.XYZ {
+	axis = Vector3.Normalized(axis)
+	c, s := Float.X(math.Cos(float64(ang))), Float.X(math.Sin(float64(ang)))
+	return Vector3.Add(
+		Vector3.Add(Vector3.MulX(v, c), Vector3.MulX(Vector3.Cross(axis, v), s)),
+		Vector3.MulX(axis, Vector3.Dot(axis, v)*(1-c)),
+	)
+}
+
 func (ar *ActionRenderer) Process(delta Float.X) {
 	// A path whose final segment is flagged Repeat (Ctrl-click) loops back and
 	// forth forever rather than completing — handled separately so the linear
@@ -268,19 +371,48 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 	action := ar.actions[ar.current]
 	parent := Object.To[Node3D.Instance](ar.AsNode().GetParent())
 	for ar.client.time.Now()-action.Timing >= musical.Timing(action.Period) {
-		pos := action.Target
-		pos.Y = ar.client.TerrainEditor.HeightAt(pos)
+		var pos Vector3.XYZ
+		if ar.swimmer {
+			pos = swimTargetAbs(ar.client.TerrainEditor, action.Target) // seabed-relative depth → absolute
+		} else {
+			pos = action.Target
+			pos.Y = ar.client.TerrainEditor.HeightAt(pos) // ground walkers ride the surface
+		}
 		parent.SetPosition(pos)
-		ar.Initial = action.Target
+		if ar.swimmer {
+			ar.Initial = pos // keep Initial in absolute world space for the next leg's lerp
+		} else {
+			ar.Initial = action.Target
+		}
 		ar.current++
 		if ar.current >= len(ar.actions) {
 			ar.AsNode().SetProcess(false)
-			ar.play("Idle")
+			// Swimmers leave the resting clip to their EntityAnimator (which settles
+			// to idle / dead-floating once the motion it reads goes to zero); ground
+			// walkers return to Idle here.
+			if !ar.swimmer {
+				ar.play("Idle")
+			}
 			ar.actions = ar.actions[0:0:cap(ar.actions)]
 			ar.current = 0
 			return
 		}
 		action = ar.actions[ar.current]
+	}
+	if ar.swimmer {
+		// Fish swim through the water column: lerp straight to the target's absolute
+		// position (reconstructed from its seabed-relative depth, so it rides terrain
+		// edits) and pitch toward the 3D heading. The swim clip (horizontal vs
+		// vertical) is owned by the EntityAnimator, which reads this motion, so we
+		// drive position + facing only and never call play().
+		end := swimTargetAbs(ar.client.TerrainEditor, action.Target)
+		dir := Vector3.Sub(end, ar.Initial)
+		pos := Vector3.Lerp(ar.Initial, end, ar.progress(action))
+		parent.SetPosition(pos)
+		if Vector3.LengthSquared(dir) > 0 {
+			faceFlightDirection(parent, Vector3.Normalized(dir))
+		}
+		return
 	}
 	ar.play("Walk")
 	dir := Vector3.Sub(action.Target, ar.Initial)
@@ -349,20 +481,28 @@ func (ar *ActionRenderer) OrientModel(model Node3D.Instance, pos Vector3.XYZ, mo
 		}
 	}
 
-	// Smoothly interpolate the current forward towards the target forward
+	// Rotate the facing toward the target heading at a CONSTANT angular speed
+	// (rad/s) around the up axis, rather than an exponential lerp. A constant
+	// rate means a sharp turn visibly pivots — for the first moment of a walk the
+	// model spins toward its heading roughly in place (at 0.2 u/s ground speed it
+	// only creeps ~turnRate⁻¹·speed while turning) before the walk carries it off,
+	// and a 180° reversal sweeps around the short way instead of snapping or
+	// moonwalking (lerping a vector toward its opposite collapses through zero).
+	// Facing is local/cosmetic — not part of the synced action — so rate-limiting
+	// it changes nothing other clients reconstruct from the action's timing.
 	if Vector3.LengthSquared(ar.CurrentForward) == 0 {
 		ar.CurrentForward = Vector3.XYZ{Z: 1} // Assume default forward is +Z
 	}
-	if Vector3.Dot(Vector3.Normalized(ar.CurrentForward), targetProjectedForward) < -0.7 {
-		// Near-180° reversal — e.g. a ping-pong loop's turnaround. Lerping the
-		// forward vector toward its near-opposite collapses it through ~zero, so the
-		// model moonwalks (faces the old way while moving the new) and then flips
-		// over a horizontal axis as it crosses. Snap to the new facing instead: an
-		// instant about-face. Gentler turns still interpolate smoothly below.
+	cur := Vector3.Normalized(ar.CurrentForward)
+	angle := signedAngleAround(cur, targetProjectedForward, ar.CurrentUp)
+	maxStep := critterTurnRate * delta
+	if Float.X(math.Abs(float64(angle))) <= maxStep {
 		ar.CurrentForward = targetProjectedForward
 	} else {
-		ar.CurrentForward = Vector3.Lerp(ar.CurrentForward, targetProjectedForward, Float.X(12)*delta)
-		ar.CurrentForward = Vector3.Normalized(ar.CurrentForward)
+		if angle < 0 {
+			maxStep = -maxStep
+		}
+		ar.CurrentForward = Vector3.Normalized(rotateAround(cur, ar.CurrentUp, maxStep))
 	}
 
 	// CurrentForward can normalise to zero (an antiparallel lerp passing through
@@ -375,6 +515,17 @@ func (ar *ActionRenderer) OrientModel(model Node3D.Instance, pos Vector3.XYZ, mo
 	}
 	// Use LookAt to set the orientation (assumes model faces +Z locally to fix backwards walking)
 	globalPos := model.GlobalPosition()
-	target := Vector3.Add(globalPos, ar.CurrentForward)
+	forward := ar.CurrentForward
+	// Snakes side-wind at an angle to their body: offset the facing so the body
+	// reads as angled to the path it travels. Rotate a COPY (CurrentForward is the
+	// smoothing state for next frame — offsetting it would compound every frame).
+	if !ar.snakeChecked {
+		ar.snakeChecked = true
+		ar.snake = isSnakeRig(model.AsNode())
+	}
+	if ar.snake {
+		forward = rotateAround(forward, ar.CurrentUp, snakeMovementYaw)
+	}
+	target := Vector3.Add(globalPos, forward)
 	model.MoreArgs().LookAt(target, ar.CurrentUp, true)
 }

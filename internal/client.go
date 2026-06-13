@@ -97,6 +97,31 @@ type Client struct {
 	// the flag when leaving the view.
 	controlLockMovement bool
 
+	// fpsMode is true while the camera is down on the ground in first-person mode:
+	// the mouse is captured for FPS look and the UI overlay is hidden. Space lifts
+	// back off (exitFPS). fpsSuppressed gates the auto-engage so a lift-off doesn't
+	// immediately re-enter FPS while the camera is still rising through the ground
+	// threshold; it clears once airborne. See enterFPS/exitFPS and Process.
+	fpsMode       bool
+	fpsSuppressed bool
+
+	// possess holds the state of a GizmoEnter possession: while active, the
+	// world camera becomes a third-person chase cam and WASD/space drive the
+	// selected mobile entity directly, broadcasting its motion as Commit=false
+	// Changes (final pose committed on exit). See client_possess.go.
+	possess possessState
+
+	// flight is the third-person self-flight mode: Enter with nothing selected in
+	// an fpsEditor hands control to the player's own avatar (flappy-bird glide,
+	// Space to flap, walk when landed). Its pose is broadcast on the LookAt
+	// channel. See client_flight.go.
+	flight flightState
+
+	// swimAim drives the right-drag "swim here" target for a selected swimmer: a
+	// 3D move whose depth you set by dragging, previewed by a depth indicator.
+	// See client_swimmer.go.
+	swimAim swimAimState
+
 	Light DirectionalLight3D.Instance
 
 	// Moon is a second directional light that lights the scene at night, from
@@ -284,6 +309,21 @@ type Client struct {
 
 	authors map[musical.Author]Node3D.ID
 
+	// author_designs records the avatar Design last rendered for each remote
+	// author, so a peer switching avatar mid-session (its LookAt.Design changes)
+	// re-instantiates the model instead of just tweening the old one.
+	author_designs map[musical.Author]musical.Design
+
+	// avatar is the local player's chosen avatar design, broadcast in every
+	// LookAt so peers render us as this model. Zero until the player picks one in
+	// the flight planner's avatar switcher (and reset to zero on each pick so the
+	// Process loop re-registers the new resource exactly once); while zero, peers
+	// fall back to defaultAvatarURI, so an unchosen avatar still renders.
+	// avatarResource mirrors the chosen library URI so the switcher button can
+	// show its preview without a reverse lookup.
+	avatar         musical.Design
+	avatarResource string
+
 	queue chan func()
 
 	member bool // true when we have been assigned an author ID
@@ -400,8 +440,9 @@ func NewClient() *Client {
 			loaded:             make(map[string]musical.Design),
 			missing_scenes:     make(map[musical.Design]bool),
 		},
-		clients: make(chan musical.Networking),
-		authors: make(map[musical.Author]Node3D.ID),
+		clients:        make(chan musical.Networking),
+		authors:        make(map[musical.Author]Node3D.ID),
+		author_designs: make(map[musical.Author]musical.Design),
 
 		load_last_save: true,
 		queue:          make(chan func(), queueCapFromEnv()),
@@ -1288,7 +1329,7 @@ const shadowDistanceMax = 240
 // would otherwise sink into the ground. The camera-terrain collision keeps the
 // view from burrowing through hills while still letting it drop below the water
 // surface (water is not terrain), so a small clearance keeps it just clear.
-const cameraTerrainClearance Float.X = 0.5
+const cameraTerrainClearance Float.X = 0.1
 
 func (world *Client) Process(dt Float.X) {
 	// Honour an externally-requested clean quit (SIGUSR1 → quitIfRequested) before
@@ -1382,13 +1423,30 @@ func (world *Client) Process(dt Float.X) {
 		angles := camNode.GlobalRotation()
 		angles.X = -angles.X
 		angles.Y += Angle.Pi
+		offset := camNode.GlobalPosition()
+		// In self-flight the player IS the avatar: broadcast the flown avatar's
+		// own pose (not the chase camera's) so peers render exactly what we fly.
+		// Its rotation is already a world facing (it faces +Z), so send it
+		// verbatim rather than the camera→avatar angle mapping above.
+		if world.flight.active && world.flight.avatar != Node3D.Nil {
+			offset = world.flight.avatar.GlobalPosition()
+			angles = world.flight.avatar.AsNode3D().Rotation()
+		}
+		// Register the player's chosen avatar as an observable Design the first
+		// frame after a pick (avatar is reset to zero on each pick). MusicalDesign
+		// returns the design synchronously, so avatar is non-zero from here on and
+		// this runs exactly once per pick — never re-registering every frame.
+		if world.avatar == (musical.Design{}) && world.avatarResource != "" {
+			world.avatar = world.MusicalDesign(world.avatarResource)
+		}
 		view := musical.LookAt{
-			Offset: camNode.GlobalPosition(),
+			Offset: offset,
 			Angles: angles,
 			Author: world.id,
+			Design: world.avatar,
 			Timing: world.time.Now(),
 		}
-		if world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || !world.joining {
+		if world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || world.last_LookAt.Design != view.Design || !world.joining {
 			world.space.LookAt(view)
 			world.last_LookAt = view
 			world.last_lookAt_time = time.Now()
@@ -1470,6 +1528,13 @@ func (world *Client) Process(dt Float.X) {
 		(<-world.queue)()
 	}
 
+	// While aiming a swimmer's move (right-drag), track the target depth from the
+	// live cursor ray and redraw its indicator. Runs before the Ctrl early-return
+	// so the preview stays live regardless of modifier keys.
+	if world.swimAim.active {
+		world.updateSwimAim()
+	}
+
 	if Input.IsKeyPressed(Input.KeyCtrl) {
 		return
 	}
@@ -1480,6 +1545,15 @@ func (world *Client) Process(dt Float.X) {
 	// these keys; without the gate, the world would also translate
 	// the focal point under our feet each frame.
 	if world.controlLockMovement {
+		// A GizmoEnter possession owns the keyboard the same way the critter
+		// control view does (controlLockMovement), but here we drive the chosen
+		// world entity + chase cam instead of the editor's private rig.
+		if world.possess.active {
+			world.updatePossess(dt)
+		}
+		if world.flight.active {
+			world.updateFlight(dt)
+		}
 		return
 	}
 	// In XR the headset drives the view; thumbstick locomotion is a
@@ -1491,11 +1565,31 @@ func (world *Client) Process(dt Float.X) {
 		return
 	}
 
+	// On the ground the world camera behaves like a first-person controller:
+	// turning pivots around the camera (the avatar's eye) and movement is slower.
+	grounded := world.cameraGrounded()
+	// First-person ground mode: enter when the eye settles on the terrain (mouse
+	// captured for look, UI hidden); Space lifts back off. If the eye rises clear
+	// of the ground by other means (zooming out at a sharp angle), exit without
+	// the extra Space boost. fpsSuppressed keeps it from re-engaging while a
+	// lift-off is still rising through the threshold.
+	if world.fpsMode && !grounded {
+		world.exitFPS()
+	}
+	if !grounded {
+		world.fpsSuppressed = false
+	}
+	// Don't auto-engage while the middle button is held: you're actively orbiting
+	// the camera (incl. just after a middle-drag take-off), and grabbing the mouse
+	// mid-drag would toggle FPS in and out.
+	if grounded && !world.fpsMode && !world.fpsSuppressed && world.fpsEditor() && !Input.IsMouseButtonPressed(Input.MouseButtonMiddle) {
+		world.enterFPS()
+	}
 	if Input.IsKeyPressed(Input.KeyQ) {
-		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), -Angle.Radians(dt))
+		world.turnYaw(-Angle.Radians(dt))
 	}
 	if Input.IsKeyPressed(Input.KeyE) {
-		world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), Angle.Radians(dt))
+		world.turnYaw(Angle.Radians(dt))
 	}
 	// Scale pan speed by how far the camera is zoomed out so a keypress always
 	// covers a similar fraction of the screen: a gentle creep when zoomed right
@@ -1504,6 +1598,11 @@ func (world *Client) Process(dt Float.X) {
 	// zoom-in.
 	zoom := max(world.FocalPoint.Lens.Camera.AsNode3D().Position().Z, cameraDefaultZoom/4)
 	moveSpeed := speed * dt * zoom / cameraDefaultZoom
+	if grounded {
+		// On the ground the camera sits on the focal point (zoom ≈ 0), so the
+		// zoom-scaled pan would crawl; walk at a fixed, zoom-independent pace.
+		moveSpeed = fpsMoveSpeed * dt
+	}
 	// Grow the shadow reach with the same zoom so shadows don't fade out from
 	// under the far ground when the camera pulls back.
 	world.updateShadowDistance(zoom)
@@ -1520,25 +1619,182 @@ func (world *Client) Process(dt Float.X) {
 		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, -moveSpeed))
 	}
 	if Input.IsKeyPressed(Input.KeyR) {
-		world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(dt))
+		world.lookPitch(-Angle.Radians(dt), grounded)
 	}
 	if Input.IsKeyPressed(Input.KeyF) {
-		world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), Angle.Radians(dt))
+		world.lookPitch(Angle.Radians(dt), grounded)
 	}
-	if Input.IsKeyPressed(Input.KeyEqual) {
-		world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.5))
+	if Input.IsKeyPressed(Input.KeyEqual) && !grounded {
+		// Ease the zoom-in as the eye nears the ground so it glides in instead of
+		// slamming down: the step shrinks with altitude (capped at the old 0.5,
+		// floored so the last bit still closes). Zooming in is disabled once
+		// grounded so the eye can't push through the terrain; zoom-out stays brisk.
+		step := min(max(world.cameraAltitude()*0.1, 0.02), 0.5)
+		world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -step))
 	}
-	if Input.IsKeyPressed(Input.KeyMinus) {
-		world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.5))
+	if Input.IsKeyPressed(Input.KeyMinus) && world.canZoomOut() {
+		if world.fpsMode {
+			world.exitFPS() // zoom-out at a sharp angle lifts off
+		} else {
+			world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.5))
+		}
 	}
 }
 
+// cameraAltitude is the camera eye's height above the terrain below it. Returns
+// a large value before the terrain exists, so callers treat that as "high up".
+func (world *Client) cameraAltitude() Float.X {
+	if world.TerrainEditor == nil {
+		return 1e9
+	}
+	eye := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalPosition()
+	return eye.Y - world.TerrainEditor.HeightAt(Vector3.New(eye.X, 0, eye.Z))
+}
+
+// cameraGrounded reports whether the camera — the local player's eye, and where
+// peers render this player's avatar — is down on the terrain, using the same
+// threshold AvatarFlight grounds a remote avatar with. When true the world
+// camera switches to a first-person feel (see Process's movement block and
+// turnYaw).
+func (world *Client) cameraGrounded() bool {
+	return world.cameraAltitude() <= avatarGroundAltitude
+}
+
+// turnYaw rotates the view's heading about vertical, around the rig's focal
+// point. In first-person mode the camera sits ON the focal point (enterFPS zeroes
+// its offset), so this reads as looking around in place; flying, it orbits.
+func (world *Client) turnYaw(angle Angle.Radians) {
+	world.FocalPoint.AsNode3D().GlobalRotate(Vector3.New(0, 1, 0), angle)
+}
+
+// fpsMaxPitch clamps first-person look so you can't somersault past straight
+// up/down.
+const fpsMaxPitch = Angle.Radians(1.4)
+
+// lookPitch tilts the view about the lens. Grounded it clamps to fpsMaxPitch so
+// first-person look can't somersault; flying it's unclamped so the build view can
+// look straight down. With the camera pulled onto the focal point in FPS
+// (enterFPS) this pivots in place — no arcing the eye for the terrain collision
+// to then lift.
+func (world *Client) lookPitch(angle Angle.Radians, grounded bool) {
+	lens := world.FocalPoint.Lens.AsNode3D()
+	if grounded {
+		if next := lens.Rotation().X + angle; next > fpsMaxPitch {
+			angle = fpsMaxPitch - lens.Rotation().X
+		} else if next < -fpsMaxPitch {
+			angle = -fpsMaxPitch - lens.Rotation().X
+		}
+		if angle == 0 {
+			return
+		}
+	}
+	lens.Rotate(Vector3.New(1, 0, 0), angle)
+}
+
+// fpsMoveSpeed is the on-ground walking pace (world units/second), independent of
+// camera zoom since the FPS camera sits on the focal point.
+const fpsMoveSpeed = 1.5
+
+// fpsEditors are the editors first-person ground mode is allowed in (the build
+// editors — placing scenery, sculpting terrain, building shelters). Elsewhere the
+// camera stays third-person on the ground.
+func (world *Client) fpsEditor() bool {
+	switch world.Editing {
+	case Editing.Scenery, Editing.Terrain, Editing.Shelter:
+		return true
+	}
+	return false
+}
+
+// enterFPS captures the mouse, hides the UI, and pulls the camera onto the focal
+// point so look rotations pivot in place (no arc for the terrain collision to
+// lift). To avoid teleporting the view, the focal point is brought UP to the eye
+// rather than dropping the camera to the focal point — so the eye (and view
+// direction) stay exactly where they landed; the collision then settles it to
+// clearance. The camera offset is restored on exit.
+func (world *Client) enterFPS() {
+	if world.fpsMode || world.xr || !world.fpsEditor() {
+		return
+	}
+	world.fpsMode = true
+	cam := world.FocalPoint.Lens.Camera.AsNode3D()
+	eye := cam.GlobalPosition()
+	cam.SetPosition(Vector3.Zero)
+	world.FocalPoint.AsNode3D().SetGlobalPosition(eye)
+	Input.SetMouseMode(Input.MouseModeCaptured)
+	if world.ui != nil {
+		world.ui.enterFPS()
+	}
+}
+
+// exitFPS leaves first-person mode: pull the camera back out to a third-person
+// framing above the ground, level the pitch, and hand control back. Take-off
+// height comes from the camera OFFSET (zoom), NOT from lifting the focal point —
+// the terrain collision pins focal.Y to the surface, so a focal lift just fought
+// it (shot up, then snapped back down). The pulled-back offset puts the eye well
+// clear of the ground, so fpsSuppressed (blocking auto-re-entry until the eye
+// clears) lapses with the eye already airborne.
+func (world *Client) exitFPS() {
+	if !world.fpsMode {
+		return
+	}
+	world.fpsMode = false
+	world.fpsSuppressed = true
+	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, 3))
+	world.FocalPoint.Lens.AsNode3D().SetRotation(Euler.Radians{})
+	Input.SetMouseMode(Input.MouseModeVisible)
+	if world.ui != nil {
+		world.ui.exitFPS()
+	}
+}
+
+// canZoomOut gates pulling the camera back. Airborne it's always allowed; on the
+// ground only from a sharp top-down view (reached with middle-click / FPS look),
+// so zoom-out rises into the sky instead of dragging the eye horizontally through
+// the ground — otherwise it does nothing.
+func (world *Client) canZoomOut() bool {
+	if !world.cameraGrounded() {
+		return true
+	}
+	// forward = -Z of the camera basis; looking down makes forward.Y negative.
+	forwardY := -world.FocalPoint.Lens.Camera.AsNode3D().GlobalTransform().Basis.Z.Y
+	return forwardY <= -zoomOutMinDownDot
+}
+
+// zoomOutMinDownDot is how steeply the view must point down (forward.Y at or
+// below this) before a grounded zoom-out is allowed — ≈45° below horizontal.
+const zoomOutMinDownDot = 0.7
+
 func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	if mouse, ok := Object.As[InputEventMouseMotion.Instance](event); ok {
-		if Input.IsMouseButtonPressed(Input.MouseButtonMiddle) {
-			relative := mouse.Relative()
-			world.FocalPoint.AsNode3D().Rotate(Vector3.New(0, 1, 0), -Angle.Radians(relative.X*0.005))
-			world.FocalPoint.Lens.AsNode3D().Rotate(Vector3.New(1, 0, 0), -Angle.Radians(relative.Y*0.005))
+		middle := Input.IsMouseButtonPressed(Input.MouseButtonMiddle)
+		relative := mouse.Relative()
+		switch {
+		case world.flight.active:
+			// Self-flight: captured mouse steers the chase cam, which is the glide
+			// direction. Pitch clamped (grounded=true) so you can't loop over.
+			world.turnYaw(-Angle.Radians(relative.X * 0.005))
+			world.lookPitch(-Angle.Radians(relative.Y*0.005), true)
+		case world.possess.active && world.possess.swimmer:
+			// Look-to-swim: captured mouse aims the chase cam, which is the 3D swim
+			// heading. Pitch clamped (like flight) so a fish can dive/rise steeply
+			// without somersaulting the camera.
+			world.turnYaw(-Angle.Radians(relative.X * 0.005))
+			world.lookPitch(-Angle.Radians(relative.Y*0.005), true)
+		case world.fpsMode && middle:
+			// Middle-drag down lifts off (mouse-only take-off, alternative to Space /
+			// sharp-angle zoom-out). FPS won't auto-re-engage while middle stays held
+			// (see Process), so the drag can keep orbiting the flying camera after.
+			if relative.Y > 0 {
+				world.exitFPS()
+			}
+		case world.fpsMode:
+			// Captured FPS look — camera sits on the focal point, so it looks in place.
+			world.turnYaw(-Angle.Radians(relative.X * 0.005))
+			world.lookPitch(-Angle.Radians(relative.Y*0.005), true)
+		case middle:
+			world.turnYaw(-Angle.Radians(relative.X * 0.005))
+			world.lookPitch(-Angle.Radians(relative.Y*0.005), world.cameraGrounded())
 		}
 		// While the gizmo move tool (Shift or toolbar) is active for one of
 		// the supported editors and the user is holding left mouse, treat
@@ -1621,17 +1877,19 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 			case !Input.IsKeyPressed(Input.KeyShift):
-				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
-					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
-					//pos = Vector3.Add(pos, Vector3.New(0, 0, -0.4))
-					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
-					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -0.4))
+				if mouse.ButtonIndex() == Input.MouseButtonWheelUp && !world.cameraGrounded() {
+					// Ease the wheel zoom-in near the ground, and stop it once
+					// grounded so the eye can't push through the terrain (mirrors the
+					// keyboard '=' zoom). Zoom-out stays a flat step to escape.
+					step := min(max(world.cameraAltitude()*0.1, 0.02), 0.4)
+					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -step))
 				}
-				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
-					//pos := world.FocalPoint.Lens.Camera.AsNode3D().Position()
-					//pos = Vector3.Add(pos, Vector3.New(0, 0, 0.4))
-					//world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(pos)
-					world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
+				if mouse.ButtonIndex() == Input.MouseButtonWheelDown && world.canZoomOut() {
+					if world.fpsMode {
+						world.exitFPS() // zoom-out at a sharp angle lifts off
+					} else {
+						world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, 0.4))
+					}
 				}
 			}
 			switch {
@@ -1729,7 +1987,18 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 									// category so a selected rock, fence, or building can't
 									// be dragged across the terrain by right-clicking.
 									design, placed := world.findDesignForObject(node3d.ID())
-									if !placed || !isMobileDesignCategory(designCategory(world.design_to_string[design])) {
+									category := designCategory(world.design_to_string[design])
+									if !placed || !isMobileDesignCategory(category) {
+										break
+									}
+									// A swimmer is commanded with a depth-aimed "swim here": the
+									// press anchors the target XZ on the seabed and seeds its depth
+									// from the fish's current height; dragging the held button sets
+									// the target Y (with a depth indicator); release issues the 3D
+									// move (see client_swimmer.go). Shift/Ctrl held at release chain
+									// or loop the path, exactly like the ground walk-here.
+									if isSwimmerCategory(category) {
+										world.beginSwimAim(entity, node3d, intersect.Position)
 										break
 									}
 									// Plain right-click: walk straight to the point (replace any
@@ -1776,6 +2045,12 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				}
 			}
 
+			// Right button released: commit an in-progress swimmer "swim here" aim as
+			// a 3D move Action at the dragged depth (see client_swimmer.go).
+			if mouse.ButtonIndex() == Input.MouseButtonRight && !mouse.AsInputEvent().IsPressed() && world.swimAim.active {
+				world.commitSwimAim()
+			}
+
 			// Left button released: finalize any in-progress gizmo drag with a
 			// committed musical Change so the edit is recorded in the .mus3 log.
 			// Commit using the gizmo captured at drag start (activeGizmo), not
@@ -1806,6 +2081,19 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		}
 	}
 	if event, ok := Object.As[InputEventKey.Instance](event); ok {
+		// Space lifts off out of first-person ground mode (releasing the mouse and
+		// restoring the UI). Only acts while in FPS, so it's free otherwise.
+		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() && event.Keycode() == Input.KeySpace && world.fpsMode {
+			world.exitFPS()
+		}
+		// Enter possesses the selected mobile entity for direct third-person
+		// control (and exits it). toggleEnter gates on scenery + a controllable
+		// selection, so this is otherwise inert. Unhandled-input only sees Enter
+		// when no UI field (e.g. the join-code TextEdit) consumed it first.
+		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() &&
+			(event.Keycode() == Input.KeyEnter || event.Keycode() == Input.KeyKpEnter) {
+			world.toggleEnter()
+		}
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyF1 {
 			vp := Viewport.Get(world.AsNode())
 			vp.SetDebugDraw(vp.DebugDraw() ^ Viewport.DebugDrawWireframe)

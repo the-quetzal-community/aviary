@@ -25,7 +25,7 @@ import (
 )
 
 // guideURL is the online guide opened by the toolbar's Help button.
-const guideURL = "https://the.quetzal.community/aviary/guide"
+const guideURL = "https://the.quetzal.community/aviary"
 
 /*
 UI for editing a space in Aviary.
@@ -545,6 +545,18 @@ func (ui *UI) exitPhotoMode() {
 	}
 	ui.photoArrowsRestore = false
 }
+
+// hideOverlay / showOverlay toggle the whole 2D overlay. Unlike photo mode there
+// is no auto-restore-on-keypress (UI.Input only fires for photoMode), so the
+// caller owns restoring it — the keyboard stays free to walk/look with the UI
+// hidden. Shared by first-person ground mode and GizmoEnter possession.
+func (ui *UI) hideOverlay() { ui.AsCanvasItem().SetVisible(false) }
+func (ui *UI) showOverlay() { ui.AsCanvasItem().SetVisible(true) }
+
+// enterFPS / exitFPS hide and restore the overlay for first-person ground mode
+// (the world's Space key calls exitFPS).
+func (ui *UI) enterFPS() { ui.hideOverlay() }
+func (ui *UI) exitFPS()  { ui.showOverlay() }
 
 // isPhotoNavKey reports whether a key drives the camera (WASD/arrows to move,
 // Q/E to turn, R/F to tilt, +/- to dolly) or is a bare modifier. These never

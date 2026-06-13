@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"graphics.gd/classdb/Animation"
 	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/Node3D"
@@ -19,7 +18,9 @@ import (
 	"graphics.gd/classdb/PropertyTweener"
 	"graphics.gd/classdb/Resource"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Callable"
+	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/internal/musical"
@@ -344,11 +345,10 @@ func (world musicalImpl) Import(uri musical.Import) error {
 					SetScale(node.AsNode3D().Scale())
 				if new_node.AsNode().HasNode("AnimationPlayer") {
 					anim := Object.To[AnimationPlayer.Instance](new_node.AsNode().GetNode("AnimationPlayer"))
-					anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
-					if anim.AsAnimationMixer().HasAnimation("Idle") {
-						anim.PlayNamed("Idle")
-					}
+					playCritterClip(new_node, anim, "idle")
 				}
+				world.maybeAttachEntityAnimator(world.object_to_entity[id], uri.Design, new_node)
+				maybeAttachSnakeCollider(uri.Import, new_node)
 				node.AsNode().ReplaceBy(new_node.AsNode())
 				node.AsNode().QueueFree()
 				redesigns[i] = new_node.ID()
@@ -381,6 +381,22 @@ func (world musicalImpl) Change(con musical.Change) error {
 		container := world.TerrainEditor.AsNode()
 
 		exists, ok := world.entity_to_object[con.Entity].Instance()
+		// Our own placement preview (a not-yet-committed create we authored) is
+		// already shown by the local PreviewRenderer ghost; don't also spawn a
+		// networked ghost entity for it. Peers' previews (different author) DO render
+		// so we can see what they're placing, and our own MOVE previews of existing
+		// entities (e.g. gizmo drag) still apply because the entity exists.
+		if !con.Commit && con.Author == world.id && !ok {
+			return
+		}
+		// While locally possessing an entity (GizmoEnter), the possessor drives
+		// its node directly every frame for responsive control; the matching
+		// Commit=false broadcasts exist only so peers see the motion. Applying
+		// them back to our own node would fight the direct drive with a 0.1s
+		// tween, so skip them. The final Commit=true on exit still applies.
+		if !con.Commit && con.Author == world.id && world.possess.active && con.Entity == world.possess.entity {
+			return
+		}
 		if ok {
 			if con.Remove {
 				delete(world.entity_float_delta, con.Entity)
@@ -396,7 +412,11 @@ func (world musicalImpl) Change(con musical.Change) error {
 				terrainY := world.TerrainEditor.HeightAt(xz)
 				pos.Y = terrainY + pos.Y
 			}
-			exists.SetRotation(con.Angles)
+			// Committed changes snap rotation immediately; a live preview tweens it
+			// below (with position) so a peer's ghost glides instead of stepping.
+			if con.Commit {
+				exists.SetRotation(con.Angles)
+			}
 			// Position only moves FORWARD in time: a Change older than the entity's
 			// latest positional mutation (a newer walk Action, or a later manual
 			// move) must not revert it. This is what stops an older gizmo move
@@ -404,7 +424,13 @@ func (world musicalImpl) Change(con musical.Change) error {
 			// and scale still apply. Legacy Changes carry Timing 0 and so lose to any
 			// timestamped Action — the desired "recent walk wins" on existing saves.
 			if con.Timing >= world.entity_move_timing[con.Entity] {
-				exists.SetPosition(pos)
+				if con.Commit {
+					exists.SetPosition(pos)
+				} else {
+					// Smooth a peer's ~10 Hz preview move (placement ghost / gizmo
+					// drag) into continuous motion instead of visible 0.1 s steps.
+					tweenPose(exists, pos, con.Angles)
+				}
 				world.entity_move_timing[con.Entity] = con.Timing
 				// Remember the terrain-relative lift of a float (or forget it when a
 				// plain absolute move supersedes the float) so reseatFloats can fix
@@ -442,11 +468,10 @@ func (world musicalImpl) Change(con musical.Change) error {
 		node := world.instantiateDesign(con.Design)
 		if node.AsNode().HasNode("AnimationPlayer") {
 			anim := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
-			anim.AsAnimationMixer().GetAnimation("Idle").SetLoopMode(Animation.LoopLinear)
-			if anim.AsAnimationMixer().HasAnimation("Idle") {
-				anim.PlayNamed("Idle")
-			}
+			playCritterClip(node, anim, "idle")
 		}
+		world.maybeAttachEntityAnimator(con.Entity, con.Design, node)
+		maybeAttachSnakeCollider(world.design_to_string[con.Design], node)
 		pos := con.Offset
 		if con.Editor == "float" {
 			// Offset.Y is a lift delta relative to terrain HeightAt(XZ).
@@ -569,6 +594,10 @@ func attachEntityAction(client *Client, object Node3D.Instance, action musical.A
 		actions := new(ActionRenderer)
 		actions.client = client
 		actions.Initial = object.AsNode3D().Position()
+		// A swimmer's renderer moves it through the 3D water column (no terrain
+		// Y-snap) and leaves its swim clip to the EntityAnimator — decided once here
+		// from the design category.
+		actions.swimmer = client.entityIsSwimmer(object)
 		actions.AsNode().SetName("ActionRenderer")
 		object.AsNode().AddChild(actions.AsNode())
 	}
@@ -600,6 +629,42 @@ func (world musicalImpl) flushPendingActions(entity musical.Entity, object Node3
 	}
 }
 
+// previewTweenTime is the ease duration for remote position/rotation updates
+// (avatars and placement previews). It matches the ~10 Hz broadcast cadence so
+// each update glides into the next instead of stepping.
+const previewTweenTime = 0.1
+
+// tweenPose eases a node toward a new position and rotation over previewTweenTime,
+// turning the discrete remote updates into continuous motion. Shared by the
+// avatar LookAt handler and the preview-Change path.
+func tweenPose(node Node3D.Instance, pos Vector3.XYZ, rot Euler.Radians) {
+	// Re-express the target so each Euler component is the nearest equivalent to
+	// the node's current angle: PropertyTweener interpolates "rotation"
+	// component-wise, which otherwise unwinds the LONG way around when an angle
+	// crosses the ±π wrap — a peer's yaw flipping +3.0→−3.0 (a ~16° turn) would
+	// read as a ~344° reverse spin. Difference() yields the shortest signed delta.
+	rot = shortestEuler(node.AsNode3D().Rotation(), rot)
+	tween := node.AsNode().CreateTween()
+	PropertyTweener.Make(tween, node.AsObject(), "position", pos, previewTweenTime)
+	PropertyTweener.Make(tween, node.AsObject(), "rotation", rot, previewTweenTime)
+}
+
+// shortestEuler returns target with each component shifted by a whole turn so it
+// is the closest equivalent angle to current — so a component-wise rotation tween
+// takes the short path across the ±π seam instead of spinning the long way.
+func shortestEuler(current, target Euler.Radians) Euler.Radians {
+	return Euler.Radians{
+		X: current.X + Angle.Difference(current.X, target.X),
+		Y: current.Y + Angle.Difference(current.Y, target.Y),
+		Z: current.Z + Angle.Difference(current.Z, target.Z),
+	}
+}
+
+// defaultAvatarURI is the avatar rendered for a peer (or the local player)
+// who hasn't chosen one in the flight planner's avatar switcher. It is also
+// the switcher button's initial preview.
+const defaultAvatarURI = "res://library/everything/avatar/bald_eagle.glb"
+
 func (world musicalImpl) LookAt(view musical.LookAt) error {
 	world.enqueue(func() {
 		defer timeIn(&bucketLookAt)()
@@ -615,25 +680,40 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 		if view.Author == world.id {
 			return
 		}
+		// Snap the avatar onto the terrain when the camera is right down by the
+		// ground (so a grounded avatar's feet sit on the surface instead of
+		// floating at eye height); otherwise it floats at the camera position. The
+		// tween owns the avatar's Y, so there's no per-frame fight with AvatarFlight.
+		target := avatarGroundedOffset(view.Offset, world.TerrainEditor.HeightAt)
+		// An existing avatar only tweens to the new pose while its design is
+		// unchanged; a peer switching avatar (view.Design differs from what we last
+		// rendered) drops through to re-instantiate the new model.
 		if avatar, ok := world.authors[view.Author].Instance(); ok {
-			tween := avatar.AsNode().CreateTween()
-			PropertyTweener.Make(tween, avatar.AsObject(), "position", view.Offset, 0.1)
-			PropertyTweener.Make(tween, avatar.AsObject(), "rotation", view.Angles, 0.1)
-			return
+			if world.author_designs[view.Author] == view.Design {
+				tweenPose(avatar, target, view.Angles)
+				return
+			}
+			avatar.AsNode().QueueFree()
+			delete(world.authors, view.Author)
 		}
-		avatar := LoadSync[PackedScene.Is[Node3D.Instance]]("res://library/everything/avatar/bald_eagle.glb").Instantiate().
-			SetPosition(view.Offset).
+		// The avatar URI is the peer's chosen design, falling back to the default
+		// bald eagle when they haven't picked one (zero Design) or its Import hasn't
+		// streamed in yet.
+		resource := defaultAvatarURI
+		if uri, ok := world.design_to_string[view.Design]; ok && uri != "" {
+			resource = uri
+		}
+		avatar := LoadSync[PackedScene.Is[Node3D.Instance]](resource).Instantiate().
+			SetPosition(target).
 			SetRotation(view.Angles).
 			SetScale(Vector3.New(0.1, 0.1, 0.1))
-		if avatar.AsNode().HasNode("AnimationPlayer") {
-			anim := Object.To[AnimationPlayer.Instance](avatar.AsNode().GetNode("AnimationPlayer"))
-			if anim.AsAnimationMixer().HasAnimation("Flap") {
-				anim.AsAnimationMixer().GetAnimation("Flap").SetLoopMode(Animation.LoopLinear)
-				anim.PlayNamed("Flap")
-			}
-		}
 		world.AsNode().AddChild(avatar.AsNode())
+		// Drive the avatar's animation from its motion + height above terrain:
+		// flap/glide in the air, walk/idle when down near the ground. Attached
+		// after the avatar is in the tree so its GlobalPosition is valid.
+		attachAvatarFlight(avatar, world.TerrainEditor.HeightAt)
 		world.authors[view.Author] = avatar.ID()
+		world.author_designs[view.Author] = view.Design
 	})
 	return nil
 }

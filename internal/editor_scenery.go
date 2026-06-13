@@ -42,7 +42,29 @@ type SceneryEditor struct {
 	// terrain is the terrain editor, woken while placing scenery so
 	// previews and fence runs can be seated against live ground heights.
 	terrain *TerrainEditor
+
+	// While a design hovers on the terrain we publish throttled Commit=false
+	// Changes so other players see the ghost we're about to drop. previewEntity is
+	// the reserved id for that networked ghost — reused as the committed entity
+	// when placed, so the ghost becomes the real object with no flicker; zero when
+	// no ghost is live. The last-broadcast pose suppresses duplicate sends.
+	previewEntity  musical.Entity
+	previewDesign  string
+	previewAccum   Float.X
+	previewLastPos Vector3.XYZ
+	previewLastRot Euler.Radians
+	previewLastScl Vector3.XYZ
+
+	// swimDrag is the press-hold depth drag for placing a swimmer: a fish hovers
+	// at mid-water, and holding the placement click lets you drag it up/down the Y
+	// axis (clamped to the water column) before releasing to commit. Inactive (a
+	// no-op) for every other design. See editor_scenery_swimmer.go.
+	swimDrag swimPlaceDrag
 }
+
+// sceneryPreviewInterval throttles how often a hovering preview is broadcast to
+// peers (a few times a second, like LookAt) so it doesn't flood the channel.
+const sceneryPreviewInterval = Float.X(0.1)
 
 // sceneryLibraryScale is the "library placement" factor every scenery design is
 // scaled by when dropped into the world (on top of any intrinsic root scale the
@@ -96,6 +118,13 @@ func (editor *SceneryEditor) UnhandledInput(event InputEvent.Instance) {
 				if editor.previewOnTerrain {
 					editor.fence.begin(editor)
 				}
+			case editor.swimmerSelected():
+				// Press-hold to drag the swimmer up/down the Y axis; release commits
+				// (processSwimPlaceDrag). A bare click with no drag still commits, at
+				// the mid-water default. Only anchor over terrain (a valid seabed XZ).
+				if editor.previewOnTerrain {
+					editor.beginSwimPlaceDrag()
+				}
 			default:
 				editor.TryPlacePreview()
 			}
@@ -120,9 +149,19 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 	if !editor.previewOnTerrain {
 		return false
 	}
+	// Reuse the broadcast preview's entity as the committed entity when one is
+	// live, so the peers' ghost finalises into the real object instead of a
+	// remove-then-recreate flicker; otherwise reserve a fresh id.
+	entity := editor.previewEntity
+	if entity == (musical.Entity{}) {
+		entity = editor.recorder.NextEntity()
+	}
+	editor.previewEntity = musical.Entity{}
+	editor.previewDesign = ""
+	editor.previewLastPos = Vector3.Zero
 	placement := musical.Change{
 		Author: editor.recorder.localAuthor(),
-		Entity: editor.recorder.NextEntity(),
+		Entity: entity,
 		Design: editor.library.MusicalDesign(editor.Preview.Design()),
 		Offset: editor.Preview.AsNode3D().Position(),
 		Angles: editor.Preview.AsNode3D().Rotation(),
@@ -137,6 +176,15 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 		Bounds: editor.Preview.AsNode3D().Scale(),
 		Commit: true,
 	}
+	// A swimmer's depth is stored TERRAIN-RELATIVE (Editor "float": Offset.Y is the
+	// height above the seabed), so it rides terrain edits and reload through the
+	// existing float machinery — and so a dropping water level can later strand it
+	// above the surface (the death case). Other dressing keeps its absolute Y.
+	if editor.swimmerSelected() && editor.terrain != nil {
+		seabed := editor.terrain.HeightAt(Vector3.New(placement.Offset.X, 0, placement.Offset.Z))
+		placement.Offset.Y -= seabed
+		placement.Editor = "float"
+	}
 	editor.recorder.publishChange(placement)
 	editor.recorder.RecordChange(placement, musical.Change{
 		Author: placement.Author,
@@ -149,9 +197,21 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 	return true
 }
 
-func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
+func (editor *SceneryEditor) PhysicsProcess(dt Float.X) {
+	// Mirror the preview to peers on every path (the defer runs after this frame's
+	// previewOnTerrain and preview pose have been set), so the ghost follows the
+	// cursor and is cleared the moment the design is dropped or leaves the terrain.
+	defer editor.broadcastPreview(dt)
 	if editor.Preview.Design() == "" {
 		editor.previewOnTerrain = false
+		editor.cancelSwimPlaceDrag() // design cleared mid-drag
+		return
+	}
+	// A held swimmer depth-drag owns the preview until release, wherever the cursor
+	// points (you drag up past the water surface to raise the fish), so handle it
+	// before the normal cursor-on-terrain hover.
+	if editor.swimDrag.active {
+		editor.processSwimPlaceDrag()
 		return
 	}
 	// PreviewPicker routes to the right controller's aim in VR
@@ -179,6 +239,14 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 	}
 	if onTerrain {
 		pos := hover.Position
+		// A swimmer hovers at mid-water (halfway between the surface and the seabed)
+		// rather than on the ground — the press-hold depth drag then tweaks its Y.
+		if editor.swimmerSelected() && editor.terrain != nil {
+			pos.Y = editor.terrain.MidWaterAt(Vector3.New(pos.X, 0, pos.Z))
+			editor.Preview.AsNode3D().SetVisible(true)
+			editor.Preview.AsNode3D().SetGlobalPosition(pos)
+			return
+		}
 		// For a draggable fencing design, rotate the hover preview to trail the
 		// cursor's movement (the panel lies along the path being swept), then
 		// pivot it around its end on the cursor (the same way a committed run
@@ -204,14 +272,99 @@ func (editor *SceneryEditor) PhysicsProcess(_ Float.X) {
 	editor.Preview.AsNode3D().SetVisible(false)
 }
 
+// broadcastPreview publishes the hovering preview to peers as a throttled
+// Commit=false Change so they can see what's about to be placed, and removes the
+// remote ghost when the preview is dropped or wanders off the terrain. The local
+// player never sees this ghost as an entity — the receive path skips its own
+// preview-creates (the local PreviewRenderer already shows it).
+func (editor *SceneryEditor) broadcastPreview(dt Float.X) {
+	if !editor.recorder.recording() {
+		return
+	}
+	// Stop mirroring (and tear down any live ghost) the moment scenery stops being
+	// the active editor, so a parked preview doesn't keep broadcasting from under
+	// another tool.
+	if editor.workbench.editing() != Editing.Scenery {
+		editor.clearRemotePreview()
+		return
+	}
+	editor.previewAccum += dt
+	if editor.previewAccum < sceneryPreviewInterval {
+		return
+	}
+	editor.previewAccum = 0
+
+	design := editor.Preview.Design()
+	// Only mirror a single hovering preview parked on terrain; the fence line tool
+	// draws its own multi-panel run and isn't mirrored here.
+	if design == "" || !editor.previewOnTerrain || editor.fence.previewing {
+		editor.clearRemotePreview()
+		return
+	}
+	// A design switch starts a fresh ghost.
+	if editor.previewEntity != (musical.Entity{}) && design != editor.previewDesign {
+		editor.clearRemotePreview()
+	}
+	pos := editor.Preview.AsNode3D().Position()
+	rot := editor.Preview.AsNode3D().Rotation()
+	scl := editor.Preview.AsNode3D().Scale()
+	if editor.previewEntity == (musical.Entity{}) {
+		editor.previewEntity = editor.recorder.NextEntity()
+		editor.previewDesign = design
+	} else if pos == editor.previewLastPos && rot == editor.previewLastRot && scl == editor.previewLastScl {
+		return // nothing moved since the last broadcast
+	}
+	editor.previewLastPos, editor.previewLastRot, editor.previewLastScl = pos, rot, scl
+	editor.recorder.publishChange(musical.Change{
+		Author: editor.recorder.localAuthor(),
+		Entity: editor.previewEntity,
+		Design: editor.library.MusicalDesign(design),
+		Offset: pos,
+		Angles: rot,
+		Bounds: scl,
+		Commit: false,
+	})
+}
+
+// clearRemotePreview removes the peers' ghost for an abandoned preview (design
+// cleared, cursor left the terrain, or design switched) and frees the reserved
+// entity. No-op when no ghost is live.
+func (editor *SceneryEditor) clearRemotePreview() {
+	if editor.previewEntity == (musical.Entity{}) {
+		return
+	}
+	editor.recorder.publishChange(musical.Change{
+		Author: editor.recorder.localAuthor(),
+		Entity: editor.previewEntity,
+		Remove: true,
+	})
+	editor.previewEntity = musical.Entity{}
+	editor.previewDesign = ""
+	editor.previewLastPos = Vector3.Zero
+}
+
 func (fe *SceneryEditor) Name() string { return "scenery" }
 
 func (fe *SceneryEditor) EnableEditor() {
-	fe.workbench.SetGizmos(placementGizmosWithScale())
+	// Scenery gets the standard placement gizmos plus GizmoEnter (possess the
+	// selected mobile entity — critter/citizen/swimmer — for direct control),
+	// inserted just before the manage trio (space/clone/trash).
+	gizmos := placementGizmosWithScale()
+	insert := len(gizmos)
+	for i, g := range gizmos {
+		if g == GizmoSpace {
+			insert = i
+			break
+		}
+	}
+	gizmos = append(gizmos[:insert:insert], append([]Gizmo{GizmoEnter}, gizmos[insert:]...)...)
+	fe.workbench.SetGizmos(gizmos)
 	fe.terrain.AsNode().SetProcessMode(Node.ProcessModeInherit)
 }
 func (fe *SceneryEditor) ChangeEditor() {
 	fe.terrain.AsNode().SetProcessMode(Node.ProcessModeDisabled)
+	// Drop any in-progress preview ghost shown to peers when leaving scenery.
+	fe.clearRemotePreview()
 }
 
 // sceneryDressingCategories are the ModeDressing ("vehicle") library

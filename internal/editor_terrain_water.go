@@ -140,6 +140,39 @@ func (tr *TerrainEditor) WaterSurfaceAt(pos Vector3.XYZ) Float.X {
 	return tile.WaterSurfaceAt(pos)
 }
 
+// swimWaterMargin keeps a swimmer a little clear of the surface and seabed, so a
+// placed/controlled fish doesn't poke through the water surface or clip into the
+// ground at the extremes of its water column.
+const swimWaterMargin = Float.X(0.05)
+
+// MidWaterAt is the default depth for a freshly placed swimmer at pos: halfway
+// between the water surface and the seabed (the terrain floor) — a fish hovering
+// in the middle of the water column. Where there is no column (the surface is at
+// or below the floor) it returns the surface so the fish sits at water level.
+func (tr *TerrainEditor) MidWaterAt(pos Vector3.XYZ) Float.X {
+	surface := tr.WaterSurfaceAt(pos)
+	floor := tr.HeightAt(pos)
+	if surface <= floor {
+		return surface
+	}
+	return (surface + floor) / 2
+}
+
+// ClampToWater clamps y into the swimmable water column at pos — between the
+// seabed and the water surface, less swimWaterMargin at each end — so a dragged
+// or controlled swimmer can't be pushed through the surface or into the ground.
+// A degenerate (too-thin) column collapses to its midpoint.
+func (tr *TerrainEditor) ClampToWater(pos Vector3.XYZ, y Float.X) Float.X {
+	surface := tr.WaterSurfaceAt(pos)
+	floor := tr.HeightAt(pos)
+	lo := floor + swimWaterMargin
+	hi := surface - swimWaterMargin
+	if hi < lo {
+		return (surface + floor) / 2
+	}
+	return min(max(y, lo), hi)
+}
+
 // riverDepthAt returns the accumulated river depth at grid point (gx, gz),
 // reaching one cell into the adjacent tile when the point lies just past this
 // tile's edge. The bank-collar dilation (here and in reloadWater) uses it so two
