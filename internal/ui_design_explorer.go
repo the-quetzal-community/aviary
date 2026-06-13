@@ -210,6 +210,9 @@ func (de *DesignExplorer) Ready() {
 					Editor: de.client.Editing,
 					Mode:   de.client.ui.mode,
 				}] {
+					if authorHidden(theme) {
+						continue
+					}
 					other_button, _ := de.themes[theme].Instance()
 					other_button.AsCanvasItem().SetVisible(true)
 				}
@@ -509,13 +512,25 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			Mode:   mode,
 		}] = themes_available
 	}
+	// Authors whose license badge is toggled off in the Settings menu are
+	// filtered out here (rather than from the cached availability map) so
+	// flipping a badge back on only needs a Refresh, not a rescan.
+	visible_authors := make(map[string]struct{}, len(themes_available))
+	for theme := range themes_available {
+		if !authorHidden(theme) {
+			visible_authors[theme] = struct{}{}
+		}
+	}
+	if _, ok := visible_authors[author]; !ok {
+		author = ""
+	}
 	if author == "" {
-		author = preferredAuthor(themes_available, UserState.AuthorPreferences)
+		author = preferredAuthor(visible_authors, UserState.AuthorPreferences)
 		if author != "" {
 			ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png"))
 		}
 	}
-	for _, theme := range slices.Sorted(maps.Keys(themes_available)) {
+	for _, theme := range slices.Sorted(maps.Keys(visible_authors)) {
 		if theme == author {
 			continue // chosen author is shown in the heading; hide its button
 		}
@@ -719,10 +734,10 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	// Now that every tab's tiles exist, reorder them by how recently
 	// their design was placed in the scene (most recent first).
 	ui.applyRecency()
-	if len(themes_available) == 0 {
+	if len(visible_authors) == 0 {
 		ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/editing.svg"))
 	}
-	ui.AsCanvasItem().SetVisible(index > 0 || len(themes_available) > 0)
+	ui.AsCanvasItem().SetVisible(index > 0 || len(visible_authors) > 0)
 	expansion.AsCanvasItem().SetVisible(index > 0 && !edits)
 }
 

@@ -499,9 +499,16 @@ func (world musicalImpl) Change(con musical.Change) error {
 		// ordering so the most recently placed designs surface first.
 		// Fires for every creation — local, remote, or replayed from the
 		// musical log — keeping the ordering observable across clients.
-		if world.ui != nil && world.ui.Editor != nil {
-			if resource, ok := world.design_to_string[con.Design]; ok {
+		if resource, ok := world.design_to_string[con.Design]; ok {
+			if world.ui != nil && world.ui.Editor != nil {
 				world.ui.Editor.BumpDesign(resource)
+			}
+			// An entity arriving (remote placement or load replay) while its
+			// author's license badge is toggled off starts hidden, matching
+			// what applyLicenseVisibility did to everything already present.
+			// Render-local only — the mutation is recorded and observable.
+			if authorHidden(designAuthor(resource)) {
+				node.SetVisible(false)
 			}
 		}
 	})

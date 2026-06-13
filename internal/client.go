@@ -475,6 +475,12 @@ var UserState struct {
 	// chosen. Explicitly clicking an author button bumps it to the front
 	// and persists the new ranking.
 	AuthorPreferences []string
+
+	// HiddenLicenses holds the Creative Commons licenses (ccLicense
+	// values) whose badge the user toggled off in the Settings menu;
+	// authors publishing under a hidden license are filtered out of the
+	// design explorer. Empty means everything is shown.
+	HiddenLicenses []string
 }
 
 // UserDataDir is the value of OS.GetUserDataDir() captured once early on the
