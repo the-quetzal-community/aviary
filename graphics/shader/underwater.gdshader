@@ -35,6 +35,7 @@ render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
 
 uniform float water_level = 0.0;     // water surface Y under the camera
 uniform float terrain_level = 0.0;   // terrain floor Y under the camera
+uniform float effect_enabled = 1.0;  // 0 = fully off (camera over the un-built void)
 
 uniform vec4 color_near : source_color = vec4(0.10, 0.30, 0.38, 1.0); // tint right at the lens
 uniform vec4 color_deep : source_color = vec4(0.02, 0.10, 0.18, 1.0); // tint in the murky distance
@@ -66,6 +67,13 @@ void vertex() {
 }
 
 void fragment() {
+	// Switched off entirely when the camera isn't over a revealed terrain tile:
+	// out over the empty, un-extended world there is no surface or bed to read
+	// against, so the waterline/rock fill would be meaningless.
+	if (effect_enabled < 0.5) {
+		discard;
+	}
+
 	vec2 uv = SCREEN_UV;
 	vec3 cam_pos = CAMERA_POSITION_WORLD;
 

@@ -106,6 +106,10 @@ func (world *Client) StartEditing(subject Subject) {
 			GizmoSpace, GizmoClone, GizmoTrash,
 		})
 	}
+	// The incoming editor's EnableEditor sets its own gizmo set, so the terrain
+	// single-placement gizmo toolbar (if it was up) is no longer shown — reset the
+	// transition guard so refreshTerrainPlacementGizmos rebuilds it when needed.
+	world.terrainPlacementGizmos = false
 
 	editor.EnableEditor()
 	world.ui.ViewSelector.Refresh(0, editor.Views())
@@ -118,7 +122,7 @@ func (world *Client) StartEditing(subject Subject) {
 		hasBrush := subject == Editing.Terrain && (te.PaintActive || te.DressActive || te.TerrainBrush != "")
 		world.ui.CloudControl.setSizeSliderVisible(hasBrush)
 		world.TerrainEditor.SetWaterVisible(subject == Editing.Terrain || subject == Editing.Scenery)
-		world.ui.CloudControl.setDensitySliderVisible(subject == Editing.Terrain && world.ui.mode == ModeDressing && te.DressActive)
+		world.ui.CloudControl.setDensitySliderVisible(subject == Editing.Terrain && te.DressActive)
 		world.ui.CloudControl.setPowerSliderVisible(subject == Editing.Terrain && world.ui.mode == ModeGeometry && te.TerrainBrush != "")
 	}
 	// In terrain mode placed objects must be transparent to the cursor:

@@ -383,9 +383,14 @@ func (vr *TerrainEditor) pushWaterRise() {
 // active, unlike TerrainEditor.Process), so a remote/undo level change animates
 // even when this client isn't in the terrain editor. Purely cosmetic and
 // client-local: the displayed level always converges to the observed WaterLevel.
-func (vr *TerrainEditor) processWaterRise(dt Float.X) {
+// processWaterRise returns true when the displayed level moved this frame, so the
+// caller (Client.Process) can re-seat water-floating ENTITIES (icebergs, whose maps
+// the client owns — reseatWaterFloats). Water-floating DRESSING (lilypad) is the
+// terrain editor's own state, so it is re-projected here directly, keeping it gliding
+// in lockstep with the surface.
+func (vr *TerrainEditor) processWaterRise(dt Float.X) bool {
 	if vr.waterDisplayed == vr.WaterLevel {
-		return
+		return false
 	}
 	diff := vr.WaterLevel - vr.waterDisplayed
 	if Float.Abs(diff) <= waterRiseEps {
@@ -397,6 +402,8 @@ func (vr *TerrainEditor) processWaterRise(dt Float.X) {
 		vr.waterDisplayed += diff * (1 - Float.Exp(-waterRiseRate*dt))
 	}
 	vr.pushWaterRise()
+	vr.reprojectWaterDressing()
+	return true
 }
 
 // SetWaterVisible toggles the per-tile water meshes and remembers the state so
@@ -614,6 +621,13 @@ func (tile *TerrainTile) reloadWater() {
 		// shares the plane edge's world XZ + floor, so the shader clamps both
 		// identically and the wall stays connected to the plane; the wall
 		// collapses where the terrain rises above the water.
+		// UV.y on every wall vertex carries the column's water-SURFACE world-Y
+		// (topNear/topFar), the same at the top and bed rows, so water.gdshader can
+		// colour the slice by the water COLUMN depth (UV.y - v_floor = surface - bed):
+		// uniform down the wall, deep columns dark / shallow light, matching the flat
+		// plane at the waterline. The screen-space depth it uses for the flat plane is
+		// ~0 on a wall (the opaque terrain skirt sits right behind it), which made the
+		// whole slice read as shallow/clear — a glassy mirror. UV.x is unused.
 		floors_side := make([]float32, sideVertCount*4)
 		index_base := 0
 		for _, sp := range active {
@@ -706,7 +720,7 @@ func (tile *TerrainTile) reloadWater() {
 				// Triangle 1
 				vertices_side[index_base+0] = bl
 				normals_side[index_base+0] = nrm
-				uvs_side[index_base+0] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
+				uvs_side[index_base+0] = Vector2.XY{float32(i) / tile_size, topNear / tile_size}
 				if sp.flippedWinding {
 					vertices_side[index_base+1] = tr
 					normals_side[index_base+1] = nrm
@@ -725,11 +739,11 @@ func (tile *TerrainTile) reloadWater() {
 				// Triangle 2
 				vertices_side[index_base+3] = bl
 				normals_side[index_base+3] = nrm
-				uvs_side[index_base+3] = Vector2.XY{float32(i) / tile_size, 0 / tile_size}
+				uvs_side[index_base+3] = Vector2.XY{float32(i) / tile_size, topNear / tile_size}
 				if sp.flippedWinding {
 					vertices_side[index_base+4] = br
 					normals_side[index_base+4] = nrm
-					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
+					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 					vertices_side[index_base+5] = tr
 					normals_side[index_base+5] = nrm
 					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
@@ -739,7 +753,7 @@ func (tile *TerrainTile) reloadWater() {
 					uvs_side[index_base+4] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 					vertices_side[index_base+5] = br
 					normals_side[index_base+5] = nrm
-					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, 0 / tile_size}
+					uvs_side[index_base+5] = Vector2.XY{float32(i+1) / tile_size, topFar / tile_size}
 				}
 				// CUSTOM0 per emitted vertex, matching the vertex order above.
 				// .r = terrain floor; .g/.b = flow X/Z; .a = heave weight (1 on the

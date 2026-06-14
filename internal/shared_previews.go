@@ -297,10 +297,31 @@ func setPickableExceptTerrain(node Node.Instance, pickable bool) {
 	if Object.Is[*TerrainTile](node) || Object.Is[*TerrainTileArrow](node) {
 		return
 	}
+	// Single-placement terrain entities stay pickable while terrain editing so they
+	// can be selected/moved without leaving the editor; skip their whole subtree
+	// (they are always pickable — see isTerrainPlacement / terrainPlacementGroup).
+	if node.IsInGroup(terrainPlacementGroup) {
+		return
+	}
 	if body, ok := Object.As[CollisionObject3D.Instance](node); ok {
 		body.SetInputRayPickable(pickable)
 	}
 	for _, child := range node.GetChildren() {
 		setPickableExceptTerrain(child, pickable)
 	}
+}
+
+// terrainPlacementGroup tags the scene-node of a single-placement terrain entity
+// (iceberg/plateau/opening/residue) so it stays pickable + selectable while the
+// terrain editor is active — unlike ordinary scenery, which is made paint-through in
+// terrain mode (see setPickableExceptTerrain above, the selection guard in
+// Client._input, and canUseGizmoManipulation). Derived from the design's library
+// category (recoverable from the design path), so it is applied identically on every
+// client: local placement, remote peer, and load replay (see markIfTerrainPlacement).
+const terrainPlacementGroup = "terrain_placement"
+
+// isTerrainPlacement reports whether node is a tagged single-placement terrain entity
+// — the carve-out to the "objects are paint-through in terrain mode" rule.
+func isTerrainPlacement(node Node.Instance) bool {
+	return node != Node.Nil && node.IsInGroup(terrainPlacementGroup)
 }

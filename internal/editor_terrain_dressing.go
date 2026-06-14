@@ -112,18 +112,12 @@ type grassAsset struct {
 type dressingParams struct {
 	perArea float64
 	maxInst int
-	// baseScale is the fixed factor the mesh's authored size is multiplied by
-	// BEFORE the per-instance random spread. For the scenery-library categories
-	// (foliage/mineral/boulders/rocks) this is sceneryLibraryScale (0.1) so a
-	// scattered prop matches the size that the scenery editor places the same
-	// .glb at; grass/pebble packs are authored at world size already (baseScale 1).
-	// The shrooms brush carries the wildfire_games mushroom props (also authored at
-	// scenery-library scale) at baseScale 0.25 — a touch bigger than the 0.1 they'd
-	// get under foliage, and static (windKind "") rather than swaying.
-	baseScale Float.X
-	// scaleMin..scaleMax is the per-instance random spread applied on top of
-	// baseScale — a modest variation around 1.0 for natural variety, so a patch
-	// doesn't mix wildly different sizes.
+	// scaleMin..scaleMax is the per-instance random spread around the shared
+	// sceneryLibraryScale factor (see fillPatch) — a modest variation around 1.0
+	// for natural variety, so a patch doesn't mix wildly different sizes. There is
+	// deliberately NO per-category absolute scale: every category uses the same
+	// uniform library factor, and real per-asset size is baked into the .glb by the
+	// library (sizes.txt + rescale_glb).
 	scaleMin Float.X
 	scaleMax Float.X
 	// windKind selects how the scattered mesh sways: "grass" wraps the material
@@ -134,13 +128,36 @@ type dressingParams struct {
 }
 
 var dressingDefaults = map[string]dressingParams{
-	"grasses":  {perArea: 6.0, maxInst: 3000, baseScale: 1.0, scaleMin: 0.7, scaleMax: 1.2, windKind: "grass"},
-	"pebbles":  {perArea: 4.0, maxInst: 2000, baseScale: 1.0, scaleMin: 0.5, scaleMax: 1.4, windKind: ""},
-	"foliage":  {perArea: 1.5, maxInst: 400, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, windKind: "foliage"},
-	"shrooms":  {perArea: 2.0, maxInst: 1000, baseScale: 0.25, scaleMin: 0.7, scaleMax: 1.3, windKind: ""},
-	"boulder":  {perArea: 1.5, maxInst: 600, baseScale: sceneryLibraryScale, scaleMin: 0.85, scaleMax: 1.15, windKind: ""},
-	"boulders": {perArea: 0.8, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
-	"rocks":    {perArea: 1.0, maxInst: 500, baseScale: sceneryLibraryScale, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
+	"grasses":  {perArea: 6.0, maxInst: 3000, scaleMin: 0.7, scaleMax: 1.2, windKind: "grass"},
+	"pebbles":  {perArea: 4.0, maxInst: 2000, scaleMin: 0.5, scaleMax: 1.4, windKind: ""},
+	"foliage":  {perArea: 1.5, maxInst: 400, scaleMin: 0.85, scaleMax: 1.15, windKind: "foliage"},
+	"shrooms":  {perArea: 2.0, maxInst: 1000, scaleMin: 0.7, scaleMax: 1.3, windKind: ""},
+	"boulder":  {perArea: 1.5, maxInst: 600, scaleMin: 0.85, scaleMax: 1.15, windKind: ""},
+	"boulders": {perArea: 0.8, maxInst: 500, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
+	"rocks":    {perArea: 1.0, maxInst: 500, scaleMin: 0.8, scaleMax: 1.2, windKind: ""},
+	// flowers/thicket sway with the foliage wind (planted base, fluttering top);
+	// seaweed sways with the grass wind (whole frond leans from a planted base —
+	// reads as underwater kelp). lilypad sits on the water SURFACE (see
+	// waterFloatingDressingCategory) and is static; benthic dresses the seabed
+	// (terrain floor, underwater) and is static.
+	"flowers": {perArea: 3.0, maxInst: 1500, scaleMin: 0.8, scaleMax: 1.2, windKind: "foliage"},
+	"thicket": {perArea: 1.5, maxInst: 600, scaleMin: 0.85, scaleMax: 1.2, windKind: "foliage"},
+	"lilypad": {perArea: 2.0, maxInst: 800, scaleMin: 0.8, scaleMax: 1.3, windKind: ""},
+	"seaweed": {perArea: 2.5, maxInst: 1200, scaleMin: 0.7, scaleMax: 1.3, windKind: "grass"},
+	"benthic": {perArea: 2.0, maxInst: 1000, scaleMin: 0.8, scaleMax: 1.3, windKind: ""},
+}
+
+// waterFloatingDressingCategories scatter their instances on the water SURFACE
+// rather than the terrain floor, and re-seat when the water level changes (see
+// dressingSurfaceY / reprojectWaterDressing). lilypad is the only one so far.
+var waterFloatingDressingCategories = map[string]bool{
+	"lilypad": true,
+}
+
+// isWaterFloatingDressingCategory reports whether a dressing category seats its
+// scatter on the water surface (folding legacy category spellings first).
+func isWaterFloatingDressingCategory(s string) bool {
+	return waterFloatingDressingCategories[canonicalDressingCategory(s)]
 }
 
 // ensureGrassRender returns (building on first use) the merged render for a
@@ -240,7 +257,7 @@ func (vr *TerrainEditor) repopulateDesign(design musical.Design) {
 				if vr.tileRevealedAt(p.bases[i]) {
 					off := k * multiMeshStride
 					writeMultiMeshXform(buf, off,
-						vr.grassTransform(p.bases[i], p.yaws[i], p.scales[i], xform))
+						vr.grassTransform(p.bases[i], p.yaws[i], p.scales[i], p.category, xform))
 					// Per-instance wind variation in the 4 custom-data floats
 					// (INSTANCE_CUSTOM): phase, amplitude jitter, 2 spare.
 					phase, amp := grassWindCustom(p.bases[i])
@@ -356,7 +373,7 @@ func (vr *TerrainEditor) populateGrassMM(patch *grassPatch) {
 		xform := asset.parts[pi].xform
 		mm.SetInstanceCount(n)
 		for k, i := range visible {
-			mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], xform))
+			mm.SetInstanceTransform(k, vr.grassTransform(patch.bases[i], patch.yaws[i], patch.scales[i], patch.category, xform))
 		}
 	}
 }
@@ -489,14 +506,13 @@ func (vr *TerrainEditor) fillPatch(patch *grassPatch, brush musical.Sculpt, asse
 			Z: brush.Target.Z + Float.X(rad*math.Sin(theta)),
 		}
 		patch.yaws[i] = Angle.Radians(rng.float() * 2 * math.Pi)
-		// Scale the mesh's authored size by the category's library factor (so the
-		// dressed prop matches the size the scenery editor would place it at) times
-		// a small random spread for variety.
-		base := prms.baseScale
-		if base == 0 {
-			base = 1
-		}
-		patch.scales[i] = base * (prms.scaleMin + Float.X(rng.float())*(prms.scaleMax-prms.scaleMin))
+		// Scale by the SAME uniform library factor the scenery editor and the
+		// placement preview use (sceneryLibraryScale), times a small random spread
+		// for variety. Real per-asset size is baked into the .glb by the library
+		// (sizes.txt + rescale_glb) — the editor applies one consistent factor for
+		// every category instead of a per-category fudge, so a scattered prop matches
+		// the same .glb placed as scenery.
+		patch.scales[i] = sceneryLibraryScale * (prms.scaleMin + Float.X(rng.float())*(prms.scaleMax-prms.scaleMin))
 	}
 	return true
 }
@@ -622,7 +638,10 @@ func qmm(f Float.X) int64 { return int64(math.Round(float64(f) * 1000)) }
 // and the user is NOT mid-stroke; otherwise it tears the preview down. Called
 // once per frame from Process.
 func (vr *TerrainEditor) updateDressPreview() {
-	if vr.workbench == nil || vr.workbench.uiMode() != ModeDressing ||
+	// The scatter brush can be armed from either ModeDressing (grasses, foliage, …)
+	// or ModeGeometry (pebbles, boulder), so this is gated on DressActive rather
+	// than the mode — picking a texture in ModeMaterial never sets DressActive.
+	if vr.workbench == nil ||
 		(!vr.DressActive && !vr.ClearActive) ||
 		(vr.DressActive && vr.DressDesign == "") ||
 		vr.brushStrokeActive ||
@@ -709,6 +728,25 @@ func (vr *TerrainEditor) reprojectGrass(target Vector3.XYZ, radius Float.X) {
 	}
 }
 
+// reprojectWaterDressing re-seats every water-floating dressing patch (lilypad) onto
+// the current water surface, so they rise and fall with the level. Called whenever the
+// water level changes or glides. Cheap — only water-floating patches are marked, and
+// the deferred flush repopulates each affected design's merged buffer once
+// (grassTransform re-queries WaterSurfaceAt for the revealed-tile instances). No new
+// mutation: it is a deterministic local consequence of the observable water-level
+// sculpt, applied identically on every client (mirrors reprojectGrass for height).
+func (vr *TerrainEditor) reprojectWaterDressing() {
+	if len(vr.grassPatches) == 0 {
+		return
+	}
+	defer vr.deferGrassRender()()
+	for _, patch := range vr.grassPatches {
+		if isWaterFloatingDressingCategory(patch.category) {
+			vr.markGrassDirty(patch.design)
+		}
+	}
+}
+
 // eraseGrass removes instances of the given Design whose scatter centers
 // lie inside the brush disc. It filters the per-patch instance lists in
 // place and rebuilds the corresponding MultiMeshes so the deletion is
@@ -791,19 +829,32 @@ func (vr *TerrainEditor) eraseGrass(brush musical.Sculpt) {
 	}
 }
 
+// dressingSurfaceY is the Y a dressing instance of the given category sits at for
+// world XZ `base`: the water SURFACE for water-floating categories (lilypad), so
+// they drift on the lake/river and rise/fall with the level, otherwise the terrain
+// floor. Seabed dressing (seaweed/benthic) deliberately uses the floor — it is
+// underwater but planted on the ground.
+func (vr *TerrainEditor) dressingSurfaceY(category string, base Vector3.XYZ) Float.X {
+	if isWaterFloatingDressingCategory(category) {
+		return vr.WaterSurfaceAt(base)
+	}
+	return vr.HeightAt(base)
+}
+
 // grassTransform builds the instance transform for a dressing instance:
-// yaw about world up, uniform scale, planted at terrain height under the
+// yaw about world up, uniform scale, planted at the category's surface height
+// (terrain floor, or the water surface for water-floating categories) under the
 // base X/Z. Every dressing source mesh is authored/imported Y-up (the grass
 // packs are now baked upright at import time — see library/import_yughues.py —
 // matching the foliage/mineral/boulder scenery props), so the authored
 // orientation is preserved and only the random yaw+scale is applied on top.
-func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, scale Float.X, source Transform3D.BasisOrigin) Transform3D.BasisOrigin {
+func (vr *TerrainEditor) grassTransform(base Vector3.XYZ, yaw Angle.Radians, scale Float.X, category string, source Transform3D.BasisOrigin) Transform3D.BasisOrigin {
 	yawB := Basis.FromEuler(Euler.Radians{Y: yaw}, Angle.OrderYXZ)
 	scaledYaw := Basis.Scaled(yawB, Vector3.New(scale, scale, scale))
 
 	corrected := Basis.Mul(scaledYaw, source.Basis)
 	rotatedOrigin := Basis.Transform(source.Origin, scaledYaw)
-	ground := Vector3.XYZ{X: base.X, Y: vr.HeightAt(base), Z: base.Z}
+	ground := Vector3.XYZ{X: base.X, Y: vr.dressingSurfaceY(category, base), Z: base.Z}
 	finalOrigin := Vector3.Add(ground, Vector3.XYZ(rotatedOrigin))
 
 	return Transform3D.BasisOrigin{Basis: corrected, Origin: finalOrigin}
@@ -864,13 +915,20 @@ func (vr *TerrainEditor) grassMeshFor(design musical.Design, category string) (g
 	var asset grassAsset
 	for _, part := range parts {
 		mi := part.mi
-		// Kept alive for the session by grassMeshes (a TerrainEditor field, walked by
-		// keepalive) and released in freeDressCaches at shutdown — not Object.Leak'd,
-		// which would pin it un-freeably and report as a leak at exit.
+		// Pin the mesh (Object.Leak) so it holds a real ENGINE ref for the session,
+		// surviving every preview/render MultiMesh that references it being freed.
+		// The Go keepalive walk over grassMeshes only stops the handle being GC'd — it
+		// does NOT hold an engine refcount — so without the pin the mesh died the moment
+		// its last MultiMesh dropped its ref: select a design, cancel (which frees the
+		// sole preview MultiMesh holding the mesh), reselect, and SetMesh fed the new
+		// MultiMesh a now-dangling handle → null mesh (_multimesh_re_create_aabb error).
+		// freeDressCaches Object.Free's it at shutdown to balance the pin, so it isn't a
+		// real leak.
 		mesh := mi.Mesh()
 		if mesh == Mesh.Nil {
 			continue
 		}
+		mesh = Object.Leak(mesh)
 		if ms, ok := Object.As[*MaterialSharingMeshInstance3D](mi); ok {
 			if mat, ready := vr.sharedDressMaterial(ms); ready && mat != Material.Nil {
 				mesh.SurfaceSetMaterial(0, mat)
@@ -930,11 +988,18 @@ func (vr *TerrainEditor) sharedDressMaterial(ms *MaterialSharingMeshInstance3D) 
 	LoadAsync(ms.Material, func(mat Material.Instance) {
 		final := mat
 		if mat != Material.Nil && overrideAO != Texture2D.Nil {
-			// Held by dressSharedMats (walked by keepalive) and freed in freeDressCaches
-			// at shutdown — not Object.Leak'd, which would make it un-freeable.
 			dup := Resource.Duplicate(Object.To[BaseMaterial3D.Instance](mat))
 			dup.SetAoTexture(overrideAO)
 			final = dup.AsMaterial()
+		}
+		// Pin it (Object.Leak) so it holds a real engine ref for the session — like the
+		// extracted grass meshes, the keepalive walk over dressSharedMats only stops the
+		// handle being GC'd, not the engine freeing it once nothing references it (e.g. a
+		// material loaded during a not-yet-ready retry, before any mesh surface holds it).
+		// freeDressCaches Object.Free's it at shutdown to balance the pin. A failed load
+		// caches Material.Nil (don't pin that).
+		if final != Material.Nil {
+			final = Object.Leak(final)
 		}
 		vr.dressSharedMats[key] = final
 		delete(vr.dressMatPending, key)

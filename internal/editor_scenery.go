@@ -426,9 +426,6 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 	switch mode {
 	case ModeGeometry:
 		return []string{
-			"foliage",
-			"boulder",
-
 			"housing",
 			"village",
 			"farming",

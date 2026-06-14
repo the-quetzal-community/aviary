@@ -485,7 +485,6 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		glb = ".glb"
 		png = ".png"
 	)
-	edits := false
 	index := 0
 	for _, button := range ui.themes {
 		button, _ := button.Instance()
@@ -574,7 +573,6 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
 			}
 			ui.Tabs.SetTabTitle(index, "")
-			edits = true
 			index++
 		} else {
 			var path = "res://preview/" + author + "/"
@@ -643,7 +641,11 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			if mode == ModeMaterial {
 				ext = png
 			}
-			for resource := range resources.Iter() {
+			// Default tile order is alphabetical by file name. DirAccess
+			// iterates in filesystem/pack order (not guaranteed sorted), so
+			// sort the names up front; applyRecency later floats recently-
+			// placed designs ahead of this stable alphabetical baseline.
+			for _, resource := range slices.Sorted(resources.Iter()) {
 				resource = strings.TrimSuffix(resource, ".import")
 				if !String.HasSuffix(resource, ".png") || String.HasSuffix(resource, "_cut.glb.png") {
 					continue
@@ -738,7 +740,12 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/editing.svg"))
 	}
 	ui.AsCanvasItem().SetVisible(index > 0 || len(visible_authors) > 0)
-	expansion.AsCanvasItem().SetVisible(index > 0 && !edits)
+	// Show the roll-up arrow whenever there's expandable grid content (design tiles),
+	// even alongside a slider tab. Previously any "editing/*" slider tab (e.g. the
+	// terrain editor's water-level in ModeGeometry) hid the arrow, so a mode that mixes
+	// design grids with a slider couldn't be collapsed. A slider-only panel (no grid
+	// tabs) has nothing to expand, so the arrow stays hidden there.
+	expansion.AsCanvasItem().SetVisible(len(ui.tabbed) > 0)
 }
 
 func (ui *DesignExplorer) UnhandledInput(event InputEvent.Instance) {

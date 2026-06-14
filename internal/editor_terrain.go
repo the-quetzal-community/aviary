@@ -220,6 +220,19 @@ type TerrainEditor struct {
 	ClearActive   bool   // a removal tool is armed
 	ClearCategory string // "grasses", "pebbles", "foliage", "shrooms", or "boulder"
 
+	//
+	// Single-placement state (scenery-style tabs: iceberg/plateau/opening/residue).
+	// Unlike the dressing scatter, these drop ONE library entity per click via a
+	// musical.Change (see TryPlace), with a hovering ghost (Preview) following the
+	// cursor — the terrain-editor analogue of the SceneryEditor. The placed entity
+	// is a normal generic entity (selectable in both the terrain and scenery
+	// editors). iceberg floats on the water surface (re-seated by reseatWaterFloats,
+	// keyed off its library category).
+	//
+	Preview     PreviewRenderer
+	PlaceActive bool   // a single-placement design is selected and armed
+	PlaceDesign string // selected placement mesh (res://...glb), local only
+
 	// BrushRiverDepth is how far below the original ground the river brush
 	// carves its channel (the water then fills back to the original ground).
 	// Set via the river-depth slider; local-only (the depth rides in each
@@ -333,6 +346,9 @@ type TerrainEditor struct {
 	workbench Workbench
 	scenes    SceneIndex
 	lights    LightingConsole
+	// rig is the camera rig, used to source the cursor ray (mouse on desktop, the
+	// aim controller in VR) for the water-surface placement raycast.
+	rig CameraRig
 
 	// lighting holds the shared world lighting used by both Terrain and
 	// Scenery. All other editors that embed lighting get their own private
@@ -576,12 +592,16 @@ func (fe *TerrainEditor) syncBrushSliders() {
 	// Paint is relevant in ModeMaterial once a texture has been selected (PaintActive).
 	// Dress is relevant in ModeDressing once a design has been selected.
 	hasPaint := fe.PaintActive
-	hasDress := (mode == ModeDressing) && fe.DressActive
-	hasClear := (mode == ModeDressing) && fe.ClearActive
+	// The scatter (dress) and removal (clear) brushes can be armed from either
+	// ModeDressing (grasses, foliage, …) or ModeGeometry (pebbles, boulder), so
+	// these are gated on the armed flag, not the mode. They are mutually exclusive
+	// with the height brushes (arming one clears the other in SelectDesign).
+	hasDress := fe.DressActive
+	hasClear := fe.ClearActive
 	hasGeomBrush := (mode == ModeGeometry) && (fe.TerrainBrush != "")
 	hasBrushForMode := hasPaint || hasDress || hasClear || hasGeomBrush
 	fe.workbench.setSizeSliderVisible(editing && hasBrushForMode)
-	fe.workbench.setDensitySliderVisible(editing && mode == ModeDressing && hasDress)
+	fe.workbench.setDensitySliderVisible(editing && hasDress)
 	fe.workbench.setPowerSliderVisible(editing && mode == ModeGeometry && hasGeomBrush)
 	// Keep the shader brush ring in sync with the current mode's brush state.
 	if editing && fe.shader != ShaderMaterial.Nil && fe.shader_buried != ShaderMaterial.Nil {
@@ -621,6 +641,8 @@ func (fe *TerrainEditor) ChangeEditor() {
 	fe.ClearActive = false
 	fe.ClearCategory = ""
 	fe.TerrainBrush = ""
+	fe.PlaceActive = false
+	fe.PlaceDesign = ""
 	fe.brushStrokeActive = false
 	fe.sculptStroke = false
 	fe.setArrowsVisible(false)
@@ -628,6 +650,8 @@ func (fe *TerrainEditor) ChangeEditor() {
 	// otherwise resets the preview each frame) won't run for this editor anymore.
 	fe.clearObjectPreview()
 	fe.clearDressPreview()
+	// Drop any hovering single-placement ghost when leaving the editor.
+	fe.Preview.Remove()
 
 	// Make sure the toolbar gizmos + sliders reflect the cleared brush state.
 	// (CancelPaint has explicit teardown; ChangeEditor must also keep the UI
@@ -678,6 +702,11 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 		// the active brush.
 		return []string{
 			"terrain",
+			"pebbles",
+			"boulder",
+			"plateau",
+			"iceberg",
+			"opening",
 			"liquids",
 			"editing/water_level",
 		}
@@ -695,10 +724,14 @@ func (fe *TerrainEditor) Tabs(mode Mode) []string {
 	case ModeDressing:
 		return []string{
 			"grasses",
-			"pebbles",
+			"flowers",
+			"thicket",
 			"foliage",
 			"shrooms",
-			"boulder",
+			"lilypad",
+			"seaweed",
+			"benthic",
+			"residue",
 			"removal",
 		}
 	default:
@@ -787,71 +820,65 @@ func (fe *TerrainEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 }
 
 func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
-	if mode == ModeDressing {
-		// Clear-sentinel tools from the "removal" tab — arm a category-wide
-		// eraser (or the bomb for everything) instead of a normal placement brush.
-		switch design {
-		case BuiltinDressingClearAll:
-			fe.ArmClearBrush(ClearAllDressingCategory)
-			return
-		case BuiltinDressingClearGrasses:
-			fe.ArmClearBrush("grasses")
-			return
-		case BuiltinDressingClearFoliage:
-			fe.ArmClearBrush("foliage")
-			return
-		case BuiltinDressingClearShrooms:
-			fe.ArmClearBrush("shrooms")
-			return
-		case BuiltinDressingClearBoulder:
-			fe.ArmClearBrush("boulder")
-			return
-		}
-
-		// Arm the dressing brush: the selected mesh scatters across the
-		// surface on the next stroke. The tab (parent dir, e.g.
-		// "grasses" or "foliage") is carried into the sculpt's Slider so the
-		// category round-trips and remote clients route it the same way.
-		fe.CancelPaint()
-		fe.DressActive = true
-		fe.DressDesign = design
-		fe.DressTab = path.Base(path.Dir(design))
-		fe.BrushDesign = design
-		// Resolve (and kick off the import of) the design ONCE here, so the live
-		// preview and each paint segment reuse the same id instead of re-importing.
-		if fe.library != nil {
-			fe.dressDesignID = fe.library.MusicalDesign(design)
-		}
-		// Roll a fresh scatter seed for this tool selection so the previewed
-		// arrangement is fixed (no per-move reshuffle) until it commits.
-		fe.dressSeed = nextSeed(fe.dressSeed)
-		// Allow the very next user-initiated stroke after picking a design
-		// to fire without the movement-spacing guard (original behaviour).
-		fe.dressLastSet = false
-		fe.EnableEditor()
+	// Clear-sentinel tools from the "removal" tab — arm a category-wide eraser
+	// (or the bomb for everything) instead of a placement brush. Matched by their
+	// unique procedural:// sentinel, so the removal tab works regardless of mode.
+	switch design {
+	case BuiltinDressingClearAll:
+		fe.ArmClearBrush(ClearAllDressingCategory)
+		return
+	case BuiltinDressingClearGrasses:
+		fe.ArmClearBrush("grasses")
+		return
+	case BuiltinDressingClearFoliage:
+		fe.ArmClearBrush("foliage")
+		return
+	case BuiltinDressingClearShrooms:
+		fe.ArmClearBrush("shrooms")
+		return
+	case BuiltinDressingClearBoulder:
+		fe.ArmClearBrush("boulder")
 		return
 	}
-	// Terrain brush builtins (raise/lower) in ModeGeometry: arm the
-	// explicit height sculpt brush. This replaces the previous implicit
-	// "any click in geometry mode sculpts height" behaviour.
-	if mode == ModeGeometry && (design == BuiltinTerrainRaise || design == BuiltinTerrainLower || design == BuiltinTerrainPlateau || design == BuiltinTerrainSmooth || design == BuiltinTerrainRiver || design == BuiltinTerrainRiverErase) {
+	// Terrain height/river brush builtins (the "terrain"/"liquids" tabs in
+	// ModeGeometry): arm the explicit height sculpt / river-or-flatten drag brush.
+	switch design {
+	case BuiltinTerrainRaise, BuiltinTerrainLower, BuiltinTerrainPlateau,
+		BuiltinTerrainSmooth, BuiltinTerrainRiver, BuiltinTerrainRiverErase:
 		fe.CancelPaint()
 		fe.TerrainBrush = design
 		fe.DressActive = false
-		// The river brush is a drag-paint tool (like dressing): clear the
-		// stroke-spacing guard so the first stroke after selecting it fires,
-		// and seeds a flow direction from the very next movement.
+		// Drag-paint tools (river/plateau/smooth) clear the stroke-spacing guard so
+		// the first stroke fires and a flow/level seeds from the next movement.
 		fe.dressLastSet = false
-		// Enable the editor (ensures brush ring highlight is visible).
 		fe.EnableEditor()
 		// The GizmoPower slider follows the active brush, so re-sync it to the
 		// parameter this tool exposes (sculpt power vs river-channel depth).
 		fe.refreshGizmoPowerSlider()
-		// Do not set BrushActive yet; the first press on terrain will
-		// drive the initial delta and arm the transient stroke state.
+		// Do not set BrushActive yet; the first press on terrain drives the delta.
 		return
 	}
+	// Library designs route by their category (the parent directory), independent
+	// of which mode-tab they were picked from: pebbles/boulder scatter from the
+	// ModeGeometry tabs, residue places from the ModeDressing tab, etc.
+	if !strings.HasPrefix(design, "procedural://") {
+		category := path.Base(path.Dir(design))
+		switch {
+		case isTerrainPlacementCategory(category):
+			fe.armPlacement(design)
+			return
+		case isDressingCategory(category):
+			fe.armDressing(design)
+			return
+		}
+	}
 	fe.DressActive = false
+	// Picking a texture also disarms any single-placement tool + its ghost.
+	if fe.PlaceActive {
+		fe.PlaceActive = false
+		fe.PlaceDesign = ""
+		fe.Preview.Remove()
+	}
 	// Only clear a terrain brush selection when the user picks something
 	// else while in geometry mode (e.g. they had a raise/lower tool picked
 	// and then picked a different geometry action, if any). Picking a
@@ -868,6 +895,173 @@ func (fe *TerrainEditor) SelectDesign(mode Mode, design string) {
 		fe.EnableEditor()
 	default:
 	}
+}
+
+// armDressing arms the instanced dressing scatter brush for a library design: the
+// next stroke scatters it across the surface, recorded as one musical.Sculpt per
+// segment (see PaintDressing). The category (parent dir, e.g. "grasses"/"flowers")
+// rides the sculpt's Slider so it round-trips and remote clients route it the same way.
+func (fe *TerrainEditor) armDressing(design string) {
+	fe.CancelPaint()
+	fe.DressActive = true
+	fe.DressDesign = design
+	fe.DressTab = path.Base(path.Dir(design))
+	fe.BrushDesign = design
+	// Resolve (and kick off the import of) the design ONCE here, so the live
+	// preview and each paint segment reuse the same id instead of re-importing.
+	if fe.library != nil {
+		fe.dressDesignID = fe.library.MusicalDesign(design)
+	}
+	// Roll a fresh scatter seed so the previewed arrangement is fixed until commit.
+	fe.dressSeed = nextSeed(fe.dressSeed)
+	// Let the very next stroke fire without the movement-spacing guard.
+	fe.dressLastSet = false
+	fe.EnableEditor()
+}
+
+// armPlacement arms the single-placement (scenery-style) tool for a library design:
+// a ghost preview follows the cursor and a click drops one musical.Change entity (see
+// TryPlace). Used by the iceberg/plateau/opening/residue tabs.
+func (fe *TerrainEditor) armPlacement(design string) {
+	fe.CancelPaint()
+	fe.PlaceActive = true
+	fe.PlaceDesign = design
+	fe.Preview.normalizeRotation = false
+	fe.Preview.SetDesign(design)
+	fe.EnableEditor()
+}
+
+// updatePlacePreview keeps the single-placement ghost following the cursor while a
+// placement tool is armed — the terrain-editor analogue of SceneryEditor's hover
+// preview. It is positioned at the brush target (the cursor-on-terrain the brush ring
+// already tracks); iceberg floats on the water surface instead of the ground. No-op
+// off-tool. Called from Process and once more on the placing click for precision.
+func (fe *TerrainEditor) updatePlacePreview() {
+	if !fe.PlaceActive || fe.PlaceDesign == "" {
+		return
+	}
+	pos := fe.BrushTarget
+	if isWaterFloatingPlacementCategory(path.Base(path.Dir(fe.PlaceDesign))) {
+		pos.Y = fe.WaterSurfaceAt(Vector3.New(pos.X, 0, pos.Z))
+	}
+	fe.Preview.AsNode3D().SetVisible(true)
+	fe.Preview.AsNode3D().SetGlobalPosition(pos)
+}
+
+// waterFloatingToolActive reports whether the armed tool places onto the WATER
+// SURFACE (an iceberg placement or a lilypad dressing brush) rather than the terrain,
+// so the brush target should snap to the cursor's water crossing (waterSurfaceCursorPoint).
+func (fe *TerrainEditor) waterFloatingToolActive() bool {
+	if fe.PlaceActive {
+		return isWaterFloatingPlacementCategory(path.Base(path.Dir(fe.PlaceDesign)))
+	}
+	if fe.DressActive {
+		return isWaterFloatingDressingCategory(fe.DressTab)
+	}
+	return false
+}
+
+// cursorRay returns the placement aim ray in world space: the right-controller aim in
+// VR (so water placement tracks the laser), otherwise the desktop mouse ray.
+func (fe *TerrainEditor) cursorRay() (origin, dir Vector3.XYZ) {
+	if fe.rig != nil {
+		if ptr, ok := fe.rig.xrPointer(); ok {
+			t := ptr.AsNode3D().GlobalTransform()
+			return t.Origin, Vector3.XYZ{X: -t.Basis.Z.X, Y: -t.Basis.Z.Y, Z: -t.Basis.Z.Z}
+		}
+	}
+	return MouseRay(fe.AsNode3D())
+}
+
+// waterSurfaceCursorPoint finds where the cursor ray first crosses the WATER SURFACE
+// — the point a water-floating tool should drop onto. It marches the ray against
+// WaterSurfaceAt rather than intersecting a flat plane, so it follows a river's
+// sloping channel surface (and the bank lip), not just the global lake level. The
+// search is bounded by the terrain hit under the cursor (BrushTarget): the water sits
+// at/above the terrain, so any crossing is before the seabed. Returns ok=false when
+// the ray reaches the ground without dipping below the surface (e.g. aiming at dry
+// land), so the caller keeps the plain terrain target. The descent is assumed to come
+// from above the surface (the usual editing camera).
+func (fe *TerrainEditor) waterSurfaceCursorPoint() (Vector3.XYZ, bool) {
+	origin, dir := fe.cursorRay()
+	if dir == (Vector3.XYZ{}) {
+		return Vector3.XYZ{}, false
+	}
+	n := Vector3.Normalized(dir)
+	maxT := Vector3.Length(Vector3.Sub(fe.BrushTarget, origin)) + 1
+	if maxT <= 0.1 {
+		return Vector3.XYZ{}, false
+	}
+	// above reports whether the ray point at distance t sits above the water surface.
+	above := func(t Float.X) bool {
+		p := Vector3.Add(origin, Vector3.MulX(n, t))
+		return p.Y > fe.WaterSurfaceAt(p)
+	}
+	step := Float.X(0.5)
+	prevAbove := above(0)
+	prevT := Float.X(0)
+	for t := step; t <= maxT; t += step {
+		if prevAbove && !above(t) {
+			// Crossing between prevT and t: binary-refine to the surface.
+			lo, hi := prevT, t
+			for i := 0; i < 16; i++ {
+				mid := (lo + hi) / 2
+				if above(mid) {
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+			p := Vector3.Add(origin, Vector3.MulX(n, hi))
+			p.Y = fe.WaterSurfaceAt(p)
+			return p, true
+		}
+		prevAbove = above(t)
+		prevT = t
+	}
+	return Vector3.XYZ{}, false
+}
+
+// TryPlace commits the armed single-placement preview as one library entity (a
+// musical.Change, so the placement is observable + replayable on every client),
+// mirroring SceneryEditor.TryPlacePreview but driven from the terrain editor. The
+// placed entity is a normal generic entity (Editor ""), selectable in both the terrain
+// and scenery editors. An iceberg is dropped at the water surface (the ghost already
+// hovers there) and is re-seated to the surface on every later level change by
+// Client.reseatWaterFloats — keyed off its library category, so no per-entity musical
+// state is needed and it survives gizmo moves. Holding Shift keeps the preview for
+// rapid repeats. Returns true on a successful placement.
+func (fe *TerrainEditor) TryPlace() bool {
+	if !fe.PlaceActive || fe.Preview.Design() == "" || fe.recorder == nil || fe.library == nil {
+		return false
+	}
+	if !fe.recorder.recording() {
+		return false
+	}
+	placement := musical.Change{
+		Author: fe.recorder.localAuthor(),
+		Entity: fe.recorder.NextEntity(),
+		Design: fe.library.MusicalDesign(fe.Preview.Design()),
+		Offset: fe.Preview.AsNode3D().Position(),
+		Angles: fe.Preview.AsNode3D().Rotation(),
+		// Carry the preview's scale forward (library placement scale plus any
+		// intrinsic root scale folded in by PreviewRenderer.attach), used as the
+		// placed entity's absolute root scale so it matches the ghost.
+		Bounds: fe.Preview.AsNode3D().Scale(),
+		Commit: true,
+	}
+	fe.recorder.publishChange(placement)
+	fe.recorder.RecordChange(placement, musical.Change{
+		Author: placement.Author,
+		Entity: placement.Entity,
+		Remove: true,
+	})
+	if !Input.IsKeyPressed(Input.KeyShift) {
+		fe.PlaceActive = false
+		fe.PlaceDesign = ""
+		fe.Preview.Remove()
+	}
+	return true
 }
 func (fe *TerrainEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
 	switch editing {
@@ -1094,6 +1288,11 @@ func (tr *TerrainEditor) Ready() {
 	// terrain/water materials and shaders, and the texture-array source images).
 	OnShutdown(tr.freeTerrainResources)
 	tr.objectPreviewOffsets = make(map[Node3D.ID]Float.X)
+	// Single-placement ghost preview (iceberg/plateau/opening/residue tabs),
+	// mirroring the SceneryEditor: library placement scale, and grounded
+	// sizing-debug previews.
+	tr.Preview.setDefaultScale(sceneryLibraryScale)
+	tr.Preview.groundSizeOverride = true
 	tr.tiles = make(map[tileCoord]*TerrainTile)
 	tr.mapper = make(map[musical.Design]int)
 	tr.albedos = []Image.Instance{LoadSync[Texture2D.Instance]("res://terrain/alpine_grass.png").AsTexture2D().GetImage()}
@@ -1279,6 +1478,13 @@ func (tr *TerrainEditor) CancelPaint() bool {
 		tr.ClearActive = false
 		tr.ClearCategory = ""
 		tr.brushStrokeActive = false
+		active = true
+	}
+	if tr.PlaceActive {
+		tr.PlaceActive = false
+		tr.PlaceDesign = ""
+		tr.brushStrokeActive = false
+		tr.Preview.Remove()
 		active = true
 	}
 	clearedBrush := false
@@ -1621,6 +1827,19 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 		}
 		break
 	}
+	// Water-floating tools (iceberg placement, lilypad dressing) aim at the WATER
+	// SURFACE, not the seabed under it: snap the brush target to where the cursor ray
+	// crosses the (river-aware) water surface, so the ghost/scatter sits where you are
+	// pointing on the water rather than far out on the submerged terrain the pick
+	// returned. Falls back to the terrain target when the ray finds no water (dry land).
+	if vr.waterFloatingToolActive() {
+		if p, ok := vr.waterSurfaceCursorPoint(); ok {
+			vr.BrushTarget = p
+			vr.shader.SetShaderParameter("uplift", p)
+			vr.shader_buried.SetShaderParameter("uplift", p)
+			vr.water_shader.SetShaderParameter("uplift", p)
+		}
+	}
 	if !vr.PaintActive && vr.workbench.uiMode() == ModeGeometry && vr.TerrainBrush != "" {
 		// Height-sculpt preview: deform the terrain the way a click will, before
 		// the user commits. brush_mode selects the deformation so the preview
@@ -1761,6 +1980,9 @@ func (vr *TerrainEditor) Process(dt Float.X) {
 	// hovering in ModeDressing (cleared while stroking / off-tool). Independent of
 	// the height/paint preview branch above.
 	vr.updateDressPreview()
+	// Live single-placement ghost: follow the cursor while a placement tool is armed
+	// (independent of the dressing/height previews above).
+	vr.updatePlacePreview()
 	vr.retryPendingGrass()
 }
 
@@ -2300,6 +2522,11 @@ func (tr *TerrainEditor) UnhandledInput(event InputEvent.Instance) {
 		if event.ButtonIndex() == Input.MouseButtonRight && tr.PaintActive {
 			tr.ChangeEditor()
 		}
+		// Right-click while a single-placement tool is armed cancels it (discards the
+		// hovering ghost), mirroring the scenery editor's right-click-to-clear.
+		if event.ButtonIndex() == Input.MouseButtonRight && event.AsInputEvent().IsPressed() && tr.PlaceActive {
+			tr.CancelPaint()
+		}
 	}
 }
 
@@ -2344,6 +2571,31 @@ const (
 // When a negative-Amount sculpt arrives with this Slider and Design==zero,
 // eraseGrass removes instances from *all* categories inside the brush disc.
 const ClearAllDressingCategory = "*"
+
+// terrainPlacementCategories are the library categories the terrain editor places
+// as single scenery-style entities (one musical.Change per click, selectable/
+// gizmo-movable in the terrain editor) rather than scattering as instanced dressing.
+// The category is the design's parent directory (everything/iceberg, …); since it
+// round-trips through the design path it is recoverable on replay/remote with no
+// schema change, so the pickable/selectable exception (see isTerrainPlacement)
+// holds everywhere.
+var terrainPlacementCategories = map[string]bool{
+	"residue": true,
+	"opening": true,
+	"iceberg": true,
+	"plateau": true,
+}
+
+// isTerrainPlacementCategory reports whether a library category is a single-placement
+// (scenery-style) terrain category rather than an instanced dressing scatter.
+func isTerrainPlacementCategory(s string) bool { return terrainPlacementCategories[s] }
+
+// isWaterFloatingPlacementCategory reports whether a single-placement category floats
+// on the water SURFACE (tracking the level) instead of sitting on the terrain. Its
+// ghost previews at the surface (updatePlacePreview) and Client.reseatWaterFloats
+// re-seats placed instances to the surface whenever the level changes or on reload —
+// keyed off this category, so it needs no extra musical state and survives gizmo moves.
+func isWaterFloatingPlacementCategory(s string) bool { return s == "iceberg" }
 
 // extendSlider tags the explicit "extend the world" mutation an arrow click
 // emits. Target carries the new chunk's world-space center; TerrainEditor.Sculpt
@@ -4104,6 +4356,15 @@ func (tile *TerrainTile) InputEvent(camera Camera3D.Instance, event InputEvent.I
 	if event, ok := Object.As[InputEventMouseButton.Instance](event); ok && tile.editor.workbench.editing() == Editing.Terrain {
 		if event.ButtonIndex() == Input.MouseButtonLeft {
 			if event.AsInputEvent().IsPressed() {
+				// Single-placement tool: a left press over terrain drops ONE entity at
+				// the cursor (TryPlace) instead of starting a brush stroke. Snap the
+				// ghost to this exact hit first so a fast click lands precisely.
+				if tile.editor.PlaceActive {
+					tile.editor.BrushTarget = pos
+					tile.editor.updatePlacePreview()
+					tile.editor.TryPlace()
+					return
+				}
 				// A left press that actually hit terrain geometry is the
 				// only thing allowed to start a real paint/dress/height/river
 				// stroke. This is what prevents clicks inside the 2D

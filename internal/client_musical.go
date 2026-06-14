@@ -512,12 +512,17 @@ func (world musicalImpl) Change(con musical.Change) error {
 		// at its last commanded location instead of its placement spot. Each flushed
 		// Action advances entity_move_timing as it is applied.
 		world.flushPendingActions(con.Entity, node)
+		// Single-placement terrain entities (iceberg/plateau/opening/residue) stay
+		// pickable + selectable while terrain editing (see isTerrainPlacement); tag
+		// them so the rule holds on replay/remote too (the tag is derived from the
+		// design's library category, which round-trips through the design path).
+		terrainPlacement := world.markIfTerrainPlacement(node, con.Design)
 		// A placement that streams in (history replay at load, or a remote
-		// peer) while we're terrain editing must also be non-pickable, so it
+		// peer) while we're terrain editing must otherwise be non-pickable, so it
 		// doesn't block the terrain brush raycast until the next editor
 		// switch. StartEditing's sweep handles everything already present and
 		// flips it all back to pickable on leaving terrain mode.
-		if world.Editing == Editing.Terrain {
+		if world.Editing == Editing.Terrain && !terrainPlacement {
 			setPickableExceptTerrain(node.AsNode(), false)
 		}
 		// Bump this design to the front of the design explorer's recency

@@ -64,6 +64,22 @@ func swimTargetAbs(te *TerrainEditor, t Vector3.XYZ) Vector3.XYZ {
 	return t
 }
 
+// recordSwimmerRest stores a rested swimmer's seabed-relative depth as its
+// float delta (Client.entity_float_delta) so it re-seats against the FINAL
+// terrain on reload — the Action counterpart to the float-Change bookkeeping in
+// musicalImpl.Change. depth is the segment's Target.Y, already the height ABOVE
+// the seabed at the resting XZ. Runs on every client (the ActionRenderer replays
+// the same action everywhere) and during the bulk reload, so the rested depth is
+// observable with no extra mutation. No-op if the entity isn't registered.
+func (ar *ActionRenderer) recordSwimmerRest(parent Node3D.Instance, depth Float.X) {
+	if ar.client == nil {
+		return
+	}
+	if entity, ok := ar.client.object_to_entity[Node3D.ID(parent.ID())]; ok {
+		ar.client.entity_float_delta[entity] = depth
+	}
+}
+
 func (ar *ActionRenderer) Ready() {
 	ar.playing = "Idle"
 	ar.AsNode().SetProcess(false)
@@ -93,6 +109,17 @@ func (ar *ActionRenderer) Add(action musical.Action) {
 		// remember where it starts. The linear walk advances ar.Initial segment by
 		// segment, so this is the only record of the path's true first waypoint.
 		ar.pathStart = ar.Initial
+		if ar.swimmer {
+			// Store a swimmer's loop start TERRAIN-RELATIVE (depth above the seabed),
+			// like the segment Targets, so processRepeat reconstructs it against the
+			// CURRENT terrain via swimTargetAbs. Captured from the live position alone
+			// it's unreliable on reload — the bulk replay seeds Initial against the
+			// flat deferred heightfield (HeightAt==0), so an absolute pathStart left the
+			// start half of a ping-pong loop floating above the water. Subtracting
+			// HeightAt here cancels with the add in swimTargetAbs when the terrain is
+			// unchanged and rides the seabed when it isn't.
+			ar.pathStart.Y = ar.Initial.Y - ar.client.TerrainEditor.HeightAt(Vector3.New(ar.Initial.X, 0, ar.Initial.Z))
+		}
 	}
 	ar.actions = append(ar.actions, action)
 	ar.AsNode().SetProcess(true)
@@ -216,11 +243,16 @@ func (ar *ActionRenderer) processRepeat(delta Float.X) {
 	// swivel (zero-length turn). See ActionRenderer.pathStart.
 	way := make([]Vector3.XYZ, n+1)
 	way[0] = ar.pathStart
+	if ar.swimmer {
+		// pathStart was stored seabed-relative (see Add) so it rides terrain like the
+		// targets — reconstruct its absolute Y against the current seabed.
+		way[0] = swimTargetAbs(ar.client.TerrainEditor, ar.pathStart)
+	}
 	periods := make([]musical.Timing, n)
 	var total musical.Timing
 	for i := 0; i < n; i++ {
 		// Waypoints are absolute world positions; a swimmer's target stores a
-		// seabed-relative depth, so reconstruct it (pathStart is already absolute).
+		// seabed-relative depth, so reconstruct it (pathStart handled above).
 		if ar.swimmer {
 			way[i+1] = swimTargetAbs(ar.client.TerrainEditor, ar.actions[i].Target)
 		} else {
@@ -387,10 +419,20 @@ func (ar *ActionRenderer) Process(delta Float.X) {
 		ar.current++
 		if ar.current >= len(ar.actions) {
 			ar.AsNode().SetProcess(false)
-			// Swimmers leave the resting clip to their EntityAnimator (which settles
-			// to idle / dead-floating once the motion it reads goes to zero); ground
-			// walkers return to Idle here.
-			if !ar.swimmer {
+			if ar.swimmer {
+				// A rested swimmer's depth must keep riding terrain edits and reload,
+				// like its placement did. The swim Action stores Target.Y as the depth
+				// ABOVE the seabed at the resting XZ, so record it as the entity's float
+				// delta. Without this, entity_float_delta still holds the stale
+				// PLACEMENT depth, and reseatFloats re-applies it at the new resting XZ
+				// on reload (HeightAt(newXZ)+placementDepth) — which strands a fish that
+				// swam into shallower water above the surface (the "swimmer flies above
+				// the water after reload" bug).
+				ar.recordSwimmerRest(parent, action.Target.Y)
+			} else {
+				// Ground walkers return to Idle here; swimmers leave the resting clip to
+				// their EntityAnimator (which settles to idle / dead-floating once the
+				// motion it reads goes to zero).
 				ar.play("Idle")
 			}
 			ar.actions = ar.actions[0:0:cap(ar.actions)]

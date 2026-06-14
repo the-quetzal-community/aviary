@@ -246,6 +246,12 @@ type Client struct {
 
 	selection Node3D.ID
 
+	// terrainPlacementGizmos records whether the gizmo toolbar is currently showing
+	// the manage/placement gizmos for a selected single-placement terrain entity
+	// (vs the terrain editor's brush gizmos). A transition guard so refreshing on
+	// every terrain click doesn't rebuild the toolbar — see refreshTerrainPlacementGizmos.
+	terrainPlacementGizmos bool
+
 	// gizmoDrag tracks an in-progress object manipulation started while
 	// the 2D gizmo toolbar (or Shift hotkey) has GizmoShift selected.
 	// We use a horizontal drag plane (constant Y) for the initial
@@ -697,6 +703,7 @@ func (world *Client) Ready() {
 	world.TerrainEditor.workbench = world
 	world.TerrainEditor.scenes = world
 	world.TerrainEditor.lights = world
+	world.TerrainEditor.rig = world
 	world.VehicleEditor.recorder = world
 	world.VehicleEditor.library = world
 	world.VehicleEditor.workbench = world
@@ -1025,6 +1032,77 @@ func (world *Client) reseatFloats() {
 	}
 }
 
+// reseatWaterFloats re-seats every water-floating single-placement entity (e.g. a
+// placed iceberg) onto the CURRENT water surface: node.Y = WaterSurfaceAt(node.XZ).
+// Identified by the design's library category (isWaterFloatingPlacementCategory), like
+// reseatMobileEntities — so it applies on local placement, remote peers, and load
+// replay with no extra musical state, and survives gizmo moves (which commit a plain
+// absolute Change). Called whenever the water level changes/glides (processWaterRise)
+// and on reload (after the terrain + water are final), so icebergs always ride the
+// surface. A deterministic local consequence of the observable water-level sculpt,
+// applied identically on every client, so it needs no separate musical mutation.
+func (world *Client) reseatWaterFloats() {
+	if world.TerrainEditor == nil {
+		return
+	}
+	for design, ids := range world.design_to_entity {
+		uri, ok := world.design_to_string[design]
+		if !ok || !isWaterFloatingPlacementCategory(designCategory(uri)) {
+			continue
+		}
+		for _, id := range ids {
+			node, ok := id.Instance()
+			if !ok {
+				continue
+			}
+			pos := node.Position()
+			pos.Y = world.TerrainEditor.WaterSurfaceAt(Vector3.New(pos.X, 0, pos.Z))
+			node.SetPosition(pos)
+		}
+	}
+}
+
+// markIfTerrainPlacement tags node with terrainPlacementGroup when its design is a
+// single-placement terrain category (iceberg/plateau/opening/residue), so it stays
+// pickable + selectable in terrain mode (see isTerrainPlacement). Returns true when
+// tagged. The category is read from the design URI, so it applies identically on
+// local placement, remote peers, and load replay.
+func (world *Client) markIfTerrainPlacement(node Node3D.Instance, design musical.Design) bool {
+	uri, ok := world.design_to_string[design]
+	if !ok || !isTerrainPlacementCategory(designCategory(uri)) {
+		return false
+	}
+	node.AsNode().AddToGroup(terrainPlacementGroup)
+	return true
+}
+
+// refreshTerrainPlacementGizmos keeps the gizmo toolbar in sync with the terrain
+// editor's selection: while a single-placement terrain entity is selected it shows the
+// manage/placement gizmos (move/twist/float/duplicate/delete), like the scenery editor;
+// otherwise it restores the terrain editor's own brush gizmos. Transition-guarded
+// (terrainPlacementGizmos) so it only rebuilds the toolbar when the state actually
+// flips, not on every terrain click. No-op outside the terrain editor.
+func (world *Client) refreshTerrainPlacementGizmos() {
+	if world.Editing != Editing.Terrain || world.TerrainEditor == nil {
+		return
+	}
+	want := false
+	if raw, ok := world.selection.Instance(); ok {
+		if node, ok := Object.As[Node.Instance](raw); ok && isTerrainPlacement(node) {
+			want = true
+		}
+	}
+	if want == world.terrainPlacementGizmos {
+		return
+	}
+	world.terrainPlacementGizmos = want
+	if want {
+		world.SetGizmos(placementGizmos)
+	} else {
+		world.TerrainEditor.syncBrushSliders()
+	}
+}
+
 // reseatMobileEntities re-seats mobile dressing entities against the FINAL
 // composed terrain, so ground critters are terrain-relative on reload.
 //
@@ -1098,6 +1176,10 @@ func (world *Client) finishLoading() {
 		// height instead of near y=0 (the "lifted props are too high/low on
 		// reload" bug).
 		world.reseatFloats()
+		// Water-floating entities (icebergs) reconstructed their Y against the
+		// not-yet-final water surface during the deferred replay; re-seat them on the
+		// final surface so they sit at the right level (the water analogue of floats).
+		world.reseatWaterFloats()
 		// Mobile critters/vehicles record an absolute Y, so a cloud scene's
 		// non-causal terrain replay (another part's raise landing after the
 		// placement) can bury them. Lift any that ended up under the final
@@ -1359,8 +1441,12 @@ func (world *Client) Process(dt Float.X) {
 	// being buried rather than underwater.
 	if world.TerrainEditor != nil {
 		// Glide the water surface toward a changed level (ticks every frame, so a
-		// remote/undo change animates even outside the terrain editor).
-		world.TerrainEditor.processWaterRise(dt)
+		// remote/undo change animates even outside the terrain editor). When it
+		// moves, re-seat water-floating entities (icebergs) so they ride the surface
+		// (lilypad dressing is re-projected inside processWaterRise).
+		if world.TerrainEditor.processWaterRise(dt) {
+			world.reseatWaterFloats()
+		}
 		camNode := world.FocalPoint.Lens.Camera.AsNode3D()
 		camPos := camNode.GlobalPosition()
 		// Camera-terrain collision: stop the camera descending into the ground.
@@ -1385,6 +1471,14 @@ func (world *Client) Process(dt Float.X) {
 			}
 		}
 		if world.underwater != (ShaderMaterial.Instance{}) {
+			// Only run the underwater/waterline post-process while the camera is
+			// over a revealed (rendering) tile; out over the un-extended void there
+			// is no surface or bed to read against, so switch it off entirely.
+			enabled := 0.0
+			if world.TerrainEditor.tileRevealedAt(camPos) {
+				enabled = 1.0
+			}
+			world.underwater.SetShaderParameter("effect_enabled", enabled)
 			world.underwater.SetShaderParameter("water_level", float64(world.TerrainEditor.WaterSurfaceAt(camPos)))
 			world.underwater.SetShaderParameter("terrain_level", float64(world.TerrainEditor.HeightAt(camPos)))
 		}
@@ -1582,7 +1676,7 @@ func (world *Client) Process(dt Float.X) {
 	// Don't auto-engage while the middle button is held: you're actively orbiting
 	// the camera (incl. just after a middle-drag take-off), and grabbing the mouse
 	// mid-drag would toggle FPS in and out.
-	if grounded && !world.fpsMode && !world.fpsSuppressed && world.fpsEditor() && !Input.IsMouseButtonPressed(Input.MouseButtonMiddle) {
+	if grounded && !world.fpsMode && !world.fpsSuppressed && world.fpsEditor() && world.cameraOverRevealedTile() && !Input.IsMouseButtonPressed(Input.MouseButtonMiddle) {
 		world.enterFPS()
 	}
 	if Input.IsKeyPressed(Input.KeyQ) {
@@ -1658,6 +1752,18 @@ func (world *Client) cameraAltitude() Float.X {
 // turnYaw).
 func (world *Client) cameraGrounded() bool {
 	return world.cameraAltitude() <= avatarGroundAltitude
+}
+
+// cameraOverRevealedTile reports whether the camera eye sits above a revealed
+// (rendering) terrain tile rather than out over the empty, un-extended world.
+// Gates first-person ground mode (see Process) — there's no ground to stand on
+// over the void, so auto-engaging FPS there would drop you onto nothing.
+func (world *Client) cameraOverRevealedTile() bool {
+	if world.TerrainEditor == nil {
+		return false
+	}
+	eye := Viewport.Get(world.AsNode()).GetCamera3d().AsNode3D().GlobalPosition()
+	return world.TerrainEditor.tileRevealedAt(eye)
 }
 
 // turnYaw rotates the view's heading about vertical, around the rig's focal
@@ -1841,6 +1947,18 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	if !world.scroll_lock {
 		if mouse, ok := Object.As[InputEventMouseButton.Instance](event); ok {
 			switch {
+			case world.Editing == Editing.Terrain && world.TerrainEditor != nil &&
+				world.TerrainEditor.PlaceActive && Input.IsKeyPressed(Input.KeyShift):
+				// While placing a single entity, Shift+wheel rotates the ghost (like
+				// the scenery editor) instead of resizing the brush. updatePlacePreview
+				// only re-positions the ghost each frame, so the rotation persists and
+				// TryPlace commits it.
+				if mouse.ButtonIndex() == Input.MouseButtonWheelUp {
+					world.TerrainEditor.Preview.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, -Angle.Pi/64)
+				}
+				if mouse.ButtonIndex() == Input.MouseButtonWheelDown {
+					world.TerrainEditor.Preview.AsNode3D().Rotate(Vector3.XYZ{0, 1, 0}, Angle.Pi/64)
+				}
 			case Input.IsKeyPressed(Input.KeyShift) && world.Editing == Editing.Terrain:
 				// Shift+wheel resizes the terrain brush (and nudges the gizmo-
 				// toolbar size slider) instead of dollying the camera. WheelUp
@@ -1894,14 +2012,9 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
-				// While terrain editing the left button paints the ground
-				// (TerrainTile.InputEvent); don't let it select or gizmo-grab
-				// placed objects. This guard is required even though those
-				// objects are made non-pickable in terrain mode: that only
-				// gates Godot's viewport picking (the brush), whereas the
-				// selection query below is an explicit intersect_ray that
-				// ignores input_ray_pickable and would still hit them.
-				if world.Editing == Editing.Terrain {
+				// While a single-placement tool is armed, a left press drops an entity
+				// (handled in TerrainTile.InputEvent); don't also run object selection.
+				if world.Editing == Editing.Terrain && world.TerrainEditor != nil && world.TerrainEditor.PlaceActive {
 					break
 				}
 				cam := Viewport.Get(world.AsNode()).GetCamera3d()
@@ -1920,12 +2033,18 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 					}
 				}
 
-				// Normal raycast-based selection.
+				// Normal raycast-based selection. While terrain editing the left button
+				// paints the ground (TerrainTile.InputEvent), so ONLY single-placement
+				// terrain entities (iceberg/plateau/opening/residue) are selectable there
+				// — ordinary scenery stays paint-through. (The query is an explicit
+				// intersect_ray that ignores input_ray_pickable, so it would otherwise
+				// hit the non-pickable scenery too.) Every other editor selects anything
+				// with an owner.
 				didHitSelectable := false
 				if !Object.Is[*TerrainTile](intersect.Collider) {
 					if node, ok := Object.As[Node.Instance](intersect.Collider); ok {
 						owner := node.Owner()
-						if owner != Node.Nil {
+						if owner != Node.Nil && (world.Editing != Editing.Terrain || isTerrainPlacement(owner)) {
 							node = owner
 							world.selection = Node3D.ID(node.ID())
 							Select(node, true)
@@ -1961,6 +2080,14 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 						world.gizmoDrag.floatPlaneNormal = Vector3.Zero
 						world.gizmoDrag.floatStartGrabY = 0
 					}
+				}
+
+				// In the terrain editor, keep the gizmo toolbar in sync with the
+				// selection: show the manage/placement gizmos while a single-placement
+				// entity is selected, and the brush gizmos otherwise (transition-guarded
+				// so repeated paint clicks don't rebuild the toolbar).
+				if world.Editing == Editing.Terrain {
+					world.refreshTerrainPlacementGizmos()
 				}
 
 				// Arm gizmo drag (only for the editors we support right now).

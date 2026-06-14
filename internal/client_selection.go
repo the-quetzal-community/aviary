@@ -110,6 +110,9 @@ func (world *Client) DeleteSelection() bool {
 	world.gizmoDrag.floatPlanePoint = Vector3.Zero
 	world.gizmoDrag.floatPlaneNormal = Vector3.Zero
 	world.gizmoDrag.floatStartGrabY = 0
+	// Deleting a single-placement terrain entity leaves nothing selected, so
+	// restore the terrain editor's brush gizmos (no-op outside terrain).
+	world.refreshTerrainPlacementGizmos()
 	return true
 }
 

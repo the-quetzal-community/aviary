@@ -13,6 +13,11 @@ shader_type spatial;
 //                 * flat surface  -> downhill slope along flow (drives foam).
 //                 * cut-through wall -> heave weight: 1 on the top row (follows
 //                   the swell, welding to the plane), 0 on the bed row (pinned).
+//   UV.y        : cut-through WALL only -> the column's water-surface world-Y,
+//                 the same at the top and bed verts, so the wall colours by the
+//                 water COLUMN depth (UV.y - v_floor = surface - bed), uniform down
+//                 the slice and matching the flat plane at the waterline. The flat
+//                 plane's UV is unused (it fades by screen-space depth instead).
 //
 // DESIGN NOTES
 //   * Fine ripple detail comes from scrolling NORMAL MAPS (mip-filtered, so no
@@ -357,6 +362,20 @@ void fragment() {
 	float surf_z = -VERTEX.z;
 	float depth = max(scene_z - surf_z, 0.0);
 
+	// The cut-through side walls (v_side) sit just in front of the opaque terrain
+	// skirt, so the screen-space depth-to-background is ~0 over the WHOLE slice — it
+	// read as uniformly shallow/clear, a glassy "mirror". Colour them by the WATER
+	// COLUMN depth instead (surface minus bed: UV.y carries the column's surface
+	// world-Y, v_floor its bed — both constant down the wall), NOT a vertical
+	// gradient: a deep column is then uniformly dark and a shallow one light, and
+	// the wall MATCHES the flat plane's colour at the shared waterline. (A
+	// top-to-bed gradient left the wall's top edge pale where it met the dark
+	// deep-water plane — the colour mismatch at the top.) The flat plane ignores UV
+	// and keeps its screen-space depth.
+	if (v_side > 0.5) {
+		depth = max(UV.y - v_floor, 0.0);
+	}
+
 	// --- Shallow-water calming from the heightfield (stable, per-vertex) ----
 	float column = max(v_surface - v_floor, 0.0);
 	float calm = (shallow_calm > 0.0001) ? clamp(column / shallow_calm, 0.0, 1.0) : 1.0;
@@ -365,7 +384,12 @@ void fragment() {
 	float fade = clamp(1.0 - exp(-depth_fade * depth), 0.0, 1.0);
 	vec3 dye = mix(color_shallow.rgb, color_deep.rgb, fade);
 
-	vec2 ruv = SCREEN_UV + perturb * refraction * calm;
+	// No refraction offset on the cut-through walls (1 - v_side): `perturb` comes from
+	// the XZ-keyed ripple, which is constant down a vertical face, so it smears the
+	// scene BEHIND the wall into vertical streaks — the noisy overlay seen on a fish
+	// viewed THROUGH a side wall. Sample straight there (the nmap is likewise
+	// flattened on walls below, so this just finishes the "clean water slice").
+	vec2 ruv = SCREEN_UV + perturb * refraction * calm * (1.0 - v_side);
 	vec3 behind = texture(screen_texture, ruv).rgb;
 	vec3 col = mix(behind, dye, clamp(fade + 0.25, 0.0, 1.0));
 
@@ -380,7 +404,14 @@ void fragment() {
 	//     a hard, opaque sheet on flat rivers).
 	float f0 = flow_sample(foam_sampler, buv * foam_scale + distort * 2.0, adv_foam * foam_scale, phase, vec3(0.5)).r;
 
-	float shore = 1.0 - smoothstep(0.0, foam_edge, depth);
+	// Shoreline foam keys off the TERRAIN water column (surface - bed), NOT the
+	// screen-space `depth` (distance to whatever's behind the water). The latter
+	// shrinks wherever ANY geometry sits close under the surface, so a fish or placed
+	// object swimming near the top sprouted a bright white foam halo — the shader
+	// couldn't tell the seabed/bank from an undersea object. `column` is the real
+	// heightfield water depth, so foam appears only where the water is genuinely
+	// shallow over the ground.
+	float shore = 1.0 - smoothstep(0.0, foam_edge, column);
 	float shore_foam = shore * mix(0.65, 1.0, f0) * foam_amount;
 
 	// Second octave at a different scale/phase so the streaks don't visibly tile;

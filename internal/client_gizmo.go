@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PhysicsRayQueryParameters3D"
 	"graphics.gd/classdb/Viewport"
@@ -57,6 +58,18 @@ func (world *Client) canUseGizmoManipulation() bool {
 	// schema migration.
 	if world.Editing == Editing.Scenery {
 		return true
+	}
+	// Single-placement terrain entities (iceberg/plateau/opening/residue) are
+	// gizmo-movable in the terrain editor — the carve-out to "objects are
+	// paint-through in terrain mode". They live in the global entity map like
+	// scenery, so the manipulation path (selectedEntityForGizmo) works the same.
+	if world.Editing == Editing.Terrain {
+		if raw, ok := world.selection.Instance(); ok {
+			if node, ok := Object.As[Node.Instance](raw); ok && isTerrainPlacement(node) {
+				return true
+			}
+		}
+		return false
 	}
 	if ed, ok := world.ui.Editor.editor.(ClickableEditor); ok {
 		return ed.GizmoManipulable()
