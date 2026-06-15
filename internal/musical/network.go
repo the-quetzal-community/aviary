@@ -169,11 +169,17 @@ func (srv server) run() {
 	defer func() {
 		store.Close()
 	}()
-	mus3, err := newStorage(store, 0, Compose(&tracker, srv.replica))
+	mus3, loaded, err := newStorage(store, 0, Compose(&tracker, srv.replica))
 	if err != nil {
 		srv.reports.ReportError(xray.New(err))
 		return
 	}
+	// Seed the catch-up counter with the true number of records on disk, not the
+	// counter's Commit-filtered tally: legacy-format parts decode Commit=false,
+	// so the tally undercounts and a joining peer's catch-up stream (limited to
+	// tracker.value) would be truncated mid-scene. Live edits after this keep the
+	// counter exact (they are new-format, so Commit is reliable).
+	tracker.value = uint64(loaded)
 	if err := srv.replica.Member(Member{
 		Record: current,
 		Number: tracker.value,
@@ -232,11 +238,12 @@ func (srv server) run() {
 				srv.reports.ReportError(xray.New(err))
 				return
 			}
-			mus3, err = newStorage(store, 0, Compose(&tracker, srv.replica))
+			mus3, loaded, err = newStorage(store, 0, Compose(&tracker, srv.replica))
 			if err != nil {
 				srv.reports.ReportError(xray.New(err))
 				return
 			}
+			tracker.value = uint64(loaded) // true on-disk record count (see initial load)
 		case req := <-srv.request:
 			switch v := req.(type) {
 			case Member:
@@ -271,7 +278,7 @@ func (srv server) handle(author Author, network Networking, current WorkID, catc
 			return
 		}
 		defer file.Close()
-		if _, err := newStorage(file, int(catchup), client{network}); err != nil {
+		if _, _, err := newStorage(file, int(catchup), client{network}); err != nil {
 			srv.reports.ReportError(xray.New(err))
 			return
 		}

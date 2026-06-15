@@ -1,11 +1,17 @@
 package internal
 
 import (
+	"sync"
+
 	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/Node"
-	"graphics.gd/classdb/OS"
+	"graphics.gd/classdb/RDTextureFormat"
+	"graphics.gd/classdb/RDTextureView"
+	"graphics.gd/classdb/Rendering"
+	"graphics.gd/classdb/RenderingDevice"
 	"graphics.gd/classdb/RenderingServer"
 	"graphics.gd/classdb/Viewport"
+	"graphics.gd/variant/RID"
 	"the.quetzal.community/aviary/internal/clouds"
 )
 
@@ -145,6 +151,16 @@ func (q GraphicsQuality) ssaoQuality() RenderingServer.EnvironmentSSAOQuality {
 func (q GraphicsQuality) cloudMode() clouds.Mode {
 	switch q {
 	case QualityHighest:
+		// The SunshineClouds2 clouds are a CompositorEffect, which only runs under
+		// the Forward+ renderer. On Mobile/Compatibility it can't attach at all —
+		// and because ModeSunshine disables the painted sky clouds (cloud_steps=-1)
+		// that would leave an empty sky. Fall back to the sky-shader march, which
+		// renders on any renderer, so Highest still shows clouds. (Within Forward+,
+		// the separate MSAA-capability gate in Apply keeps the effect itself working
+		// — see msaaCloudStorageSupported.)
+		if RenderingServer.GetCurrentRenderingMethod() != "forward_plus" {
+			return clouds.ModeSkyMarch
+		}
 		return clouds.ModeSunshine
 	case QualityRefined:
 		return clouds.ModeFogVolume
@@ -182,6 +198,52 @@ func (q GraphicsQuality) reflectionStrength() float64 {
 	return 0.0
 }
 
+// msaaCloudStorageSupported reports whether this GPU/driver can create a writable
+// MULTISAMPLED storage image — the resource SunshineClouds2's MSAA code path
+// allocates (a 4-sample color format with the STORAGE bit; SunshineClouds.gd).
+// Metal can't, and many Windows/Vulkan setups can't either (Vulkan's
+// storageImageSampleCounts is commonly 1× unless the optional
+// shaderStorageImageMultisample feature is enabled). Where it can't, that texture
+// comes back invalid and the whole cloud effect renders NOTHING — and because the
+// Highest tier disables the painted sky clouds, the sky goes empty. So the Highest
+// tier must drop MSAA (and use the effect's non-MSAA path) wherever this fails.
+//
+// Probed once with a throwaway 4×4 texture — the result is a fixed hardware/driver
+// capability that can't change at runtime. A negative probe logs one
+// RenderingDevice texture_create error at startup; that's expected and is exactly
+// the signal we act on. TextureIsFormatSupportedForUsage can't be used here: it
+// ignores sample count, so it reports support for the single-sampled format even
+// where the multisampled one fails.
+var (
+	msaaCloudOnce sync.Once
+	msaaCloudOK   bool
+)
+
+func msaaCloudStorageSupported() bool {
+	msaaCloudOnce.Do(func() {
+		rd := RenderingServer.GetRenderingDevice()
+		if rd == RenderingDevice.Nil {
+			return // Compatibility renderer: no compositor at all (handled by cloudMode).
+		}
+		format := RDTextureFormat.New()
+		format.SetFormat(Rendering.DataFormatR16g16b16a16Sfloat)
+		format.SetWidth(4)
+		format.SetHeight(4)
+		format.SetDepth(1)
+		format.SetArrayLayers(1)
+		format.SetMipmaps(1)
+		format.SetTextureType(Rendering.TextureType2d)
+		format.SetSamples(Rendering.TextureSamples4)
+		format.SetUsageBits(Rendering.TextureUsageStorageBit | Rendering.TextureUsageSamplingBit)
+		rid := rd.TextureCreate(format, RDTextureView.New())
+		if RID.Any(rid) != 0 {
+			msaaCloudOK = true
+			rd.FreeRid(RID.Any(rid))
+		}
+	})
+	return msaaCloudOK
+}
+
 // Apply pushes this quality level into the live renderer. The Viewport
 // settings (MSAA / screen-space AA / TAA) are per-viewport, resolved
 // from any node in the tree; the shadow-filter quality and atlas size
@@ -205,20 +267,23 @@ func (q GraphicsQuality) Apply(anyNode Node.Instance) {
 			vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
 			vp.SetUseTaa(false)
 		default: // QualityHighest
-			// SunshineClouds2 (the Highest-tier compositor clouds) writes to a
-			// multisampled storage image on its MSAA code path, which Metal/macOS
-			// does not support (no writable MS textures) — so the cloud effect
-			// produces nothing on Mac whenever the viewport is MSAA. Vulkan
-			// (Windows/Linux) supports it, so keep 4× MSAA there; on macOS fall back
-			// to FXAA so the Metal-safe non-MSAA cloud path runs and clouds appear.
-			// (Trade-off: Mac loses MSAA edge AA at Highest, incl. grass
-			// alpha-to-coverage, which degrades to a hard scissor.)
-			if OS.GetName() == "macOS" {
-				vp.SetMsaa3d(Viewport.MsaaDisabled)
-				vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaFxaa)
-			} else {
+			// SunshineClouds2 (the Highest-tier compositor clouds) allocates a
+			// writable multisampled storage image on its MSAA code path. Where the
+			// GPU/driver can't create one — Metal/macOS, and many Windows/Vulkan
+			// setups (storageImageSampleCounts is often 1×) — that texture is invalid
+			// and the effect renders NOTHING; since Highest also disables the painted
+			// sky clouds, the sky goes empty. So keep 4× MSAA only when a multisampled
+			// storage image is actually creatable; otherwise fall back to FXAA so the
+			// effect's non-MSAA path runs and clouds appear. (Trade-off there: no MSAA
+			// edge AA at Highest, incl. grass alpha-to-coverage → hard scissor.) This
+			// replaces the old macOS-only gate, which missed Windows GPUs that hit the
+			// same wall — see msaaCloudStorageSupported.
+			if msaaCloudStorageSupported() {
 				vp.SetMsaa3d(Viewport.Msaa4x)
 				vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaDisabled)
+			} else {
+				vp.SetMsaa3d(Viewport.MsaaDisabled)
+				vp.SetScreenSpaceAa(Viewport.ScreenSpaceAaFxaa)
 			}
 			vp.SetUseTaa(false)
 		}

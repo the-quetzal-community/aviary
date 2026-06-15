@@ -26,7 +26,14 @@ const MagicHeader = "the.quetzal.community/musical.Users3DScene@v0.1"
 //
 // Note: only instructions with their 'Commit' field set to true
 // will be written to the [io.ReadWriteSeeker].
-func newStorage(mus3 fs.File, limit int, client UsersSpace3D) (UsersSpace3D, error) {
+// newStorage decodes the work and returns the UsersSpace3D plus the number of
+// records it actually read from the file. That record count — not a
+// Commit-filtered tally — is what the catch-up stream a joiner receives must be
+// limited to: every record on disk is a persisted mutation, and legacy-format
+// parts decode with Commit=false (the bool-bit collision repaired heuristically
+// in decode), so counting only committed records undercounts and truncates the
+// catch-up. See [server.run]'s use of the returned count.
+func newStorage(mus3 fs.File, limit int, client UsersSpace3D) (UsersSpace3D, int, error) {
 	var store = storage{reader: mus3, client: client}
 	w, writable := mus3.(io.Writer)
 	if writable {
@@ -37,27 +44,27 @@ func newStorage(mus3 fs.File, limit int, client UsersSpace3D) (UsersSpace3D, err
 
 	stat, err := mus3.Stat()
 	if err != nil {
-		return nil, xray.New(err)
+		return nil, 0, xray.New(err)
 	}
 
 	var header [len(MagicHeader)]byte
 	if _, err := io.ReadFull(store.reader, header[:]); err != nil && !errors.Is(err, io.EOF) {
-		return nil, xray.New(err)
+		return nil, 0, xray.New(err)
 	} else if err == nil {
 		if string(header[:]) != MagicHeader {
-			return nil, xray.New(errors.New("invalid musical.Users3DScene file"))
+			return nil, 0, xray.New(errors.New("invalid musical.Users3DScene file"))
 		}
 	}
 	n, err := store.decode(limit)
 	if err != nil {
-		return nil, xray.New(err)
+		return nil, 0, xray.New(err)
 	}
 	if stat.Size() == 0 && n == 0 && writable {
 		if _, err := w.Write([]byte(MagicHeader)); err != nil {
-			return nil, xray.New(err)
+			return nil, 0, xray.New(err)
 		}
 	}
-	return store, nil
+	return store, n, nil
 }
 
 type storage struct {

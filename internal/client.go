@@ -341,6 +341,10 @@ type Client struct {
 	// processLoading / finishLoading).
 	loading        bool
 	loadingOverlay *SceneLoader
+	// finishedLoading is set once finishLoading completes, so ExitTree knows the
+	// camera rig holds a real user view worth persisting (vs the default/just-
+	// restored pose mid-load, which it must not write over the saved one).
+	finishedLoading bool
 	// loadProgressArmed gates the byte-counting file wrapper to the FIRST
 	// Storage.Open (the initial replay); later Opens serve joining peers
 	// (musical server srv.handle) and must not reset the bar.
@@ -455,6 +459,9 @@ func NewClient() *Client {
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
+	// Restore the persisted avatar choice; Process registers it as an observable
+	// Design and broadcasts it in the next LookAt (avatar stays zero until then).
+	client.avatarResource = UserState.Avatar
 	var save = false
 	if UserState.Secret == "" {
 		UserState.Secret = uuid.NewString()
@@ -528,6 +535,12 @@ var UserState struct {
 	// authors publishing under a hidden license are filtered out of the
 	// design explorer. Empty means everything is shown.
 	HiddenLicenses []string
+
+	// Avatar is the library URI (res://library/everything/avatar/x.glb) the
+	// player last chose in the flight planner's avatar switcher. Restored into
+	// Client.avatarResource on startup so the choice survives restarts; empty
+	// means the player never picked one and peers see defaultAvatarURI.
+	Avatar string
 }
 
 // UserDataDir is the value of OS.GetUserDataDir() captured once early on the
@@ -1195,14 +1208,39 @@ func (world *Client) finishLoading() {
 		// beginLoading); it logs its own markers when it actually folds.
 		world.CritterEditor.flushCritterReplay()
 	}
+	// Restore the camera to the pose saved next to this scene's snap (written on
+	// Ctrl+S), so reopening a world returns you to where you left off. No saved
+	// view ⇒ keep the default framing; XR drives its own camera, so skip it.
+	if !world.xr {
+		if v, err := readSceneView(world.record); err == nil {
+			world.applySceneView(v)
+		}
+	}
 	Viewport.Get(world.AsNode()).SetDisable3d(false)
 	if world.loadingOverlay != nil {
 		world.loadingOverlay.AsNode().QueueFree()
 		world.loadingOverlay = nil
 	}
+	world.finishedLoading = true
 	profMark("finishLoading: splash down, 3D re-enabled — world fully built")
 	stopLoadCPUProfile()
 	reportLoadProfile(world.loadEnqueued.Load(), world.loadDequeued.Load())
+}
+
+// ExitTree captures the camera pose as this scene's tree is torn down — on a
+// scene switch (replaceSceneTree QueueFrees the outgoing Client) and on quit
+// (SceneTree.Quit), the two ways you leave a scene — so reopening it restores
+// the view even without an explicit Ctrl+S. Gated on finishedLoading so a
+// mid-load teardown (rig still at its default/just-restored pose) can't clobber
+// the saved view; XR drives its own camera. captureSceneView reads node-LOCAL
+// transforms, which stay valid as the node leaves the tree. Best-effort: a
+// failed write just means the view isn't restored next time, and Engine.Raise
+// during shutdown would spam the engine's exit-time leak check.
+func (world *Client) ExitTree() {
+	if world.xr || !world.finishedLoading {
+		return
+	}
+	_ = writeSceneView(world.record, world.captureSceneView())
 }
 
 // processLoading fast-drains the replay queue under the splash. It applies as
@@ -2233,6 +2271,13 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		}
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyS && Input.IsKeyPressed(Input.KeyCtrl) && !event.AsInputEvent().IsEcho() {
 			AnimateTheSceneBeingSaved(world, world.record)
+			// Persist the camera pose next to the snap (user://snaps/<work>.json) so
+			// reopening this scene restores the view. XR drives its own camera.
+			if !world.xr {
+				if err := writeSceneView(world.record, world.captureSceneView()); err != nil {
+					Engine.Raise(err)
+				}
+			}
 			go func() {
 				name := base64.RawURLEncoding.EncodeToString(world.record[:])
 				file, err := os.Open(UserDataDir + "/snaps/" + name + ".png")

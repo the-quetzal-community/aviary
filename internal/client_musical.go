@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -114,19 +113,14 @@ func (world musicalImpl) Open(space musical.WorkID) (fs.File, error) {
 }
 
 func (world musicalImpl) openStorage(space musical.WorkID) (fs.File, error) {
-	name := base64.RawURLEncoding.EncodeToString(space[:])
-	if UserState.Aviary.TogetherUntil.After(time.Now()) {
-		fmt.Println("opening cloud save for", name)
-		return OpenCloud(world.signalling, space)
+	// Both modes load EVERY locally-cached part of the work (see OpenCloud); the
+	// only difference is whether the cloud's part list is consulted and whether
+	// committed edits upload. That happens only inside a "together" session.
+	cloud := UserState.Aviary.TogetherUntil.After(time.Now())
+	if cloud {
+		fmt.Println("opening cloud save for", base64.RawURLEncoding.EncodeToString(space[:]))
 	}
-	if err := os.MkdirAll(UserDataDir+"/saves/"+name, 0777); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(UserDataDir+"/saves/"+name+"/"+UserState.Device+".mus3", os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		return nil, err
-	}
-	return file, nil
+	return OpenCloud(world.signalling, space, cloud)
 }
 
 // trackLoadProgress wraps the initial-replay .mus3 file so the loading screen

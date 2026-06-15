@@ -117,7 +117,13 @@ func (fl *FlightPlanner) buildAvatarSwitcher() {
 	fl.AvatarButton = TextureButton.New().
 		SetIgnoreTextureSize(true).
 		SetStretchMode(TextureButton.StretchKeepAspectCentered)
-	fl.AvatarButton.SetTextureNormal(LoadSync[Texture2D.Instance](avatarPreviewURI(defaultAvatarURI)))
+	// Show the persisted avatar's preview (falling back to the default when the
+	// player has never picked one) so the button matches the restored choice.
+	avatarPreview := defaultAvatarURI
+	if UserState.Avatar != "" {
+		avatarPreview = UserState.Avatar
+	}
+	fl.AvatarButton.SetTextureNormal(LoadSync[Texture2D.Instance](avatarPreviewURI(avatarPreview)))
 	fl.AvatarButton.AsControl().SetCustomMinimumSize(Vector2.New(0, 140))
 	fl.AvatarButton.AsControl().SetSizeFlagsHorizontal(Control.SizeExpandFill)
 	fl.AvatarButton.AsControl().SetTooltipText("Choose your avatar")
@@ -202,6 +208,10 @@ func (fl *FlightPlanner) pickAvatar(resource, previewPath string) {
 	fl.client.avatarResource = resource
 	fl.client.avatar = musical.Design{}
 	fl.AvatarButton.SetTextureNormal(LoadSync[Texture2D.Instance](previewPath))
+	// Persist the choice so it survives restarts (restored into avatarResource in
+	// NewClient). UserState single-owns the value; this is the only writer.
+	UserState.Avatar = resource
+	fl.client.saveUserState()
 	fl.showMaps()
 }
 

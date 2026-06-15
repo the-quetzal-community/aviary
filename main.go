@@ -57,6 +57,11 @@ func main() {
 		startup.Scene()
 		return
 	}
+	// Keep the 4K default window from overflowing a smaller display (off-screen
+	// top panel / taskbar overlap). Desktop only — web has no OS window/taskbar.
+	if runtime.GOOS != "js" {
+		internal.FitWindowToScreen()
+	}
 	community_resource_loader := internal.NewCommunityResourceLoader().AsResourceFormatLoader()
 	ResourceLoader.AddResourceFormatLoader(community_resource_loader, true)
 	defer ResourceLoader.RemoveResourceFormatLoader(community_resource_loader)
