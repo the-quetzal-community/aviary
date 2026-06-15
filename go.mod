@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v4 v4.2.12
-	github.com/quaadgras/velopack-go v0.0.1358
+	github.com/quaadgras/velopack-go v0.0.1359-0.20251207061729-389ec7617faf
 	graphics.gd v0.0.0-20260613141922-d663643ba445
 	runtime.link v0.0.0-20260508003125-87c69e9c5b23
 )
@@ -25,9 +25,7 @@ require (
 	github.com/pion/sdp/v3 v3.0.18 // indirect
 	github.com/pion/srtp/v3 v3.0.10 // indirect
 	github.com/pion/stun/v3 v3.1.2 // indirect
-	github.com/pion/transport/v3 v3.1.1 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/pion/turn/v4 v4.1.4 // indirect
 	github.com/pion/turn/v5 v5.0.4 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
