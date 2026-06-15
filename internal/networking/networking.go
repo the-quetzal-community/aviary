@@ -332,9 +332,21 @@ func (c *Connectivity) Join(code Code, updates chan<- []byte) error {
 // after a while": previously the timer could fire mid-handshake (e.g. when a
 // long-idle host's offer had aged near the timeout just as someone joined and
 // the scene was still loading), delete the session, and strand the answer.
+//
+// offerGrace also sets the *worst-case* budget a joiner has to get its first
+// signalling message back to us: the signalling server hands out the latest
+// parked offer, so a joiner can pick one up when it is already nearly offerTimeout
+// old, leaving only offerGrace before the peer is reclaimed. A slow scene load or
+// slow network on the joiner can easily exceed a tight grace, stranding the answer
+// and producing "received candidate for unknown session ID" once the late
+// candidates arrive — hence the grace is generous. The only cost of the longer
+// window is a half-open peer kept alive a little longer for a joiner that bailed,
+// and a parked offer refreshed less often (its gathered ICE candidates could in
+// principle go stale if the host's network changes, but that is rare over minutes
+// for a host sitting and waiting for a friend).
 const (
-	offerTimeout = 30 * time.Second
-	offerGrace   = 10 * time.Second
+	offerTimeout = 2 * time.Minute
+	offerGrace   = 45 * time.Second
 )
 
 func (c *Connectivity) addPeers(sock *websocket.Conn) {

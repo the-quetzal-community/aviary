@@ -306,11 +306,23 @@ func (cr *cloudReader) Read(p []byte) (n int, err error) {
 			}
 			cr.open = true
 		} else {
-			local, err := os.OpenFile(UserDataDir+"/saves/"+string(cr.work)+"/"+string(cr.part)+".mus3", os.O_RDONLY, 0666)
+			// Already cached and fresh: serve the local copy, but strip its
+			// on-disk magic header first (localPartReader does this and
+			// self-closes on EOF). Without the strip the decoder reads the
+			// leading 't' of "the.quetzal..." (0x74 = 116) as an entry type
+			// and fails the entire load with "unknown entry type 116" — every
+			// other part reader (the network branch above, localPartReader,
+			// and the local device part in OpenCloud) strips its header, so
+			// this branch was the only one leaking it into the concatenated
+			// stream. Reusing localPartReader also sets a real closer here:
+			// the old branch left cr.shut nil, so the cr.shut() call on EOF
+			// below would have nil-panicked.
+			r, err := localPartReader(UserDataDir + "/saves/" + string(cr.work) + "/" + string(cr.part) + ".mus3")
 			if err != nil {
 				return 0, err
 			}
-			cr.read = local
+			cr.read = r
+			cr.shut = func() {} // localPartReader's reader self-closes on EOF
 			cr.open = true
 		}
 	}
