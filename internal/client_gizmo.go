@@ -36,6 +36,28 @@ func (world *Client) stampRouting(ch *musical.Change) {
 	}
 }
 
+// applyOwnGizmoPreview drives the dragged node to a preview Change's transform
+// immediately and locally, so a gizmo drag feels instant instead of trailing the
+// Commit=false round-trip + 0.1s preview tween (a full server hop in multiplayer).
+// musicalImpl.Change skips the author's own echo of this Change while a scenery
+// gizmo drag is active, so this is the sole local driver during the drag —
+// mirroring how a GizmoEnter possession drives its node directly. It replicates
+// the receive path's apply exactly: reconstruct a scenery "float" Y from its
+// terrain-relative delta, then snap position/rotation (and scale, if the Change
+// carries one). Scenery only — vehicle/shelter/critter route to specialised
+// Change handlers whose echo isn't skipped, so direct-driving them would double up.
+func (world *Client) applyOwnGizmoPreview(node Node3D.Instance, ch musical.Change) {
+	pos := ch.Offset
+	if ch.Editor == "float" {
+		pos.Y = world.TerrainEditor.HeightAt(Vector3.New(pos.X, 0, pos.Z)) + ch.Offset.Y
+	}
+	node.AsNode3D().SetPosition(pos)
+	node.AsNode3D().SetRotation(ch.Angles)
+	if ch.Bounds != Vector3.Zero {
+		node.AsNode3D().SetScale(ch.Bounds)
+	}
+}
+
 // canUseGizmoManipulation reports whether the current global gizmo mode
 // (toolbar or hotkey) plus the active editor context allows gizmo-based
 // manipulation (translate via GizmoShift, lift via GizmoFloat, or
@@ -333,6 +355,9 @@ func (world *Client) updateGizmoDrag() {
 				Commit: false,
 			}
 			world.stampRouting(&scaleCh)
+			if world.Editing == Editing.Scenery {
+				world.applyOwnGizmoPreview(node, scaleCh)
+			}
 			_ = world.space.Change(scaleCh)
 		}
 		return // scale handled, skip translate/twist
@@ -387,6 +412,9 @@ func (world *Client) updateGizmoDrag() {
 				}
 			}
 
+			if world.Editing == Editing.Scenery {
+				world.applyOwnGizmoPreview(node, floatCh)
+			}
 			if err := world.space.Change(floatCh); err != nil {
 				_ = err
 			}
@@ -512,11 +540,17 @@ func (world *Client) updateGizmoDrag() {
 					}
 				}
 			}
+			if world.Editing == Editing.Scenery {
+				world.applyOwnGizmoPreview(node, twistCh)
+			}
 			_ = world.space.Change(twistCh)
 		}
 		return // twist handled, don't fall into the translation path
 	}
 
+	if world.Editing == Editing.Scenery {
+		world.applyOwnGizmoPreview(node, ch)
+	}
 	if err := world.space.Change(ch); err != nil {
 		// Non-fatal during drag.
 		_ = err

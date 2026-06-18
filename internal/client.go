@@ -311,6 +311,11 @@ type Client struct {
 	last_LookAt      musical.LookAt
 	last_lookAt_time time.Time
 
+	// pendingGesture is a one-shot animation intent (e.g. "attack") queued to
+	// ride the next outgoing LookAt, so peers play it on the body we're driving.
+	// Set when the possessed critter bites; cleared the moment a LookAt sends it.
+	pendingGesture string
+
 	last_PaintAt time.Time
 
 	authors map[musical.Author]Node3D.ID
@@ -319,6 +324,12 @@ type Client struct {
 	// author, so a peer switching avatar mid-session (its LookAt.Design changes)
 	// re-instantiates the model instead of just tweening the old one.
 	author_designs map[musical.Author]musical.Design
+
+	// possessing_entity records, per remote author, the entity they are currently
+	// driving via GizmoEnter possession — captured from their Commit=false move
+	// broadcasts — so an observed LookAt gesture (an attack/bite) plays on the
+	// possessed critter rather than their floating avatar.
+	possessing_entity map[musical.Author]musical.Entity
 
 	// avatar is the local player's chosen avatar design, broadcast in every
 	// LookAt so peers render us as this model. Zero until the player picks one in
@@ -450,9 +461,10 @@ func NewClient() *Client {
 			loaded:             make(map[string]musical.Design),
 			missing_scenes:     make(map[musical.Design]bool),
 		},
-		clients:        make(chan musical.Networking),
-		authors:        make(map[musical.Author]Node3D.ID),
-		author_designs: make(map[musical.Author]musical.Design),
+		clients:           make(chan musical.Networking),
+		authors:           make(map[musical.Author]Node3D.ID),
+		author_designs:    make(map[musical.Author]musical.Design),
+		possessing_entity: make(map[musical.Author]musical.Entity),
 
 		load_last_save: true,
 		queue:          make(chan func(), queueCapFromEnv()),
@@ -1576,12 +1588,17 @@ func (world *Client) Process(dt Float.X) {
 			Angles: angles,
 			Author: world.id,
 			Design: world.avatar,
+			// A queued one-shot gesture (the possessed critter's bite) rides this
+			// LookAt so peers play it; it forces a send below even when we're stock
+			// still, then clears so it fires exactly once.
+			Action: world.pendingGesture,
 			Timing: world.time.Now(),
 		}
-		if world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || world.last_LookAt.Design != view.Design || !world.joining {
+		if world.pendingGesture != "" || world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || world.last_LookAt.Design != view.Design || !world.joining {
 			world.space.LookAt(view)
 			world.last_LookAt = view
 			world.last_lookAt_time = time.Now()
+			world.pendingGesture = ""
 		}
 	}
 

@@ -44,6 +44,12 @@ var critterClipKeywords = map[string][]string{
 	// hasJumpClip gates the spacebar leap on a real match (never the idle
 	// fallback), so a critter with no jump animation simply can't jump.
 	"jump": {"jump", "leap", "hop"},
+	// "attack" is the left-click one-shot while possessing — a bite/strike. Like
+	// jump it's gated on a real clip (hasAttackClip), so a model with no attack
+	// animation simply can't attack. "bite"/"attack" lead; "hit" is last because
+	// in the everything pack it's an offensive clip (paired with "Bite") rather
+	// than a damage recoil.
+	"attack": {"attack", "bite", "chomp", "peck", "claw", "headbutt", "gore", "kick", "hit"},
 	// Swimmers (the everything "swimmer" fish/marine rig) carry a distinct
 	// vocabulary — "Swim Horizontal", "Swim Vertical", "Idle", "Dead Floating"
 	// (plus "Bite"/"Hit"). The two swim clips are picked by the dominant motion
@@ -68,6 +74,15 @@ const (
 )
 
 func resolveCritterClip(player AnimationPlayer.Instance, intent string) (string, bool) {
+	// The possess-mode sprint ("run", Shift) is the WALK clip played faster
+	// (critterClipSpeed scales it by possessRunMultiplier). It must bind to the
+	// walk clip, never a model's dedicated "Run" clip: that clip's authored
+	// cadence is unknown to critterAnimSpeed (which is calibrated against the walk
+	// stride), so scaling it up makes the legs whirl out of proportion to the
+	// doubled ground speed. Resolve as walk; only the playback speed differs.
+	if intent == "run" {
+		intent = "walk"
+	}
 	names := player.AsAnimationMixer().GetAnimationList()
 	// Fast path: a model already using the canonical name.
 	for _, n := range names {
@@ -181,13 +196,18 @@ const (
 )
 
 // critterClipSpeed is the playback speed for a clip of the given intent: the
-// size-corrected walk speed for "walk", and 1 (authored speed) for idle or
-// anything else. Only locomotion needs its cadence matched to the ground speed;
-// scaling idle made small critters fidget too fast and large ones too slow.
+// size-corrected walk speed for "walk", that same speed scaled up for the
+// possess-mode sprint "run", and 1 (authored speed) for idle or anything else.
+// Only locomotion needs its cadence matched to the ground speed; scaling idle
+// made small critters fidget too fast and large ones too slow.
 func critterClipSpeed(node Node.Instance, intent string) Float.X {
 	switch intent {
 	case "walk":
 		return critterAnimSpeed(node)
+	case "run":
+		// Same stride-matched cadence as walk, scaled by the run boost so the legs
+		// keep pace with the faster ground speed (see possessRunMultiplier).
+		return critterAnimSpeed(node) * Float.X(possessRunMultiplier)
 	case "idle":
 		return critterIdleSpeed(node)
 	default:
@@ -237,14 +257,28 @@ func playCritterClip(node Node3D.Instance, player AnimationPlayer.Instance, inte
 	// The death pose (a swimmer stranded out of water) plays once and HOLDS its
 	// last frame — a frozen belly-up "Dead Floating" — rather than looping. The
 	// callers that drive it (EntityAnimator) only re-issue a clip on an intent
-	// CHANGE, so a non-looping death clip stays settled on the dead pose. Every
-	// other clip loops.
+	// CHANGE, so a non-looping death clip stays settled on the dead pose. The
+	// attack is likewise a one-shot — it plays once and the caller (possession
+	// locally, the gestureHold on peers) switches back to locomotion when the
+	// clip's length elapses. Every other clip loops.
 	loop := Animation.LoopLinear
-	if intent == swimClipDeath {
+	if intent == swimClipDeath || intent == "attack" {
 		loop = Animation.LoopNone
 	}
 	player.AsAnimationMixer().GetAnimation(clip).SetLoopMode(loop)
 	player.SetSpeedScale(critterClipSpeed(node.AsNode(), intent))
 	player.SetPlaybackDefaultBlendTime(critterAnimBlend)
 	player.PlayNamed(clip)
+}
+
+// critterClipLength is the authored length (seconds) of the clip an intent
+// resolves to on this model, or 0 if none. Used to time a one-shot gesture so
+// locomotion resumes exactly when the clip ends (the attack plays at authored
+// speed, so no speed-scale correction is needed).
+func critterClipLength(player AnimationPlayer.Instance, intent string) Float.X {
+	clip, ok := resolveCritterClip(player, intent)
+	if !ok {
+		return 0
+	}
+	return Float.X(player.AsAnimationMixer().GetAnimation(clip).Length())
 }

@@ -29,12 +29,21 @@ type possessState struct {
 	entity         musical.Entity
 	player         AnimationPlayer.Instance
 	hasJump        bool   // the model carries a real jump clip (gates the leap)
+	hasAttack      bool   // the model carries a real bite/attack clip (gates the strike)
 	terrainWalking bool   // ground-walker (snap to terrain) vs air/water (keep Y)
 	swimmer        bool   // fish: mouse-aimed 3D swim, clamped to the water column
 	intent         string // current locomotion clip intent ("" until first set)
 
 	jumpActive bool
 	jumpTime   Float.X
+
+	// Left-click bite/attack one-shot: plays a non-looping clip for attackLength
+	// then re-picks locomotion. attackHeld debounces the button so a held click
+	// strikes once rather than every frame.
+	attackActive bool
+	attackHeld   bool
+	attackTime   Float.X
+	attackLength Float.X
 
 	lastSent time.Time // throttle for the Commit=false motion broadcast
 
@@ -54,6 +63,11 @@ const (
 	// (controlWalkSpeed / controlTurnRate) so the on-foot feel carries across.
 	possessWalkSpeed = float32(2.0)
 	possessTurnRate  = float32(2.5)
+	// possessRunMultiplier is the Shift-to-run boost. It scales BOTH the ground
+	// speed (here) and the walk-clip cadence (critterClipSpeed, intent "run") by
+	// the same factor, so the legs cycle in step with the faster travel and don't
+	// skate. Tuning the run feel means changing this one number.
+	possessRunMultiplier = float32(4.0)
 	// possessSendInterval throttles the Commit=false motion broadcast to peers
 	// (~10 Hz, like LookAt and the scenery placement preview).
 	possessSendInterval = time.Second / 10
@@ -112,6 +126,7 @@ func (world *Client) enterPossess() bool {
 		entity:         entity,
 		player:         player,
 		hasJump:        hasJumpClip(player),
+		hasAttack:      hasAttackClip(player),
 		terrainWalking: isTerrainWalkingCategory(category),
 		swimmer:        isSwimmerCategory(category),
 		startPos:       node.AsNode3D().Position(),
@@ -218,12 +233,20 @@ func (world *Client) updatePossess(dt Float.X) {
 	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
 		turn -= 1
 	}
+	// Shift sprints: faster ground travel, and (when actually advancing) the
+	// run-cadence locomotion clip below. Turn rate is left alone so a sprint
+	// still steers tightly.
+	running := Input.IsKeyPressed(Input.KeyShift)
+	speed := possessWalkSpeed
+	if running {
+		speed *= possessRunMultiplier
+	}
 	if turn != 0 {
 		body.Rotate(Vector3.New(0, 1, 0), Angle.Radians(turn*possessTurnRate*float32(dt)))
 	}
 	if forward != 0 {
 		// Models face +Z (see ActionRenderer.OrientModel), so +Z is forward.
-		body.Translate(Vector3.New(0, 0, Float.X(forward*possessWalkSpeed*float32(dt))))
+		body.Translate(Vector3.New(0, 0, Float.X(forward*speed*float32(dt))))
 	}
 
 	// Spacebar leaps — gated on a real jump clip and on no jump already in
@@ -243,6 +266,30 @@ func (world *Client) updatePossess(dt Float.X) {
 		}
 	}
 
+	// Left-click bites/attacks — a one-shot like the jump: gated on a real attack
+	// clip, on the press EDGE (a held button strikes once, not every frame), and on
+	// nothing else one-shot already playing. Queue it onto the next LookAt so peers
+	// play the bite on the critter we're driving (see playObservedGesture).
+	attackPressed := Input.IsMouseButtonPressed(Input.MouseButtonLeft)
+	if world.possess.hasAttack && attackPressed && !world.possess.attackHeld &&
+		!world.possess.attackActive && !world.possess.jumpActive {
+		world.possess.attackActive = true
+		world.possess.attackTime = 0
+		world.possess.attackLength = critterClipLength(world.possess.player, "attack")
+		playCritterClip(node, world.possess.player, "attack")
+		world.possess.intent = "attack"
+		world.pendingGesture = "attack"
+	}
+	world.possess.attackHeld = attackPressed
+	if world.possess.attackActive {
+		world.possess.attackTime += dt
+		if world.possess.attackTime >= world.possess.attackLength {
+			world.possess.attackActive = false
+			world.possess.attackTime = 0
+			world.possess.intent = "" // force a re-pick of walk/idle below
+		}
+	}
+
 	// Ground walkers ride the terrain surface; a jump arcs on top of it. Air /
 	// water movers (airship/seaship/swimmer) keep whatever Y they walked to.
 	if world.possess.terrainWalking {
@@ -255,11 +302,17 @@ func (world *Client) updatePossess(dt Float.X) {
 		body.SetPosition(pos)
 	}
 
-	// Locomotion clip (only while not mid-jump): walk when moving, else idle.
-	if !world.possess.jumpActive {
+	// Locomotion clip (only while no one-shot — jump or attack — is playing): run
+	// when sprinting forward, walk when moving, else idle. Run is gated on actual
+	// forward travel — a Shift-held turn-in-place stays a walk so the faster
+	// cadence has matching ground motion (no skating).
+	if !world.possess.jumpActive && !world.possess.attackActive {
 		want := "idle"
 		if forward != 0 || turn != 0 {
 			want = "walk"
+		}
+		if running && forward != 0 {
+			want = "run"
 		}
 		if want != world.possess.intent {
 			world.possess.intent = want
@@ -399,6 +452,22 @@ func hasJumpClip(player AnimationPlayer.Instance) bool {
 	for _, name := range player.AsAnimationMixer().GetAnimationList() {
 		lower := strings.ToLower(name)
 		for _, kw := range critterClipKeywords["jump"] {
+			if strings.Contains(lower, kw) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasAttackClip reports whether the model carries a bite/attack clip, so the
+// left-click strike only fires when there's a real animation to play (never the
+// idle fallback resolveCritterClip would otherwise substitute). Mirrors
+// hasJumpClip.
+func hasAttackClip(player AnimationPlayer.Instance) bool {
+	for _, name := range player.AsAnimationMixer().GetAnimationList() {
+		lower := strings.ToLower(name)
+		for _, kw := range critterClipKeywords["attack"] {
 			if strings.Contains(lower, kw) {
 				return true
 			}

@@ -42,11 +42,12 @@ type EntityAnimator struct {
 	terrainWalking bool
 	swimmer        bool // fish: reconstruct swim clips from 3D motion, die out of water
 
-	last     Vector3.XYZ
-	accum    Float.X
-	have     bool
-	intent   string  // current clip intent ("" forces a re-pick)
-	jumpHold Float.X // remaining time to let a reconstructed jump play out
+	last        Vector3.XYZ
+	accum       Float.X
+	have        bool
+	intent      string  // current clip intent ("" forces a re-pick)
+	jumpHold    Float.X // remaining time to let a reconstructed jump play out
+	gestureHold Float.X // remaining time to let a one-shot gesture (attack) play out
 }
 
 func (a *EntityAnimator) Ready() {
@@ -81,6 +82,15 @@ func (a *EntityAnimator) Process(delta Float.X) {
 	// pick isn't suppressed as a no-op change.
 	if a.client != nil && a.client.possess.active && a.client.possess.entity == a.entity {
 		a.intent = ""
+		return
+	}
+
+	// A one-shot gesture (an attack/bite the possessing peer triggered over
+	// LookAt) holds the clip for its length before walk/idle resumes — the
+	// networked counterpart to the local possessor's jump. Skip locomotion
+	// reconstruction while it plays so it isn't cut short by the motion below.
+	if a.gestureHold > 0 {
+		a.gestureHold -= sample
 		return
 	}
 
@@ -142,6 +152,20 @@ func (a *EntityAnimator) setIntent(intent string) {
 		return
 	}
 	a.intent = intent
+	playCritterClip(a.body, a.player, intent)
+}
+
+// PlayGesture plays a one-shot clip (an attack/bite a possessing peer broadcast
+// over LookAt) on this entity and holds it for the clip's length before
+// locomotion resumes. Blanks the cached intent so walk/idle is re-asserted
+// cleanly once the hold expires. No-op if the model carries no such clip.
+func (a *EntityAnimator) PlayGesture(intent string) {
+	dur := critterClipLength(a.player, intent)
+	if dur <= 0 {
+		return
+	}
+	a.gestureHold = dur
+	a.intent = ""
 	playCritterClip(a.body, a.player, intent)
 }
 

@@ -179,6 +179,7 @@ type LookAt struct {
 	Colour Color.RGBA    // colour of the author.
 	Editor string        // editor that is being used.
 	Timing Timing        // timing of the viewer.
+	Action string        // one-shot animation to play when observed (e.g. "attack"); appended last to stay backwards compatible.
 }
 
 type entryType uint8

@@ -391,6 +391,24 @@ func (world musicalImpl) Change(con musical.Change) error {
 		if !con.Commit && con.Author == world.id && world.possess.active && con.Entity == world.possess.entity {
 			return
 		}
+		// Same story for a scenery gizmo drag: updateGizmoDrag drives the node
+		// directly for instant local feedback, and its Commit=false broadcasts
+		// exist only so peers see the drag. Applying our own echo back would fight
+		// the direct drive with the 0.1s preview tween (and trail a full server
+		// round-trip behind in multiplayer). Skip it — the Commit=true on release
+		// still applies. (Vehicle/shelter/critter route to specialised handlers
+		// above and aren't direct-driven, so they're intentionally not skipped.)
+		if !con.Commit && con.Author == world.id && world.gizmoDrag.active &&
+			world.Editing == Editing.Scenery && con.Entity == world.gizmoDrag.entity {
+			return
+		}
+		// A peer's Commit=false move is them driving an entity directly (a
+		// GizmoEnter possession broadcast). Remember which entity each author is
+		// driving so an observed LookAt gesture (an attack/bite) plays on that
+		// critter rather than their floating avatar.
+		if !con.Commit && con.Author != world.id {
+			world.possessing_entity[con.Author] = con.Entity
+		}
 		if ok {
 			if con.Remove {
 				delete(world.entity_float_delta, con.Entity)
@@ -679,6 +697,12 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 		if view.Author == world.id {
 			return
 		}
+		// A one-shot gesture riding this LookAt (an attack/bite the peer triggered
+		// while possessing) plays on the body they're driving. Independent of the
+		// avatar bookkeeping below — the bite belongs to the possessed critter.
+		if view.Action != "" {
+			world.playObservedGesture(view.Author, view.Action)
+		}
 		// Snap the avatar onto the terrain when the camera is right down by the
 		// ground (so a grounded avatar's feet sit on the surface instead of
 		// floating at eye height); otherwise it floats at the camera position. The
@@ -715,4 +739,21 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 		world.author_designs[view.Author] = view.Design
 	})
 	return nil
+}
+
+// playObservedGesture plays a one-shot animation a peer broadcast over LookAt
+// (an attack/bite while possessing) on the entity that author is currently
+// driving — its EntityAnimator holds the clip for its length, then resumes
+// walk/idle. No-op if the author isn't driving a known entity or it carries no
+// EntityAnimator yet (the possession move that registers it hasn't replayed).
+func (world *Client) playObservedGesture(author musical.Author, intent string) {
+	entity, ok := world.possessing_entity[author]
+	if !ok {
+		return
+	}
+	node, ok := world.entity_to_object[entity].Instance()
+	if !ok || !node.AsNode().HasNode("EntityAnimator") {
+		return
+	}
+	Object.To[*EntityAnimator](node.AsNode().GetNode("EntityAnimator")).PlayGesture(intent)
 }
