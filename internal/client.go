@@ -1936,10 +1936,11 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			// direction. Pitch clamped (grounded=true) so you can't loop over.
 			world.turnYaw(-Angle.Radians(relative.X * 0.005))
 			world.lookPitch(-Angle.Radians(relative.Y*0.005), true)
-		case world.possess.active && world.possess.swimmer:
-			// Look-to-swim: captured mouse aims the chase cam, which is the 3D swim
-			// heading. Pitch clamped (like flight) so a fish can dive/rise steeply
-			// without somersaulting the camera.
+		case world.possess.active:
+			// Possession (first-person-style): captured mouse steers the chase cam,
+			// which is the entity's move/look heading — a ground walker faces and walks
+			// it, a fish swims along it (look-to-swim). Pitch clamped (like flight) so a
+			// steep dive/rise can't somersault the camera.
 			world.turnYaw(-Angle.Radians(relative.X * 0.005))
 			world.lookPitch(-Angle.Radians(relative.Y*0.005), true)
 		case world.fpsMode && middle:
@@ -2067,6 +2068,11 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 			}
 			switch {
 			case mouse.ButtonIndex() == Input.MouseButtonLeft && mouse.AsInputEvent().IsPressed(): // Select
+				// While possessing, a left-click is the attack gesture (polled in
+				// updatePossess), not object selection.
+				if world.possess.active {
+					break
+				}
 				// While a single-placement tool is armed, a left press drops an entity
 				// (handled in TerrainTile.InputEvent); don't also run object selection.
 				if world.Editing == Editing.Terrain && world.TerrainEditor != nil && world.TerrainEditor.PlaceActive {
@@ -2148,6 +2154,11 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				// Arm gizmo drag (only for the editors we support right now).
 				world.armGizmoDrag()
 			case mouse.ButtonIndex() == Input.MouseButtonRight && mouse.AsInputEvent().IsPressed(): // Action
+				// While possessing, a right-click is the bark gesture (polled in
+				// updatePossess), not a walk-here command.
+				if world.possess.active {
+					break
+				}
 				if world.TerrainEditor.CancelPaint() {
 					break
 				}
@@ -2275,6 +2286,13 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() &&
 			(event.Keycode() == Input.KeyEnter || event.Keycode() == Input.KeyKpEnter) {
 			world.toggleEnter()
+		}
+		// Escape backs out of possession (the same exit Enter would do), so the
+		// instinctive "get me out" key works while driving an entity. Only acts
+		// while possessing, leaving Escape free for everything else.
+		if event.AsInputEvent().IsPressed() && !event.AsInputEvent().IsEcho() &&
+			event.Keycode() == Input.KeyEscape && world.possess.active {
+			world.exitPossess()
 		}
 		if event.AsInputEvent().IsPressed() && event.Keycode() == Input.KeyF1 {
 			vp := Viewport.Get(world.AsNode())

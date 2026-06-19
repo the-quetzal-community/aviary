@@ -188,6 +188,15 @@ var first_run : bool = true
 var filter_index = 0
 
 var last_render_target : RID
+# AVIARY (Godot 4.7 / GH-115177 "unique environment uniform buffer per pass"):
+# the engine no longer keeps one stable scene-data UBO that every pass rewrites
+# each frame — each render pass now draws its own buffer from a pool, so
+# RenderSceneData.get_uniform_buffer() can return a different RID than the one our
+# cached uniform sets bound at build time. A stale scene buffer freezes the camera
+# transform the clouds ray-march from, so the clouds stop tracking the camera.
+# bound_scene_ubo records which buffer the cached sets currently bind; _render_callback
+# rebinds them (binding 17/8/2) whenever the live buffer differs.
+var bound_scene_ubo : RID = RID()
 var last_msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 var msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 
@@ -891,6 +900,19 @@ func _render_callback(effect_callback_type, render_data):
 
 				lights_updated = true
 
+				# AVIARY: the sets we just rebuilt bound this scene-data UBO; the per-frame
+				# check below only rebinds when 4.7 later hands us a different pooled buffer.
+				bound_scene_ubo = rendersceneData.get_uniform_buffer()
+
+			# AVIARY (Godot 4.7 / GH-115177): even when size/colour/MSAA are unchanged the
+			# pooled scene-data UBO can differ frame-to-frame from the one our cached sets
+			# bound. Rebind binding 17/8/2 to the live buffer so the clouds keep tracking the
+			# camera (cheap; leaves accumulation textures and pipelines intact).
+			var live_scene_ubo := rendersceneData.get_uniform_buffer()
+			if live_scene_ubo != bound_scene_ubo:
+				_rebind_scene_data(view_count, buffers, is_msaa_on, live_scene_ubo)
+				bound_scene_ubo = live_scene_ubo
+
 			var framebuffer := FramebufferCacheRD.get_cache_multipass([buffers.get_color_layer(0, is_msaa_on), buffers.get_depth_layer(0, is_msaa_on)], [], view_count)
 			assert(framebuffer_format == rd.framebuffer_get_format(framebuffer))
 
@@ -1021,6 +1043,105 @@ func _render_callback(effect_callback_type, render_data):
 			#else:
 				#if (self.effect_callback_type != CompositorEffect.EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT):
 					#self.effect_callback_type = CompositorEffect.EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
+
+# AVIARY: small RDUniform builders, used by _rebind_scene_data to keep the
+# rebuilt binding lists short and hard to get wrong.
+func _sampler_uniform(binding : int, sampler : RID, tex : RID) -> RDUniform:
+	var u := RDUniform.new()
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u.binding = binding
+	u.add_id(sampler)
+	u.add_id(tex)
+	return u
+
+func _image_uniform(binding : int, tex : RID) -> RDUniform:
+	var u := RDUniform.new()
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	u.binding = binding
+	u.add_id(tex)
+	return u
+
+func _buffer_uniform(uniform_type : int, binding : int, buf : RID) -> RDUniform:
+	var u := RDUniform.new()
+	u.uniform_type = uniform_type
+	u.binding = binding
+	u.add_id(buf)
+	return u
+
+# AVIARY (Godot 4.7 / GH-115177): rebuild only the cached uniform sets that bind the
+# engine's scene-data UBO — the base compute set (binding 17), the post-pass set
+# (binding 8) and the depth-write set (binding 2) — pointing them at the live buffer
+# and freeing the previous ones. The accumulation textures, generic/light/sample
+# buffers and pipelines are untouched, so this is cheap and does NOT reset the cloud
+# accumulation. The binding layout MUST stay in sync with the matching #region
+# blocks in _render_callback; only the SceneDataBlock binding changes here.
+func _rebind_scene_data(view_count : int, buffers : RenderSceneBuffersRD, is_msaa_on : bool, cameraData : RID) -> void:
+	if rd == null or not shader.is_valid() or not postpass_shader.is_valid():
+		return
+	if uniform_sets.size() != view_count * 4 or accumulation_textures.size() < view_count * 7 or blit_screen_images.size() < view_count:
+		return
+
+	for view in view_count:
+		# Base compute set (uniform_sets[view * 4 + 1]) — SceneDataBlock at binding 17.
+		var base_uniforms : Array[RDUniform] = [
+			_image_uniform(0, accumulation_textures[view * 7]),
+			_image_uniform(1, accumulation_textures[view * 7 + 1]),
+			_image_uniform(2, accumulation_textures[view * 7 + 2]),
+			_image_uniform(3, accumulation_textures[view * 7 + 3]),
+			_image_uniform(4, accumulation_textures[view * 7 + 4]),
+			_image_uniform(5, accumulation_textures[view * 7 + 5]),
+			_sampler_uniform(6, nearest_sampler, resized_depth),
+			_sampler_uniform(7, linear_sampler, maskDrawnRid if extra_large_used_as_mask && maskDrawnRid.is_valid() else RenderingServer.texture_get_rd_texture(extra_large_noise_patterns.get_rid())),
+			_sampler_uniform(8, linear_sampler, RenderingServer.texture_get_rd_texture(large_scale_noise.get_rid())),
+			_sampler_uniform(9, linear_sampler, RenderingServer.texture_get_rd_texture(medium_scale_noise.get_rid())),
+			_sampler_uniform(10, linear_sampler, RenderingServer.texture_get_rd_texture(small_scale_noise.get_rid())),
+			_sampler_uniform(11, linear_sampler, RenderingServer.texture_get_rd_texture(curl_noise.get_rid())),
+			_sampler_uniform(12, nearest_sampler, RenderingServer.texture_get_rd_texture(dither_noise.get_rid())),
+			_sampler_uniform(13, linear_sampler_no_repeat, RenderingServer.texture_get_rd_texture(height_gradient.get_rid())),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 14, general_data_buffer),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 15, light_data_buffer),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER, 16, point_sample_data_buffer),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 17, cameraData),
+		]
+		var new_base := rd.uniform_set_create(base_uniforms, shader, 0)
+		if new_base.is_valid():
+			if uniform_sets[view * 4 + 1].is_valid():
+				rd.free_rid(uniform_sets[view * 4 + 1])
+			uniform_sets[view * 4 + 1] = new_base
+
+		# Post-pass set (uniform_sets[view * 4 + 2]) — SceneDataBlock at binding 8.
+		# (The reflections global-texture side-effect is intentionally not repeated: it
+		# is registered once at build time and points at a persistent accumulation slot.)
+		var post_uniforms : Array[RDUniform] = [
+			_sampler_uniform(0, linear_sampler_no_repeat, accumulation_textures[view * 7]),
+			_sampler_uniform(1, linear_sampler_no_repeat, accumulation_textures[view * 7 + 1]),
+			_image_uniform(2, accumulation_textures[view * 7 + 6]),
+			_sampler_uniform(3, nearest_sampler, buffers.get_color_layer(view, is_msaa_on)),
+			_image_uniform(4, blit_screen_images[view]),
+			_sampler_uniform(5, nearest_sampler, buffers.get_depth_layer(view, is_msaa_on)),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 6, general_data_buffer),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 7, light_data_buffer),
+			_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 8, cameraData),
+		]
+		var new_post := rd.uniform_set_create(post_uniforms, postpass_shader, 0)
+		if new_post.is_valid():
+			if uniform_sets[view * 4 + 2].is_valid():
+				rd.free_rid(uniform_sets[view * 4 + 2])
+			uniform_sets[view * 4 + 2] = new_post
+
+		# Depth-write set (depth_uniform_sets[view]) — SceneDataBlock at binding 2.
+		if depth_write_shader.is_valid() and view < depth_uniform_sets.size():
+			var depth_uniforms : Array[RDUniform] = [
+				_sampler_uniform(0, linear_sampler_no_repeat, accumulation_textures[view * 7 + 1]),
+				_sampler_uniform(1, linear_sampler_no_repeat, accumulation_textures[view * 7]),
+				_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 2, cameraData),
+				_buffer_uniform(RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER, 3, general_data_buffer),
+			]
+			var new_depth := rd.uniform_set_create(depth_uniforms, depth_write_shader, 0)
+			if new_depth.is_valid():
+				if depth_uniform_sets[view].is_valid():
+					rd.free_rid(depth_uniform_sets[view])
+				depth_uniform_sets[view] = new_depth
 
 func retrieve_position_queries(data : PackedByteArray):
 	

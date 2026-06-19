@@ -50,6 +50,11 @@ var critterClipKeywords = map[string][]string{
 	// in the everything pack it's an offensive clip (paired with "Bite") rather
 	// than a damage recoil.
 	"attack": {"attack", "bite", "chomp", "peck", "claw", "headbutt", "gore", "kick", "hit"},
+	// "bark" is the right-click one-shot while possessing — a vocalisation (bark /
+	// howl / growl / roar). Gated on a real clip (hasCritterClip), like attack, so a
+	// model with no such animation simply can't bark. "bark" leads; the rest cover
+	// the other vocal clips the everything pack names.
+	"bark": {"bark", "howl", "growl", "roar", "yip", "yelp", "yell"},
 	// Swimmers (the everything "swimmer" fish/marine rig) carry a distinct
 	// vocabulary — "Swim Horizontal", "Swim Vertical", "Idle", "Dead Floating"
 	// (plus "Bite"/"Hit"). The two swim clips are picked by the dominant motion
@@ -258,11 +263,11 @@ func playCritterClip(node Node3D.Instance, player AnimationPlayer.Instance, inte
 	// last frame — a frozen belly-up "Dead Floating" — rather than looping. The
 	// callers that drive it (EntityAnimator) only re-issue a clip on an intent
 	// CHANGE, so a non-looping death clip stays settled on the dead pose. The
-	// attack is likewise a one-shot — it plays once and the caller (possession
+	// attack/bark are likewise one-shots — they play once and the caller (possession
 	// locally, the gestureHold on peers) switches back to locomotion when the
 	// clip's length elapses. Every other clip loops.
 	loop := Animation.LoopLinear
-	if intent == swimClipDeath || intent == "attack" {
+	if intent == swimClipDeath || intent == "attack" || intent == "bark" {
 		loop = Animation.LoopNone
 	}
 	player.AsAnimationMixer().GetAnimation(clip).SetLoopMode(loop)
