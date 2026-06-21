@@ -27,21 +27,27 @@ type sharingKey struct {
 	Material string
 }
 
-type sharingEntry struct {
-	RC       int
-	Material Material.Instance
-}
-
-var cacheAO = make(map[sharingKey]sharingEntry)
+// cacheAO holds the AO-override-merged library prop materials, keyed by
+// (Identity, Material), for the WHOLE session — NOT refcounted per node. An earlier
+// version freed each material in OnFree once the last MeshInstance3D referencing it
+// was freed; on a scene reload/join (replaceSceneTree QueueFrees the old client and
+// builds the new one immediately) that ran the old nodes' frees INTERLEAVED with the
+// new scene's rebuild, so a material was Object.Free'd while still bound to the
+// SHARED mesh the reloaded scene reuses → everything that prop touched rendered
+// magenta. Keeping the cache session-lifetime (like keptImports and the terrain /
+// grass / foliage shared materials, which all free only at shutdown) means a reload
+// reuses the live material instead of freeing and re-loading it. Bounded in practice
+// by the library's distinct (Identity, Material) pairs, which recur across reloads.
+var cacheAO = make(map[sharingKey]Material.Instance)
 
 func init() {
 	// Release the session-lifetime shared materials at shutdown (each was created
 	// with Object.Leak, so the GC never reclaims them — see shutdown.go). Object.Free
 	// only drops our ref; a material still bound to a live mesh survives until that
-	// node is finalized during teardown. Clearing the map makes OnFree a no-op after.
+	// node is finalized during teardown.
 	OnShutdown(func() {
-		for key, entry := range cacheAO {
-			Object.Free(entry.Material)
+		for key, mat := range cacheAO {
+			Object.Free(mat)
 			delete(cacheAO, key)
 		}
 	})
@@ -62,10 +68,8 @@ func (ms *MaterialSharingMeshInstance3D) Ready() {
 	// Fast path: an AO-shared material that's already resolved is in
 	// memory, so there's no network to wait on — apply it inline.
 	if ms.OverrideAO != Texture2D.Nil {
-		if entry, found := cacheAO[key]; found {
-			entry.RC++
-			cacheAO[key] = entry
-			ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, entry.Material)
+		if mat, found := cacheAO[key]; found {
+			ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, mat)
 			return
 		}
 	}
@@ -83,33 +87,17 @@ func (ms *MaterialSharingMeshInstance3D) Ready() {
 // applySync is the original blocking load, kept for the editor path.
 func (ms *MaterialSharingMeshInstance3D) applySync(key sharingKey) {
 	if ms.OverrideAO != Texture2D.Nil {
-		if entry, found := cacheAO[key]; found {
-			entry.RC++
-			cacheAO[key] = entry
-			ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, entry.Material)
+		if mat, found := cacheAO[key]; found {
+			ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, mat)
 			return
 		}
 		material := Object.Leak(Resource.Duplicate(loadSafe[BaseMaterial3D.Instance](ms.Material)))
 		material.SetAoTexture(ms.OverrideAO)
-		cacheAO[key] = sharingEntry{RC: 1, Material: material.AsMaterial()}
+		cacheAO[key] = material.AsMaterial()
 		ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, material.AsMaterial())
 		return
 	}
 	ms.AsMeshInstance3D().Mesh().SurfaceSetMaterial(0, loadSafe[Material.Instance](ms.Material))
-}
-
-func (ms *MaterialSharingMeshInstance3D) OnFree() {
-	key := sharingKey{
-		Identity: ms.Identity,
-		Material: ms.Material,
-	}
-	if entry, found := cacheAO[key]; found {
-		entry.RC--
-		if entry.RC <= 0 {
-			Object.Free(entry.Material)
-			delete(cacheAO, key)
-		}
-	}
 }
 
 type MaterialSharingDecal struct {

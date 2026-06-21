@@ -193,15 +193,13 @@ func applyMeshMaterial(id Object.ID, key sharingKey, overrideAO Texture2D.Instan
 		return // load failed; leave the default surface in place.
 	}
 	if overrideAO != Texture2D.Nil {
-		if entry, found := cacheAO[key]; found {
-			entry.RC++
-			cacheAO[key] = entry
-			ms.Mesh().SurfaceSetMaterial(0, entry.Material)
+		if cached, found := cacheAO[key]; found {
+			ms.Mesh().SurfaceSetMaterial(0, cached)
 			return
 		}
 		dup := Object.Leak(Resource.Duplicate(Object.To[BaseMaterial3D.Instance](mat)))
 		dup.SetAoTexture(overrideAO)
-		cacheAO[key] = sharingEntry{RC: 1, Material: dup.AsMaterial()}
+		cacheAO[key] = dup.AsMaterial()
 		ms.Mesh().SurfaceSetMaterial(0, dup.AsMaterial())
 		return
 	}

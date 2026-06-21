@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"graphics.gd/classdb/Animation"
+	"graphics.gd/classdb/AnimationPlayer"
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/Camera3D"
@@ -309,6 +311,13 @@ type jawState struct {
 	restBasis Basis.XYZ
 	phase     float32
 
+	// A muzzle that ships its OWN rig + animation (e.g. excog's trunk)
+	// drives itself: instead of the procedural LowerJaw hinge we trigger
+	// its clip occasionally. anim is Nil for procedural jaws, so the
+	// per-frame loop can tell the two kinds apart.
+	anim     AnimationPlayer.Instance
+	animClip string
+
 	// Per-jaw RNG + scheduling so paired/multi-muzzle critters
 	// don't open their mouths in unison. Events are sampled from a
 	// small set (idle/twitch/chew/yawn) with weighted random
@@ -318,6 +327,20 @@ type jawState struct {
 	eventEndsAt    float32
 	eventAmplitude float32
 	eventDuration  float32
+}
+
+// firstAnimClip returns the name of a muzzle's own animation clip — the
+// first non-RESET clip on its AnimationPlayer — or "" if it has none.
+// Used to drive self-animated parts (e.g. excog's trunk) without
+// hard-coding a clip name.
+func firstAnimClip(player AnimationPlayer.Instance) string {
+	for _, n := range player.AsAnimationMixer().GetAnimationList() {
+		if strings.EqualFold(n, "RESET") {
+			continue
+		}
+		return n
+	}
+	return ""
 }
 
 const (
@@ -2496,30 +2519,63 @@ func (ce *CritterEditor) Process(delta Float.X) {
 		id := child.ID()
 		st, ok := ce.jawCache[id]
 		if !ok {
-			// Object.As over Object.To: parts that aren't library-
-			// imported muzzles (e.g. our static MakeHuman .obj
-			// dressings) don't have a "LowerJaw" subnode, and even
-			// when they do, FindChild can return a non-Node3D node —
-			// the panicking To-cast would crash the editor instead of
-			// just skipping the part.
-			jawNode := child.AsNode().FindChild("LowerJaw")
-			jaw, jawOk := Object.As[Node3D.Instance](jawNode)
-			if !jawOk || jaw == Node3D.Nil {
-				ce.jawCache[id] = &jawState{}
-				continue
+			// A part that ships its own AnimationPlayer (a rigged muzzle
+			// such as excog's trunk) animates itself — checked BEFORE the
+			// LowerJaw lookup so the built-in jaw hinge is skipped when a
+			// real animation is present. We don't loop it; it's fired
+			// occasionally below, on the same RNG cadence the jaw uses.
+			if player, pok := Object.As[AnimationPlayer.Instance](child.AsNode().FindChild("AnimationPlayer")); pok && player != AnimationPlayer.Nil {
+				ce.idlePhase += 1.7
+				seed1 := uint64(math.Float32bits(ce.idlePhase))*6364136223846793005 + 1442695040888963407
+				seed2 := uint64(math.Float32bits(ce.idlePhase+0.91)) * 1234567891
+				rng := rand.New(rand.NewPCG(seed1, seed2))
+				st = &jawState{
+					anim:        player,
+					animClip:    firstAnimClip(player),
+					rng:         rng,
+					nextEventAt: ce.idleTime + 1 + rng.Float32()*5, // first gesture 1-6s out
+				}
+				ce.jawCache[id] = st
+			} else {
+				// Object.As over Object.To: parts that aren't library-
+				// imported muzzles (e.g. our static MakeHuman .obj
+				// dressings) don't have a "LowerJaw" subnode, and even
+				// when they do, FindChild can return a non-Node3D node —
+				// the panicking To-cast would crash the editor instead of
+				// just skipping the part.
+				jawNode := child.AsNode().FindChild("LowerJaw")
+				jaw, jawOk := Object.As[Node3D.Instance](jawNode)
+				if !jawOk || jaw == Node3D.Nil {
+					ce.jawCache[id] = &jawState{}
+					continue
+				}
+				ce.idlePhase += 1.7
+				seed1 := uint64(math.Float32bits(ce.idlePhase))*6364136223846793005 + 1442695040888963407
+				seed2 := uint64(math.Float32bits(ce.idlePhase+0.91)) * 1234567891
+				rng := rand.New(rand.NewPCG(seed1, seed2))
+				st = &jawState{
+					jaw:       jaw,
+					restBasis: jaw.AsNode3D().Basis(),
+					phase:     ce.idlePhase,
+					rng:       rng,
+				}
+				st.scheduleJawEvent(ce.idleTime)
+				ce.jawCache[id] = st
 			}
-			ce.idlePhase += 1.7
-			seed1 := uint64(math.Float32bits(ce.idlePhase))*6364136223846793005 + 1442695040888963407
-			seed2 := uint64(math.Float32bits(ce.idlePhase+0.91)) * 1234567891
-			rng := rand.New(rand.NewPCG(seed1, seed2))
-			st = &jawState{
-				jaw:       jaw,
-				restBasis: jaw.AsNode3D().Basis(),
-				phase:     ce.idlePhase,
-				rng:       rng,
+		}
+		// Self-animated muzzle: play its own clip occasionally (one-shot
+		// each), never a constant loop — an open/close gesture now and
+		// then, with a randomised rest between so paired muzzles don't
+		// fire in unison.
+		if st.anim != AnimationPlayer.Nil {
+			if st.animClip != "" && ce.idleTime >= st.nextEventAt && !st.anim.IsPlaying() {
+				clip := st.anim.AsAnimationMixer().GetAnimation(st.animClip)
+				clip.SetLoopMode(Animation.LoopNone)
+				st.anim.PlayNamed(st.animClip)
+				gap := float32(5) + st.rng.Float32()*7 // 5-12s rest between gestures
+				st.nextEventAt = ce.idleTime + float32(clip.Length()) + gap
 			}
-			st.scheduleJawEvent(ce.idleTime)
-			ce.jawCache[id] = st
+			continue
 		}
 		if st.jaw == Node3D.Nil {
 			continue

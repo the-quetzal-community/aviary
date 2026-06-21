@@ -30,6 +30,7 @@ var ccLicenses = []ccLicense{ccZero, ccBY, ccBYSA}
 // toggles.
 var authorLicense = map[string]ccLicense{
 	"everything":     ccBY,
+	"excog":          ccZero,
 	"kenney":         ccZero,
 	"makehuman":      ccZero,
 	"splizard":       ccZero,
