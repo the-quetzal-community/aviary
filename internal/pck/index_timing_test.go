@@ -162,6 +162,85 @@ func TestIndexTiming(t *testing.T) {
 	}
 }
 
+// TestPreviewDelta diffs a remote pck against a local one, entry by entry, to
+// show exactly what the incremental updater would re-download. Skipped unless
+// both AVIARY_PCK_URL and AVIARY_LOCAL_PCK are set. Read-only.
+//
+//	AVIARY_PCK_URL=https://vpk.quetzal.community/preview.pck \
+//	AVIARY_LOCAL_PCK=$HOME/.local/share/aviary/preview.pck \
+//	  go test ./internal/pck/ -run TestPreviewDelta -v -timeout 180s
+func TestPreviewDelta(t *testing.T) {
+	url := os.Getenv("AVIARY_PCK_URL")
+	localPath := os.Getenv("AVIARY_LOCAL_PCK")
+	if url == "" || localPath == "" {
+		t.Skip("set AVIARY_PCK_URL and AVIARY_LOCAL_PCK to diff a remote vs local pck")
+	}
+
+	u, err := httpseek.New(url)
+	if err != nil {
+		t.Fatalf("httpseek.New: %v", err)
+	}
+	remote, err := Index(u)
+	u.Close()
+	if err != nil {
+		t.Fatalf("Index(remote): %v", err)
+	}
+	lf, err := os.Open(localPath)
+	if err != nil {
+		t.Fatalf("open local: %v", err)
+	}
+	local, err := Index(lf)
+	lf.Close()
+	if err != nil {
+		t.Fatalf("Index(local): %v", err)
+	}
+
+	var (
+		zero            File
+		matched, changed, onlyRemote, onlyLocal int
+		totalRemote, deltaBytes                  int64
+		zeroHashRemote                           int
+		sampleChanged                            []string
+	)
+	hashes := make(map[[16]byte]bool)
+	for p, rf := range remote {
+		totalRemote += rf.Size
+		hashes[rf.Hash] = true
+		if rf.Hash == zero.Hash {
+			zeroHashRemote++
+		}
+		switch lf, ok := local[p]; {
+		case !ok:
+			onlyRemote++
+			deltaBytes += rf.Size
+		case lf.Hash == rf.Hash:
+			matched++
+		default:
+			changed++
+			deltaBytes += rf.Size
+			if len(sampleChanged) < 25 {
+				sampleChanged = append(sampleChanged, p)
+			}
+		}
+	}
+	for p := range local {
+		if _, ok := remote[p]; !ok {
+			onlyLocal++
+		}
+	}
+
+	t.Logf("remote %s: %d entries, %.1f MB", url, len(remote), float64(totalRemote)/1e6)
+	t.Logf("local  %s: %d entries", localPath, len(local))
+	t.Logf("matched=%d changed=%d only-remote=%d only-local=%d", matched, changed, onlyRemote, onlyLocal)
+	t.Logf("incremental would download %.1f MB of %.1f MB (%.1f%%)",
+		float64(deltaBytes)/1e6, float64(totalRemote)/1e6, 100*float64(deltaBytes)/float64(totalRemote))
+	t.Logf("remote hash health: %d distinct hashes, %d zero-hash entries", len(hashes), zeroHashRemote)
+	for _, p := range sampleChanged {
+		lh, rh := local[p].Hash, remote[p].Hash
+		t.Logf("  changed: local=%x remote=%x  %s", lh[:4], rh[:4], p)
+	}
+}
+
 // TestIndexRemote measures the real-world cost against an actual hosted pck.
 // Skipped unless AVIARY_PCK_URL is set so it never runs in normal CI. This is
 // read-only (range GETs) and harmless to the served object.

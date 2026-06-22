@@ -78,7 +78,7 @@ func (dl *LibraryDownloader) Ready() {
 		dl.downloading = true
 		dl.DownloadButton.Pointer.AsCanvasItem().SetVisible(false)
 		dl.Progress.AsCanvasItem().SetVisible(true)
-		dl.DownloadButton.Size.SetText("Downloading...")
+		dl.DownloadButton.Size.SetText("...")
 		go dl.run()
 	})
 }
