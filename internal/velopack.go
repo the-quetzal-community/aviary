@@ -80,7 +80,7 @@ func (ui *CloudControl) automaticallyUpdate() {
 // file. Caller is responsible for running on the Godot main thread
 // (FileAccess / DirAccess are not goroutine-safe).
 func checkPreviewPckFreshness() {
-	req, err := http.NewRequest("HEAD", "https://vpk.quetzal.community/preview.pck", nil)
+	req, err := http.NewRequest("HEAD", previewURL, nil)
 	if err != nil {
 		Engine.Raise(err)
 		return
