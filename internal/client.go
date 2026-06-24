@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -497,6 +498,11 @@ func NewClient() *Client {
 	}
 	if UserDataDir == "" {
 		UserDataDir = OS.GetUserDataDir()
+	}
+	// Desktop only: make sure the drop-in mods directory exists (with a README)
+	// so players can find where to put their own models (see internal/mods.go).
+	if runtime.GOOS != "js" {
+		ensureModsDir()
 	}
 	client.network.Authentication = UserState.Secret
 	return client

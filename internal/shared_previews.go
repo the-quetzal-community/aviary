@@ -98,6 +98,15 @@ func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 		preview.attach(loadStaticObjNode(design), gen)
 		return preview
 	}
+	// Mod designs (user-dropped .glb under user://mods) are loaded at runtime via
+	// GLTFDocument rather than the resource importer (see internal/mods.go). Local
+	// file, so the parse is synchronous; attach strips the runtime collision.
+	if isModPath(design) {
+		if node, ok := loadModSceneNode(design); ok {
+			preview.attach(node, gen)
+		}
+		return preview
+	}
 	// Load the PackedScene on the dedicated loader thread so a not-yet-
 	// downloaded design never blocks the main thread / VR compositor. The
 	// scene geometry is usually local (preview.pck) and returns quickly;

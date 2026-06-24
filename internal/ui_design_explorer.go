@@ -2,6 +2,7 @@ package internal
 
 import (
 	"maps"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -63,8 +64,12 @@ type DesignExplorer struct {
 	tabbed []*GridFlowContainer // current tabbed containers
 	slider map[string]map[string]HSlider.ID
 
-	author                      string
-	themes                      map[string]TextureButton.ID
+	author string
+	themes map[string]TextureButton.ID
+	// theme_is_mod records which author themes are user mods (user://mods/<name>)
+	// rather than community-library authors (res://library/<name>), so the explorer
+	// resolves their model/preview/icon paths from the mods directory.
+	theme_is_mod                map[string]bool
 	themes_available_for_editor map[editorMode]map[string]struct{}
 
 	// state that enables the design drawer to open and close.
@@ -182,58 +187,137 @@ func (de *DesignExplorer) Ready() {
 	de.Tabs.GetTabBar().AsControl().
 		SetMouseFilter(Control.MouseFilterStop)
 	de.themes = make(map[string]TextureButton.ID)
+	de.theme_is_mod = make(map[string]bool)
 	de.themes_available_for_editor = make(map[editorMode]map[string]struct{})
-	Dir := DirAccess.Open("res://library")
-	if Dir == (DirAccess.Instance{}) {
-		return
-	}
-	for name := range Dir.Iter() {
-		if strings.Contains(name, ".") {
-			continue
-		}
-		// On Android/Quest exports, .import metadata files are stripped
-		// and `FileAccess.FileExists(...".import")` always returns
-		// false — which made the loop skip every theme and left the
-		// drawer empty. ResourceLoader.Exists works against the
-		// packed converted texture (.ctex) too, so it's correct on
-		// both desktop and Android.
-		if ExistsSync("res://library/" + name + "/icon.png") {
-			button := TextureButton.New().
-				SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + name + "/icon.png")).
-				SetIgnoreTextureSize(true).
-				SetStretchMode(TextureButton.StretchKeepAspectCentered)
-			button.AsControl().
-				SetSizeFlagsHorizontal(Control.SizeShrinkBegin).
-				SetCustomMinimumSize(Vector2.New(72, 64))
-			button.AsBaseButton().OnPressed(func() {
-				for theme := range de.themes_available_for_editor[editorMode{
-					Editor: de.client.Editing,
-					Mode:   de.client.ui.mode,
-				}] {
-					if authorHidden(theme) {
-						continue
-					}
-					other_button, _ := de.themes[theme].Instance()
-					other_button.AsCanvasItem().SetVisible(true)
-				}
-				de.Refresh(de.client.Editing, name, de.client.ui.mode)
-				de.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + name + "/icon.png"))
-				button, _ := de.themes[name].Instance()
-				button.AsCanvasItem().SetVisible(false)
-				// Record explicit user choice as the new top-ranked preference
-				// and persist so the design explorer remembers across runs and
-				// editor switches. Skipped in the library-sizing debug mode so
-				// a sizing session doesn't reshuffle the saved preferences the
-				// explorer will use in normal play.
-				if de.client != nil && librarySizesFile() == "" {
-					bumpAuthorPreference(name)
-					de.client.saveUserState()
-				}
-			})
-			de.themes[name] = button.ID()
-			de.Panel.Themes.AsNode().AddChild(button.AsNode())
+	if Dir := DirAccess.Open("res://library"); Dir != (DirAccess.Instance{}) {
+		for name := range Dir.Iter() {
+			if strings.Contains(name, ".") {
+				continue
+			}
+			// On Android/Quest exports, .import metadata files are stripped
+			// and `FileAccess.FileExists(...".import")` always returns
+			// false — which made the loop skip every theme and left the
+			// drawer empty. ResourceLoader.Exists works against the
+			// packed converted texture (.ctex) too, so it's correct on
+			// both desktop and Android.
+			if ExistsSync("res://library/" + name + "/icon.png") {
+				de.addThemeButton(name)
+			}
 		}
 	}
+	// Mod authors: user-dropped models under user://mods/<modname>/<category>/.
+	// Desktop only — the web export has no writable mods directory. A mod whose
+	// folder name collides with a community-library author is skipped (the
+	// library author keeps the name).
+	if runtime.GOOS != "js" {
+		if mods := DirAccess.Open(modsRoot); mods != DirAccess.Nil {
+			for name := range mods.Iter() {
+				if strings.Contains(name, ".") {
+					continue
+				}
+				if _, taken := de.themes[name]; taken {
+					continue
+				}
+				de.theme_is_mod[name] = true
+				de.addThemeButton(name)
+			}
+		}
+	}
+}
+
+// authorLibraryBase is the base URI under which an author's MODELS live —
+// res://library/<author> for community authors, user://mods/<author> for mods.
+func (de *DesignExplorer) authorLibraryBase(author string) string {
+	if de.theme_is_mod[author] {
+		return modsRoot + "/" + author
+	}
+	return "res://library/" + author
+}
+
+// authorPreviewBase is the base URI under which an author's THUMBNAILS live.
+// Mods keep their preview sidecars next to the models, so it coincides with the
+// model base; community authors keep thumbnails in the separate preview tree.
+func (de *DesignExplorer) authorPreviewBase(author string) string {
+	if de.theme_is_mod[author] {
+		return modsRoot + "/" + author
+	}
+	return "res://preview/" + author
+}
+
+// authorThemeIcon resolves the author-selector button / heading icon, honouring
+// the mod vs library source recorded in theme_is_mod.
+func (de *DesignExplorer) authorThemeIcon(author string) Texture2D.Instance {
+	if de.theme_is_mod[author] {
+		return modAuthorIcon(author)
+	}
+	return LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png")
+}
+
+// addThemeButton creates and registers the author-selector button for author,
+// shared by the library and mod scans in Ready.
+func (de *DesignExplorer) addThemeButton(author string) {
+	button := TextureButton.New().
+		SetTextureNormal(de.authorThemeIcon(author)).
+		SetIgnoreTextureSize(true).
+		SetStretchMode(TextureButton.StretchKeepAspectCentered)
+	button.AsControl().
+		SetSizeFlagsHorizontal(Control.SizeShrinkBegin).
+		SetCustomMinimumSize(Vector2.New(72, 64))
+	button.AsBaseButton().OnPressed(func() {
+		for theme := range de.themes_available_for_editor[editorMode{
+			Editor: de.client.Editing,
+			Mode:   de.client.ui.mode,
+		}] {
+			if authorHidden(theme) {
+				continue
+			}
+			other_button, _ := de.themes[theme].Instance()
+			other_button.AsCanvasItem().SetVisible(true)
+		}
+		de.Refresh(de.client.Editing, author, de.client.ui.mode)
+		de.Panel.Themes.Heading.Selected.SetTextureNormal(de.authorThemeIcon(author))
+		button, _ := de.themes[author].Instance()
+		button.AsCanvasItem().SetVisible(false)
+		// Record explicit user choice as the new top-ranked preference
+		// and persist so the design explorer remembers across runs and
+		// editor switches. Skipped in the library-sizing debug mode so
+		// a sizing session doesn't reshuffle the saved preferences the
+		// explorer will use in normal play.
+		if de.client != nil && librarySizesFile() == "" {
+			bumpAuthorPreference(author)
+			de.client.saveUserState()
+		}
+	})
+	de.themes[author] = button.ID()
+	de.Panel.Themes.AsNode().AddChild(button.AsNode())
+}
+
+// addModTile builds one palette tile for a mod design (mod://<author>/<tab>/<file>.glb)
+// and wires the same drag/tap placement flow as a library tile. thumbPath is the
+// optional sidecar preview (<file>.glb.png); a generic glyph is shown when absent.
+func (de *DesignExplorer) addModTile(parent Node.Instance, mode Mode, resourceURI, thumbPath string) {
+	thumb := genericModIcon()
+	if FileAccess.FileExists(thumbPath) {
+		if t := loadModTexture(thumbPath); t != Texture2D.Nil {
+			thumb = t
+		}
+	}
+	tile := TextureButton.New().
+		SetIgnoreTextureSize(true).
+		SetStretchMode(TextureButton.StretchKeepAspectCentered)
+	if thumb != Texture2D.Nil {
+		tile.SetTextureNormal(thumb)
+	}
+	tile.AsBaseButton().OnButtonDown(func() {
+		de.armDrag(mode, resourceURI, thumb)
+	})
+	tile.AsBaseButton().OnPressed(func() {
+		de.tapTile(mode, resourceURI)
+	})
+	tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+	tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
+	parent.AddChild(tile.AsNode())
+	de.tile_for_resource[resourceURI] = tile.ID()
 }
 
 func (ui *DesignExplorer) Sculpt(brush musical.Sculpt) {
@@ -497,10 +581,9 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	if !ok {
 		themes_available = make(map[string]struct{})
 		for author := range ui.themes {
+			base := ui.authorPreviewBase(author)
 			for _, tab := range ui.editor.Tabs(mode) {
-				var path = "res://preview/" + author + "/" + tab
-				resources := DirAccess.Open(path)
-				if resources != DirAccess.Nil {
+				if DirAccess.Open(base+"/"+tab) != DirAccess.Nil {
 					themes_available[author] = struct{}{}
 					break
 				}
@@ -526,7 +609,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	if author == "" {
 		author = preferredAuthor(visible_authors, UserState.AuthorPreferences)
 		if author != "" {
-			ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png"))
+			ui.Panel.Themes.Heading.Selected.SetTextureNormal(ui.authorThemeIcon(author))
 		}
 	}
 	for _, theme := range slices.Sorted(maps.Keys(visible_authors)) {
@@ -536,8 +619,8 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		button, _ := ui.themes[theme].Instance()
 		button.AsCanvasItem().SetVisible(true)
 	}
-	preview_path := "res://preview/" + author
-	library_path := "res://library/" + author
+	preview_path := ui.authorPreviewBase(author)
+	library_path := ui.authorLibraryBase(author)
 	themes := DirAccess.Open(preview_path)
 	if themes == DirAccess.Nil {
 		return
@@ -575,8 +658,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			ui.Tabs.SetTabTitle(index, "")
 			index++
 		} else {
-			var path = "res://preview/" + author + "/"
-			path += tab
+			var path = preview_path + "/" + tab
 			resources := DirAccess.Open(path)
 			// Builtin procedural tiles the editor wants shown in this
 			// tab (e.g. the critter editor's procedural foreleg). The
@@ -627,6 +709,28 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				ui.tile_for_resource[resource] = button.ID()
 			}
 			if resources == DirAccess.Nil {
+				gridflow.Update()
+				if ExistsSync("res://ui/" + tab + ".svg") {
+					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))
+				} else {
+					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+				}
+				ui.Tabs.SetTabTitle(index, "")
+				index++
+				continue
+			}
+			if ui.theme_is_mod[author] {
+				// Mod tab: list the .glb models directly (sidecar .png thumbnails
+				// are optional) and reference each by its mod:// pseudo-URI, so it
+				// flows through the same placement pipeline as a library design.
+				for _, name := range slices.Sorted(resources.Iter()) {
+					if !strings.HasSuffix(name, glb) {
+						continue
+					}
+					ui.addModTile(elements.AsNode(), mode,
+						modScheme+author+"/"+tab+"/"+name,
+						preview_path+"/"+tab+"/"+name+png)
+				}
 				gridflow.Update()
 				if ExistsSync("res://ui/" + tab + ".svg") {
 					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))

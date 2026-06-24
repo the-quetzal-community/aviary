@@ -265,6 +265,21 @@ func (client *Client) sceneFor(design musical.Design) (PackedScene.Instance, boo
 		// peer placing before importing), so this is retryable — don't cache it.
 		return PackedScene.Instance{}, false
 	}
+	if isModPath(uri) {
+		// User-dropped .glb: loaded at runtime via GLTFDocument and packed into a
+		// PackedScene so it reuses the same cache/Instantiate flow as library
+		// designs (see internal/mods.go). A peer who lacks the mod file (or a
+		// corrupt file) fails here and is marked missing — the placement stays in
+		// the musical log, so the model appears if that peer later adds the mod.
+		scene, ok := loadModPackedScene(uri)
+		if !ok {
+			client.missing_scenes[design] = true
+			return PackedScene.Instance{}, false
+		}
+		client.packed_scenes[design] = scene.ID()
+		keptImports = append(keptImports, scene.AsResource())
+		return scene, true
+	}
 	res := LoadSync[Resource.Instance](boulderCompatPath(uri))
 	if !Object.Is[PackedScene.Instance](res) {
 		client.missing_scenes[design] = true
