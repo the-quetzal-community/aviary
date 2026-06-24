@@ -9,10 +9,12 @@ import (
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/BaseMaterial3D"
 	"graphics.gd/classdb/FileAccess"
+	"graphics.gd/classdb/Material"
 	"graphics.gd/classdb/Mesh"
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/Texture2D"
+	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector2"
@@ -97,6 +99,51 @@ type CitizenBody struct {
 	// eyeMaterial is the StandardMaterial3D applied to surface 1
 	// (eyes). Its albedo is driven by the "eyetint" slider.
 	eyeMaterial StandardMaterial3D.Instance
+
+	// rig is non-nil when this body is skinned to the mesh2motion rig:
+	// the body then renders the GLB's straightened T-pose mesh (54k verts,
+	// bound to skeleton via skin) instead of the raw base.obj mesh, with
+	// morph .target deltas scattered onto the GLB verts through the rig's
+	// canonical map. Nil keeps the legacy unskinned base.obj path.
+	rig *citizen.CitizenRig
+	// canonicalBase is the unmodified base.obj vertex array (parallel to
+	// the Citizen's private base), used to recover the per-canonical-vertex
+	// morph displacement (Recompute()[c] - canonicalBase[c]) the rig
+	// scatters onto the GLB mesh.
+	canonicalBase []citizen.Vec3
+	// glbVerts/glbNormals/glbUVs are the GLB-space (≈1.7 m) render buffers,
+	// one entry per GLB vertex. glbVerts is rewritten every rebuild from the
+	// bind pose + scattered morph; the others are static (bind normals/UVs).
+	glbVerts   []Vector3.XYZ
+	glbNormals []Vector3.XYZ
+	glbUVs     []Vector2.XY
+	// bones/weights are the flat 4-influences-per-vertex skinning arrays
+	// (ArrayBones int32 / ArrayWeights float32), built once from the rig and
+	// reused across re-surfaces — morphs move positions, never bindings.
+	bones   []int32
+	weights []float32
+	// bodyIdxGLB/eyeIdxGLB partition the GLB triangle list into the body
+	// surface and the eye surface (a triangle is an eye triangle when all
+	// three of its GLB verts map to base.obj eye-group canonical verts), so
+	// the two surfaces can carry distinct (pigment / eyetint) materials.
+	bodyIdxGLB []int32
+	eyeIdxGLB  []int32
+	// bodyIdxCulled is what surfaceRigged actually draws for the body: equal
+	// to bodyIdxGLB with nothing equipped, otherwise the subset with the
+	// deep-under-clothing triangles dropped (boundary fringe kept + shrunk,
+	// same hybrid as the legacy path).
+	bodyIdxCulled []int32
+	// riggedDressings is the equipped clothing in the rigged path. Unlike the
+	// legacy CitizenDressing (its own MeshInstance3D), these are merged as
+	// extra surfaces on the body's ArrayMesh so they share the body MI's
+	// imported Skin + skeleton — each clothing vertex skinned by the
+	// barycentric blend of its three .mhclo body anchors' bone weights, so it
+	// follows the animation for free.
+	riggedDressings map[string]*riggedDressing
+	// riggedSurfaceMats records the override material per surface index in
+	// the order surfaceRigged adds them (body, eyes?, then each clothing
+	// item), so applySurfaceMaterials can rebind them after every re-surface.
+	riggedSurfaceMats []Material.Instance
 }
 
 // bodyShrinkAmount is how far we push anchored body verts inward
@@ -199,6 +246,198 @@ func AttachCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh, targe
 	return body, nil
 }
 
+// AttachRiggedCitizenBody builds a skinned citizen body from the mesh2motion
+// rig. mi is the animated GLB's own skinned MeshInstance3D — we keep its Skin
+// + skeleton binding and replace only its mesh resource with our procedural,
+// morph-driven ArrayMesh (the straightened T-pose bind in GLB ≈1.7 m space,
+// 54k verts). The skeleton + AnimationPlayer ride along from the same scene,
+// so the imported Quaternius clips drive this mesh directly.
+func AttachRiggedCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh, targets []*citizen.Target, rig *citizen.CitizenRig) (CitizenBody, error) {
+	if mi == MeshInstance3D.Nil {
+		return CitizenBody{}, errors.New("citizen: nil MeshInstance3D")
+	}
+	if base == nil || len(base.Verts) == 0 {
+		return CitizenBody{}, errors.New("citizen: empty base mesh")
+	}
+	if rig == nil || len(rig.Bind) == 0 {
+		return CitizenBody{}, errors.New("citizen: empty rig")
+	}
+	baseCopy := make([]citizen.Vec3, len(base.Verts))
+	copy(baseCopy, base.Verts)
+	c := citizen.New(baseCopy)
+	c.AddTargets(targets)
+
+	n := len(rig.Bind)
+	body := CitizenBody{
+		citizen:         c,
+		mesh:            mi,
+		arrayMesh:       ArrayMesh.New(),
+		dressings:       make(map[string]*CitizenDressing),
+		skinMaterial:    StandardMaterial3D.New(),
+		eyeMaterial:     StandardMaterial3D.New(),
+		rig:             rig,
+		canonicalBase:   baseCopy,
+		baseIndices:     base.Indices, // canonical adjacency for coverage erosion
+		glbVerts:        make([]Vector3.XYZ, n),
+		glbNormals:      make([]Vector3.XYZ, n),
+		riggedDressings: make(map[string]*riggedDressing),
+	}
+	for i, nrm := range rig.Normals {
+		body.glbNormals[i] = Vector3.XYZ{X: Float.X(nrm.X), Y: Float.X(nrm.Y), Z: Float.X(nrm.Z)}
+	}
+	if len(rig.UVs) == n {
+		body.glbUVs = make([]Vector2.XY, n)
+		for i, uv := range rig.UVs {
+			body.glbUVs[i] = Vector2.XY{X: Float.X(uv.U), Y: Float.X(uv.V)}
+		}
+	}
+	body.bones = make([]int32, 4*n)
+	body.weights = make([]float32, 4*n)
+	for i := 0; i < n; i++ {
+		for k := 0; k < 4; k++ {
+			body.bones[i*4+k] = int32(rig.Joints[i][k])
+			body.weights[i*4+k] = rig.Weights[i][k]
+		}
+	}
+	body.splitRiggedSurfaces(base)
+
+	body.skinMaterial.AsBaseMaterial3D().SetAlbedoColor(pigmentColor(defaultPigment))
+	body.eyeMaterial.AsBaseMaterial3D().SetAlbedoColor(eyeTintColor(defaultEyeTint))
+	body.eyeMaterial.AsBaseMaterial3D().SetCullMode(BaseMaterial3D.CullDisabled)
+	if eyeTex := LoadSync[Texture2D.Instance]("res://library/makehuman/citizen_eye.png"); eyeTex != Texture2D.Nil {
+		body.eyeMaterial.AsBaseMaterial3D().SetAlbedoTexture(eyeTex)
+	}
+
+	body.writeRiggedVerts(c.Recompute())
+	body.surface()
+	body.applySurfaceMaterials()
+	// Generous custom AABB (GLB ≈1.7 m space) so the renderer skips the
+	// per-frame skinned-AABB recompute (and its "bs > sbs" warning), and so
+	// big clips — backflip, flying, jumps — aren't frustum-culled at the
+	// body's rest extents.
+	body.arrayMesh.SetCustomAabb(AABB.PositionSize{
+		Position: Vector3.New(-1.5, -1, -1.5),
+		Size:     Vector3.New(3, 4, 3),
+	})
+	// Swap in our mesh; the MeshInstance3D keeps its imported Skin + skeleton
+	// path (both live on the node, not the Mesh resource), and our ArrayBones
+	// index the same skin binds the GLB's JOINTS_0 did.
+	mi.SetMesh(body.arrayMesh.AsMesh())
+	return body, nil
+}
+
+// splitRiggedSurfaces partitions the GLB triangle list into the body surface
+// and the eye surface: a triangle is an eye triangle when all three of its
+// GLB verts map to base.obj eye-group canonical verts. Each gets its own
+// surface so the pigment and eyetint materials stay independent.
+func (b *CitizenBody) splitRiggedSurfaces(base *citizen.BaseMesh) {
+	eyeCanon := make(map[int32]bool, len(base.EyeIndices))
+	for _, idx := range base.EyeIndices {
+		eyeCanon[idx] = true
+	}
+	rig := b.rig
+	isEye := make([]bool, len(rig.Bind))
+	for i := range rig.Bind {
+		if c := rig.Canonical[i]; c >= 0 && eyeCanon[c] {
+			isEye[i] = true
+		}
+	}
+	bodyIdx := make([]int32, 0, len(rig.Indices))
+	var eyeIdx []int32
+	for t := 0; t+2 < len(rig.Indices); t += 3 {
+		a, bb, cc := rig.Indices[t], rig.Indices[t+1], rig.Indices[t+2]
+		if int(a) < len(isEye) && int(bb) < len(isEye) && int(cc) < len(isEye) &&
+			isEye[a] && isEye[bb] && isEye[cc] {
+			eyeIdx = append(eyeIdx, a, bb, cc)
+		} else {
+			bodyIdx = append(bodyIdx, a, bb, cc)
+		}
+	}
+	b.bodyIdxGLB = bodyIdx
+	b.eyeIdxGLB = eyeIdx
+	b.bodyIdxCulled = bodyIdx // nothing equipped yet → draw the whole body
+}
+
+// writeRiggedVerts rewrites the GLB-space render positions from the bind pose
+// plus the active morph: for each GLB vert, the displacement of its canonical
+// base.obj vertex (Recompute − base) is rotated into the straightened T-pose
+// (rig.Disp, which folds in the base→GLB scale) and added to the bind. With
+// no sliders active every displacement is zero, so the mesh is exactly the
+// GLB bind.
+func (b *CitizenBody) writeRiggedVerts(body []citizen.Vec3) {
+	rig := b.rig
+	hasShrink := len(b.shrinkDirs) > 0
+	for i := range rig.Bind {
+		bind := rig.Bind[i]
+		c := rig.Canonical[i]
+		var x, y, z float32 = bind.X, bind.Y, bind.Z
+		if c >= 0 && int(c) < len(body) && int(c) < len(b.canonicalBase) {
+			cb := b.canonicalBase[c]
+			d := citizen.Vec3{X: body[c].X - cb.X, Y: body[c].Y - cb.Y, Z: body[c].Z - cb.Z}
+			// Shrink: a body vert covered by clothing is pushed inward (still in
+			// base.obj space) so clothing renders in front; fold it into the
+			// morph delta so a single Disp rotation maps both to GLB space.
+			if hasShrink && c >= 0 && int(c) < len(b.shrinkDirs) {
+				if sd := b.shrinkDirs[c]; sd.X != 0 || sd.Y != 0 || sd.Z != 0 {
+					d.X += sd.X * bodyShrinkAmount
+					d.Y += sd.Y * bodyShrinkAmount
+					d.Z += sd.Z * bodyShrinkAmount
+				}
+			}
+			dd := rig.Disp[i].Mul3Vec(d)
+			x, y, z = bind.X+dd.X, bind.Y+dd.Y, bind.Z+dd.Z
+		}
+		b.glbVerts[i] = Vector3.XYZ{X: Float.X(x), Y: Float.X(y), Z: Float.X(z)}
+	}
+}
+
+// surfaceRigged builds the skinned surfaces on the body ArrayMesh: surface 0
+// the body, surface 1 the eyes (if any), then one surface per equipped
+// clothing item. The body + eyes share the GLB vertex/normal/UV/bone/weight
+// buffers (differing only in index); each clothing item carries its own.
+// All surfaces are skinned by the single imported Skin on the body MI, so
+// clothing rides the animation alongside the body. The per-surface override
+// material is recorded into riggedSurfaceMats in add order.
+func (b *CitizenBody) surfaceRigged() {
+	b.riggedSurfaceMats = b.riggedSurfaceMats[:0]
+	add := func(verts, normals []Vector3.XYZ, uvs []Vector2.XY, bones []int32, weights []float32, indices []int32, mat Material.Instance) {
+		var arrays [Mesh.ArrayMax]any
+		arrays[Mesh.ArrayVertex] = verts
+		if len(normals) == len(verts) {
+			arrays[Mesh.ArrayNormal] = normals
+		}
+		if len(uvs) == len(verts) {
+			arrays[Mesh.ArrayTexUv] = uvs
+		}
+		arrays[Mesh.ArrayBones] = bones
+		arrays[Mesh.ArrayWeights] = weights
+		arrays[Mesh.ArrayIndex] = indices
+		b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
+		b.riggedSurfaceMats = append(b.riggedSurfaceMats, mat)
+	}
+	add(b.glbVerts, b.glbNormals, b.glbUVs, b.bones, b.weights, b.bodyIdxCulled, b.skinMaterial.AsMaterial())
+	if len(b.eyeIdxGLB) > 0 {
+		add(b.glbVerts, b.glbNormals, b.glbUVs, b.bones, b.weights, b.eyeIdxGLB, b.eyeMaterial.AsMaterial())
+	}
+	for _, slot := range sortedDressingSlots(b.riggedDressings) {
+		d := b.riggedDressings[slot]
+		var mat Material.Instance
+		if d.material != StandardMaterial3D.Nil {
+			mat = d.material.AsMaterial()
+		}
+		add(d.verts, d.normals, d.uvs, d.bones, d.weights, d.indices, mat)
+	}
+}
+
+// hasEyeSurface reports whether surface 1 (eyes) exists, across both the
+// rigged (eyeIdxGLB) and legacy (eyeIndices) paths.
+func (b *CitizenBody) hasEyeSurface() bool {
+	if b.rig != nil {
+		return len(b.eyeIdxGLB) > 0
+	}
+	return len(b.eyeIndices) > 0
+}
+
 // defaultPigment / defaultEyeTint pick the neutral palette index for
 // citizens with no explicit slider value yet — a fair-skin and a
 // hazel-eye starting point.
@@ -225,7 +464,16 @@ func (b *CitizenBody) rebuild() {
 		return
 	}
 	body := b.citizen.Recompute()
-	b.writeShrunkVertexBuf(body)
+	if b.rig != nil {
+		b.writeRiggedVerts(body)
+		// Refit clothing against the freshly-morphed T-pose body BEFORE
+		// surfaceRigged reads d.verts to build the clothing surfaces.
+		for _, d := range b.riggedDressings {
+			d.refit(b)
+		}
+	} else {
+		b.writeShrunkVertexBuf(body)
+	}
 	b.arrayMesh.ClearSurfaces()
 	b.surface()
 	b.applySurfaceMaterials()
@@ -352,6 +600,10 @@ func clothRestNormals(verts []citizen.Vec3, indices []int32) []citizen.Vec3 {
 // Caller should ClearSurfaces() before calling this on a mesh that
 // already has surfaces.
 func (b *CitizenBody) surface() {
+	if b.rig != nil {
+		b.surfaceRigged()
+		return
+	}
 	// Both surfaces share the vertex (and UV) buffer and differ only in their
 	// index buffer — surface 0 the body, surface 1 the eyes — so build them the
 	// same way to keep the UV-presence guard in one place.
@@ -376,10 +628,20 @@ func (b *CitizenBody) surface() {
 // whose surface index existed when set — so binding after
 // AddSurfaceFromArrays is the safe path.
 func (b *CitizenBody) applySurfaceMaterials() {
+	if b.rig != nil {
+		// Rigged: one override per surface in surfaceRigged's add order
+		// (body, eyes?, clothing…).
+		for i, mat := range b.riggedSurfaceMats {
+			if mat != Material.Nil {
+				b.mesh.SetSurfaceOverrideMaterial(i, mat)
+			}
+		}
+		return
+	}
 	if b.skinMaterial != StandardMaterial3D.Nil {
 		b.mesh.SetSurfaceOverrideMaterial(0, b.skinMaterial.AsMaterial())
 	}
-	if len(b.eyeIndices) > 0 && b.eyeMaterial != StandardMaterial3D.Nil {
+	if b.hasEyeSurface() && b.eyeMaterial != StandardMaterial3D.Nil {
 		b.mesh.SetSurfaceOverrideMaterial(1, b.eyeMaterial.AsMaterial())
 	}
 }
@@ -476,6 +738,21 @@ func (b *CitizenBody) AttachDressing(slot, design string) {
 	if !b.citizen.SetDressing(slot, design) {
 		return
 	}
+	if b.rig != nil {
+		delete(b.riggedDressings, slot)
+		if design != "" {
+			d, err := newRiggedDressing(design, b)
+			if err != nil {
+				fmt.Println("citizen: rigged dressing load failed:", err)
+			} else {
+				b.riggedDressings[slot] = d
+			}
+		}
+		// Defer the body-cull + re-surface to CommitVisibility so a burst of
+		// AttachDressings (history replay) collapses to one coverage pass.
+		b.shrinkDirty = true
+		return
+	}
 	if existing, ok := b.dressings[slot]; ok {
 		existing.mi.AsNode().QueueFree()
 		delete(b.dressings, slot)
@@ -504,8 +781,78 @@ func (b *CitizenBody) CommitVisibility() {
 		return
 	}
 	b.shrinkDirty = false
-	b.updateCoverageAndShrink()
+	if b.rig != nil {
+		b.updateRiggedCoverage()
+	} else {
+		b.updateCoverageAndShrink()
+	}
 	b.rebuild()
+}
+
+// updateRiggedCoverage computes which body verts are hidden under the equipped
+// clothing and culls the deep-interior GLB body triangles, leaving (and
+// shrinking) a one-vertex fringe at every clothing boundary — the same hybrid
+// as the legacy path, but reusing the canonical-space coverage helpers and
+// mapping the result onto the GLB triangle list via rig.Canonical.
+func (b *CitizenBody) updateRiggedCoverage() {
+	if b.rig == nil {
+		return
+	}
+	if len(b.riggedDressings) == 0 {
+		b.bodyIdxCulled = b.bodyIdxGLB
+		b.shrinkDirs = nil
+		return
+	}
+	body := b.citizen.Recompute() // canonical, base.obj space
+	covered := make([]bool, len(body))
+	dirs := make([]citizen.Vec3, len(body))
+	var clothBuf []citizen.Vec3
+	for _, d := range b.riggedDressings {
+		if d.mhclo == nil || len(d.restNormals) == 0 {
+			continue
+		}
+		clothBuf = d.mhclo.Fit(body, clothBuf)
+		markCoveredWithDirs(covered, dirs, body, clothBuf, d.restNormals)
+	}
+	for i, v := range dirs {
+		l := float32(math.Sqrt(float64(v.X*v.X + v.Y*v.Y + v.Z*v.Z)))
+		if l > 0 {
+			dirs[i] = citizen.Vec3{X: v.X / l, Y: v.Y / l, Z: v.Z / l}
+		}
+	}
+	b.shrinkDirs = dirs
+	eroded := b.erodeCovered(covered)
+	rig := b.rig
+	deep := func(glbVert int32) bool {
+		c := rig.Canonical[glbVert]
+		return c >= 0 && int(c) < len(eroded) && eroded[c]
+	}
+	out := make([]int32, 0, len(b.bodyIdxGLB))
+	for t := 0; t+2 < len(b.bodyIdxGLB); t += 3 {
+		a, b1, c := b.bodyIdxGLB[t], b.bodyIdxGLB[t+1], b.bodyIdxGLB[t+2]
+		if deep(a) && deep(b1) && deep(c) {
+			continue
+		}
+		out = append(out, a, b1, c)
+	}
+	// Backstop only against a coverage/mapping bug that would erase essentially
+	// the WHOLE body — a real outfit always leaves face/hands/feet, and the
+	// eyes are a separate always-on surface, so legitimate full-body coverage
+	// is fine. ~2% floor.
+	if len(out) < len(b.bodyIdxGLB)/50 {
+		coveredN := 0
+		for _, on := range covered {
+			if on {
+				coveredN++
+			}
+		}
+		fmt.Printf("citizen: clothing cull would erase nearly the whole body (covered %d/%d canon) — keeping full body\n",
+			coveredN, len(covered))
+		b.bodyIdxCulled = b.bodyIdxGLB
+		b.shrinkDirs = nil
+		return
+	}
+	b.bodyIdxCulled = out
 }
 
 // updateCoverageAndShrink walks every equipped item's fitted clothing
@@ -594,10 +941,16 @@ func (b *CitizenBody) vertexNeighbours() [][]int32 {
 	if b.neighbours != nil {
 		return b.neighbours
 	}
-	if len(b.baseIndices) == 0 || len(b.vertexBuf) == 0 {
+	// Canonical vertex count: the legacy path has vertexBuf; the rigged path
+	// keeps the base verts in canonicalBase instead.
+	n := len(b.vertexBuf)
+	if n == 0 {
+		n = len(b.canonicalBase)
+	}
+	if len(b.baseIndices) == 0 || n == 0 {
 		return nil
 	}
-	sets := make([]map[int32]struct{}, len(b.vertexBuf))
+	sets := make([]map[int32]struct{}, n)
 	add := func(a, c int32) {
 		if int(a) >= len(sets) {
 			return

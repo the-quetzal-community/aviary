@@ -180,6 +180,10 @@ type CameraRig interface {
 	// modal view (e.g. the critter chase-cam) drives the focal point itself.
 	setMovementLocked(locked bool)
 
+	// setOverlayVisible shows/hides the editor UI overlay, for a modal view
+	// (the citizen walk-test) that wants an unobstructed chase-cam view.
+	setOverlayVisible(visible bool)
+
 	// PreviewPicker raycasts from the active pointer (mouse projection on
 	// desktop, right-controller aim in VR) into the scene.
 	PreviewPicker() PhysicsDirectSpaceState3D.PhysicsDirectSpaceState3D_Intersection
@@ -232,6 +236,16 @@ func (world *Client) refreshViewSelector(view int, views []string) {
 }
 func (world *Client) selectedNode() (Node3D.Instance, bool) {
 	return world.selection.Instance()
+}
+func (world *Client) setOverlayVisible(visible bool) {
+	if world.ui == nil {
+		return
+	}
+	if visible {
+		world.ui.showOverlay()
+	} else {
+		world.ui.hideOverlay()
+	}
 }
 
 func (world *Client) recording() bool             { return world.space != nil }

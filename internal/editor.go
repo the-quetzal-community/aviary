@@ -5,6 +5,7 @@ import (
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/variant/Enum"
+	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector3"
 
@@ -56,6 +57,18 @@ func (world *Client) StartEditing(subject Subject) {
 	pos := world.FocalPoint.Lens.AsNode3D().Position()
 	pos.Y = 0
 	world.FocalPoint.Lens.AsNode3D().SetPosition(pos)
+	// Entering a model editor (citizen/critter/foliage/…), not a build editor
+	// (scenery/terrain/shelter, where the world camera position is meaningful):
+	// reset the framing so a zoomed-out world view doesn't carry over and leave
+	// the model a tiny speck. Per-editor cases below may override (e.g. foliage).
+	switch subject {
+	case Editing.Scenery, Editing.Terrain, Editing.Shelter:
+	default:
+		world.FocalPoint.AsNode3D().SetPosition(Vector3.New(0, 0.9, 0))
+		world.FocalPoint.AsNode3D().SetRotation(Euler.Radians{})
+		world.FocalPoint.Lens.AsNode3D().SetRotation(Euler.Radians{})
+		world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(Vector3.New(0, 1, cameraDefaultZoom))
+	}
 	var editor Editor
 	switch subject {
 	case Editing.Scenery:

@@ -25,9 +25,20 @@ type CitizenEditor struct {
 	library   Library
 	workbench Workbench
 	lights    LightingConsole
+	rig       CameraRig
 
 	loadOnce sync.Once
 	body     CitizenBody
+	// rigScene is the instantiated animated GLB (skeleton + AnimationPlayer +
+	// the skinned mesh node our body re-meshes). Nil when the rig failed to
+	// load and the editor fell back to the legacy unskinned base.obj body.
+	rigScene *citizenRigScene
+	// view is the active editor mode ("" / "edit" customise the body;
+	// "control" is the WASD chase-cam walk-test). SwitchToView toggles it.
+	view string
+	// control holds the saved camera/body snapshot for the "control" view;
+	// non-nil only while that view is active. See editor_citizen_control.go.
+	control *citizenControlVis
 
 	last_slider_sculpt time.Time
 
@@ -42,8 +53,19 @@ type CitizenEditor struct {
 	lighting // private lighting for this editor
 }
 
-func (*CitizenEditor) Name() string    { return "citizen" }
-func (*CitizenEditor) Views() []string { return nil }
+func (*CitizenEditor) Name() string { return "citizen" }
+
+// Views advertises the citizen editor's modes to the ViewSelector dropdown:
+// "edit" (the default — sliders + clothing customise the body) and "control"
+// (a WASD chase-cam walk-test that drives the rigged body through its
+// locomotion clips). Only offered once the rig loaded; the legacy unskinned
+// body can't animate, so it stays edit-only.
+func (ce *CitizenEditor) Views() []string {
+	if ce.rigScene == nil {
+		return nil
+	}
+	return []string{"edit", "control"}
+}
 
 // EnableEditor fires when the user switches into the citizen
 // editor. This is where we pay the deferred load cost — building
@@ -65,7 +87,12 @@ func (ce *CitizenEditor) EnableEditor() {
 	}
 }
 
-func (*CitizenEditor) ChangeEditor() {}
+func (ce *CitizenEditor) ChangeEditor() {
+	// Leaving the citizen editor mid-walk: restore the camera + body the
+	// chase-cam moved so the next editor (and a later return here) starts clean.
+	ce.controlExit()
+	ce.view = ""
+}
 
 // Process runs once per frame; we use it to flush any pending body
 // visibility recompute that AttachDressing deferred. During replay of
@@ -77,10 +104,25 @@ func (ce *CitizenEditor) Process(dt Float.X) {
 	ce.body.CommitVisibility()
 }
 
-// SwitchToView lazy-loads the citizen base mesh and target deltas the
-// first time the editor is entered. Subsequent calls are no-ops.
+// SwitchToView lazy-loads the citizen the first time the editor is entered,
+// then toggles between the customise ("edit") and walk-test ("control")
+// modes. Leaving "control" restores the camera + body the chase-cam moved.
 func (ce *CitizenEditor) SwitchToView(view string) {
 	ce.ensureLoaded()
+	if view != "control" {
+		ce.controlExit()
+	}
+	ce.view = view
+	if view == "control" {
+		ce.controlEnter()
+	}
+}
+
+// PhysicsProcess drives the walk-test in the "control" view; idle otherwise.
+func (ce *CitizenEditor) PhysicsProcess(delta Float.X) {
+	if ce.view == "control" {
+		ce.controlPhysicsProcess(float32(delta))
+	}
 }
 
 func (ce *CitizenEditor) ensureLoaded() {
@@ -90,6 +132,14 @@ func (ce *CitizenEditor) ensureLoaded() {
 			Engine.Raise(err)
 			return
 		}
+		// Preferred path: the mesh2motion-rigged, animated citizen. Our
+		// procedural morph mesh is bound to the imported 66-bone skeleton and
+		// driven by the Quaternius clip library.
+		if ce.tryLoadRigged(base, targets) {
+			return
+		}
+		// Fallback: legacy unskinned base.obj body (rig assets missing or the
+		// GLB hasn't been imported by Godot yet).
 		mi := MeshInstance3D.New()
 		ce.AsNode3D().AsNode().AddChild(mi.AsNode())
 		body, err := AttachCitizenBody(mi, base, targets)
@@ -99,6 +149,41 @@ func (ce *CitizenEditor) ensureLoaded() {
 		}
 		ce.body = body
 	})
+}
+
+// tryLoadRigged builds + installs the skinned, animated citizen body. Returns
+// false (raising the cause) if any rig asset is unavailable so the caller can
+// fall back to the legacy body.
+func (ce *CitizenEditor) tryLoadRigged(base *citizen.BaseMesh, targets []*citizen.Target) bool {
+	scene, err := instantiateCitizenRigScene()
+	if err != nil {
+		Engine.Raise(err)
+		return false
+	}
+	// Build the rig from the imported mesh BEFORE AttachRiggedCitizenBody
+	// swaps the mesh out (it reads scene.bodyMI's imported ArrayMesh).
+	rig, err := buildCitizenRig(scene, base)
+	if err != nil {
+		Engine.Raise(err)
+		scene.root.AsNode().QueueFree()
+		return false
+	}
+	// Render at the rig's true ≈1.7 m size (like the critter), so the editor's
+	// reset-on-switch camera frames it the same way and it's correct for the
+	// world too.
+	ce.AsNode3D().AsNode().AddChild(scene.root.AsNode())
+	body, err := AttachRiggedCitizenBody(scene.bodyMI, base, targets, rig)
+	if err != nil {
+		Engine.Raise(err)
+		scene.root.AsNode().QueueFree()
+		return false
+	}
+	ce.body = body
+	ce.rigScene = scene
+	// Idle the preview so the skin is visibly animating (and so any binding
+	// problems show up immediately rather than only once the user moves it).
+	playCritterClip(scene.root, scene.player, "idle")
+	return true
 }
 
 func (*CitizenEditor) Tabs(mode Mode) []string {

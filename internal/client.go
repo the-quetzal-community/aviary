@@ -755,6 +755,7 @@ func (world *Client) Ready() {
 	world.CitizenEditor.library = world
 	world.CitizenEditor.workbench = world
 	world.CitizenEditor.lights = world
+	world.CitizenEditor.rig = world
 	world.CritterEditor.recorder = world
 	world.CritterEditor.library = world
 	world.CritterEditor.workbench = world
