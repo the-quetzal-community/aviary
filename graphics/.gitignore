@@ -6,3 +6,7 @@
 *.a
 library_documentation.xml
 go.xcframework
+
+# Sentry (official build only; forks fetch their own / none)
+addons/sentry/
+override.cfg

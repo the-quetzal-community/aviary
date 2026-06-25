@@ -13,6 +13,11 @@ import (
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/startup"
 	"the.quetzal.community/aviary/internal"
+
+	// On musl builds this statically links the sentry-godot GDExtension into the
+	// binary (no dlopen'd .so) and registers it via Register below; a no-op on other
+	// platforms, where the .so addon self-registers. See internal/sentry.
+	"the.quetzal.community/aviary/internal/sentry"
 )
 
 func main() {
@@ -53,6 +58,11 @@ func main() {
 	internal.ProfMark("main: classes registered")
 	startup.LoadingScene()
 	internal.UserDataDir = OS.GetUserDataDir()
+	// Register the statically-linked sentry-godot extension (musl builds; a no-op
+	// elsewhere, where the .so addon self-registers via its .gdextension). The engine
+	// is up after LoadingScene, so this runs before the editor split below to cover
+	// both the editor and the shipped game.
+	sentry.Register()
 	if Engine.IsEditorHint() {
 		startup.Scene()
 		return
@@ -78,6 +88,7 @@ func main() {
 		SceneTree.Add(internal.NewClient())
 	}
 	internal.ProfMark("main: client added, starting engine scene")
+
 	startup.Scene()
 	// The main loop has ended; release session-lifetime caches (shared materials,
 	// etc.) while the engine is still up and the scene not yet torn down, so they

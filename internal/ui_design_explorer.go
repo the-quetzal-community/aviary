@@ -66,10 +66,13 @@ type DesignExplorer struct {
 
 	author string
 	themes map[string]TextureButton.ID
-	// theme_is_mod records which author themes are user mods (user://mods/<name>)
-	// rather than community-library authors (res://library/<name>), so the explorer
-	// resolves their model/preview/icon paths from the mods directory.
-	theme_is_mod                map[string]bool
+	// theme_lib / theme_mod record which sources back each author theme: a
+	// community-library root (res://library/<name>), a user-mods root
+	// (user://mods/<name>), or both — a mod folder named like a builtin author
+	// extends it, sharing that author's tabs. The explorer pulls tiles from
+	// whichever sources are present.
+	theme_lib                   map[string]bool
+	theme_mod                   map[string]bool
 	themes_available_for_editor map[editorMode]map[string]struct{}
 
 	// state that enables the design drawer to open and close.
@@ -187,7 +190,8 @@ func (de *DesignExplorer) Ready() {
 	de.Tabs.GetTabBar().AsControl().
 		SetMouseFilter(Control.MouseFilterStop)
 	de.themes = make(map[string]TextureButton.ID)
-	de.theme_is_mod = make(map[string]bool)
+	de.theme_lib = make(map[string]bool)
+	de.theme_mod = make(map[string]bool)
 	de.themes_available_for_editor = make(map[editorMode]map[string]struct{})
 	if Dir := DirAccess.Open("res://library"); Dir != (DirAccess.Instance{}) {
 		for name := range Dir.Iter() {
@@ -201,56 +205,53 @@ func (de *DesignExplorer) Ready() {
 			// packed converted texture (.ctex) too, so it's correct on
 			// both desktop and Android.
 			if ExistsSync("res://library/" + name + "/icon.png") {
+				de.theme_lib[name] = true
 				de.addThemeButton(name)
 			}
 		}
 	}
 	// Mod authors: user-dropped models under user://mods/<modname>/<category>/.
-	// Desktop only — the web export has no writable mods directory. A mod whose
-	// folder name collides with a community-library author is skipped (the
-	// library author keeps the name).
+	// Desktop only — the web export has no writable mods directory. A mod folder
+	// named like a builtin author EXTENDS it: we reuse the existing library button
+	// (keeping its icon) and overlay the mod models into its tabs; only a brand-new
+	// author needs its own button.
 	if runtime.GOOS != "js" {
 		if mods := DirAccess.Open(modsRoot); mods != DirAccess.Nil {
 			for name := range mods.Iter() {
 				if strings.Contains(name, ".") {
 					continue
 				}
-				if _, taken := de.themes[name]; taken {
-					continue
+				de.theme_mod[name] = true
+				if _, exists := de.themes[name]; !exists {
+					de.addThemeButton(name)
 				}
-				de.theme_is_mod[name] = true
-				de.addThemeButton(name)
 			}
 		}
 	}
 }
 
-// authorLibraryBase is the base URI under which an author's MODELS live —
-// res://library/<author> for community authors, user://mods/<author> for mods.
-func (de *DesignExplorer) authorLibraryBase(author string) string {
-	if de.theme_is_mod[author] {
-		return modsRoot + "/" + author
+// authorTabDirs opens an author's library-preview and mods directories for a
+// given tab, honouring which sources back the author. Either return may be
+// DirAccess.Nil (source absent or that tab missing from it); a merged author can
+// return both, and the caller builds tiles from each.
+func (de *DesignExplorer) authorTabDirs(author, tab string) (lib, mod DirAccess.Instance) {
+	if de.theme_lib[author] {
+		lib = DirAccess.Open("res://preview/" + author + "/" + tab)
 	}
-	return "res://library/" + author
+	if de.theme_mod[author] {
+		mod = DirAccess.Open(modsRoot + "/" + author + "/" + tab)
+	}
+	return lib, mod
 }
 
-// authorPreviewBase is the base URI under which an author's THUMBNAILS live.
-// Mods keep their preview sidecars next to the models, so it coincides with the
-// model base; community authors keep thumbnails in the separate preview tree.
-func (de *DesignExplorer) authorPreviewBase(author string) string {
-	if de.theme_is_mod[author] {
-		return modsRoot + "/" + author
-	}
-	return "res://preview/" + author
-}
-
-// authorThemeIcon resolves the author-selector button / heading icon, honouring
-// the mod vs library source recorded in theme_is_mod.
+// authorThemeIcon resolves the author-selector button / heading icon. A library
+// (or library+mod) author uses its res://library icon; a pure mod author uses its
+// mod icon sidecar or the generic glyph.
 func (de *DesignExplorer) authorThemeIcon(author string) Texture2D.Instance {
-	if de.theme_is_mod[author] {
-		return modAuthorIcon(author)
+	if de.theme_lib[author] {
+		return LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png")
 	}
-	return LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png")
+	return modAuthorIcon(author)
 }
 
 // addThemeButton creates and registers the author-selector button for author,
@@ -581,9 +582,9 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	if !ok {
 		themes_available = make(map[string]struct{})
 		for author := range ui.themes {
-			base := ui.authorPreviewBase(author)
 			for _, tab := range ui.editor.Tabs(mode) {
-				if DirAccess.Open(base+"/"+tab) != DirAccess.Nil {
+				lib, mod := ui.authorTabDirs(author, tab)
+				if lib != DirAccess.Nil || mod != DirAccess.Nil {
 					themes_available[author] = struct{}{}
 					break
 				}
@@ -619,10 +620,12 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		button, _ := ui.themes[theme].Instance()
 		button.AsCanvasItem().SetVisible(true)
 	}
-	preview_path := ui.authorPreviewBase(author)
-	library_path := ui.authorLibraryBase(author)
-	themes := DirAccess.Open(preview_path)
-	if themes == DirAccess.Nil {
+	// Bail if the chosen author has no content root at all (e.g. preferredAuthor
+	// returned "" or a stale name). Otherwise each tab pulls tiles from whichever
+	// of the library / mods sources back this author.
+	hasLib := ui.theme_lib[author] && DirAccess.Open("res://preview/"+author) != DirAccess.Nil
+	hasMod := ui.theme_mod[author] && DirAccess.Open(modsRoot+"/"+author) != DirAccess.Nil
+	if !hasLib && !hasMod {
 		return
 	}
 	ui.tabbed = nil
@@ -658,18 +661,17 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			ui.Tabs.SetTabTitle(index, "")
 			index++
 		} else {
-			var path = preview_path + "/" + tab
-			resources := DirAccess.Open(path)
+			lib, mod := ui.authorTabDirs(author, tab)
 			// Builtin procedural tiles the editor wants shown in this
 			// tab (e.g. the critter editor's procedural foreleg). The
-			// tab is shown if EITHER the library has entries OR the
-			// editor injects builtins, so procedural-only tabs aren't
-			// hidden by a missing preview directory.
+			// tab is shown if EITHER source (library or mods) has entries
+			// OR the editor injects builtins, so procedural-only tabs
+			// aren't hidden by a missing preview directory.
 			var builtins []BuiltinDesign
 			if provider, ok := ui.editor.(BuiltinDesignProvider); ok {
 				builtins = provider.BuiltinDesigns(mode, tab)
 			}
-			if resources == DirAccess.Nil && len(builtins) == 0 {
+			if lib == DirAccess.Nil && mod == DirAccess.Nil && len(builtins) == 0 {
 				continue
 			}
 			gridflow := new(GridFlowContainer)
@@ -708,123 +710,110 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 					AsControl().SetMouseFilter(Control.MouseFilterStop).AsNode())
 				ui.tile_for_resource[resource] = button.ID()
 			}
-			if resources == DirAccess.Nil {
-				gridflow.Update()
-				if ExistsSync("res://ui/" + tab + ".svg") {
-					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))
-				} else {
-					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
+			// Community-library tiles (res://): thumbnails from the preview tree,
+			// models from the library tree.
+			if lib != DirAccess.Nil {
+				var ext = glb
+				if mode == ModeMaterial {
+					ext = png
 				}
-				ui.Tabs.SetTabTitle(index, "")
-				index++
-				continue
+				preview_path := "res://preview/" + author
+				library_path := "res://library/" + author
+				// Default tile order is alphabetical by file name. DirAccess
+				// iterates in filesystem/pack order (not guaranteed sorted), so
+				// sort the names up front; applyRecency later floats recently-
+				// placed designs ahead of this stable alphabetical baseline.
+				for _, resource := range slices.Sorted(lib.Iter()) {
+					resource = strings.TrimSuffix(resource, ".import")
+					if !String.HasSuffix(resource, ".png") || String.HasSuffix(resource, "_cut.glb.png") {
+						continue
+					}
+					var path = preview_path + "/" + tab + "/" + resource
+					switch ext {
+					case glb:
+						resource := library_path + "/" + tab + "/" + strings.TrimSuffix(string(resource), ".png")
+						if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
+							resource = tscn
+						}
+						// Load the thumbnail off the main thread: the palette has
+						// hundreds of these and they aren't needed for the world to
+						// render, so blocking on each one stalled the whole load. The
+						// tile exists immediately; its texture pops in when ready.
+						tile := TextureButton.New().
+							SetIgnoreTextureSize(true).
+							SetStretchMode(TextureButton.StretchKeepAspectCentered)
+						tileID := tile.ID()
+						var preview Texture2D.Instance
+						LoadAsync(path, func(tex Texture2D.Instance) {
+							preview = tex
+							if tex == Texture2D.Nil {
+								return
+							}
+							if b, ok := tileID.Instance(); ok {
+								b.SetTextureNormal(tex)
+							}
+						})
+						tile.AsBaseButton().OnButtonDown(func() {
+							ui.armDrag(mode, resource, preview)
+						})
+						tile.AsBaseButton().OnPressed(func() {
+							ui.tapTile(mode, resource)
+						})
+						tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+						tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
+						elements.AsNode().AddChild(tile.AsNode())
+						ui.tile_for_resource[resource] = tile.ID()
+					case png:
+						// Prefer a .region sidecar over a raw .png when both
+						// exist — the sidecar describes a sub-region of a
+						// shared atlas material, while the raw .png is the
+						// legacy pre-cropped form.
+						base := strings.TrimSuffix(string(resource), ".png")
+						region_path := library_path + "/" + tab + "/" + base + ".region"
+						resource := library_path + "/" + tab + "/" + resource
+						if FileAccess.FileExists(region_path) {
+							resource = region_path
+						}
+						// Thumbnail loaded off the main thread (see the glb case).
+						tile := TextureButton.New().
+							SetIgnoreTextureSize(true).
+							SetStretchMode(TextureButton.StretchKeepAspectCentered)
+						tileID := tile.ID()
+						var texture Texture2D.Instance
+						LoadAsync(path, func(tex Texture2D.Instance) {
+							texture = tex
+							if tex == Texture2D.Nil {
+								return
+							}
+							if b, ok := tileID.Instance(); ok {
+								b.SetTextureNormal(tex)
+							}
+						})
+						tile.AsBaseButton().OnButtonDown(func() {
+							ui.armDrag(mode, resource, texture)
+						})
+						tile.AsBaseButton().OnPressed(func() {
+							ui.tapTile(mode, resource)
+						})
+						tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
+						tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
+						elements.AsNode().AddChild(tile.AsNode())
+						ui.tile_for_resource[resource] = tile.ID()
+					}
+				}
 			}
-			if ui.theme_is_mod[author] {
-				// Mod tab: list the .glb models directly (sidecar .png thumbnails
-				// are optional) and reference each by its mod:// pseudo-URI, so it
-				// flows through the same placement pipeline as a library design.
-				for _, name := range slices.Sorted(resources.Iter()) {
+			// Mod overlay tiles (user://mods): list the .glb models directly
+			// (sidecar <file>.glb.png thumbnails optional) and reference each by its
+			// mod:// pseudo-URI so it flows through the same placement pipeline.
+			if mod != DirAccess.Nil {
+				modBase := modsRoot + "/" + author + "/" + tab
+				for _, name := range slices.Sorted(mod.Iter()) {
 					if !strings.HasSuffix(name, glb) {
 						continue
 					}
 					ui.addModTile(elements.AsNode(), mode,
 						modScheme+author+"/"+tab+"/"+name,
-						preview_path+"/"+tab+"/"+name+png)
-				}
-				gridflow.Update()
-				if ExistsSync("res://ui/" + tab + ".svg") {
-					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))
-				} else {
-					ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))
-				}
-				ui.Tabs.SetTabTitle(index, "")
-				index++
-				continue
-			}
-			var ext = glb
-			if mode == ModeMaterial {
-				ext = png
-			}
-			// Default tile order is alphabetical by file name. DirAccess
-			// iterates in filesystem/pack order (not guaranteed sorted), so
-			// sort the names up front; applyRecency later floats recently-
-			// placed designs ahead of this stable alphabetical baseline.
-			for _, resource := range slices.Sorted(resources.Iter()) {
-				resource = strings.TrimSuffix(resource, ".import")
-				if !String.HasSuffix(resource, ".png") || String.HasSuffix(resource, "_cut.glb.png") {
-					continue
-				}
-				var path = preview_path + "/" + tab + "/" + resource
-				switch ext {
-				case glb:
-					resource := library_path + "/" + tab + "/" + strings.TrimSuffix(string(resource), ".png")
-					if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
-						resource = tscn
-					}
-					// Load the thumbnail off the main thread: the palette has
-					// hundreds of these and they aren't needed for the world to
-					// render, so blocking on each one stalled the whole load. The
-					// tile exists immediately; its texture pops in when ready.
-					tile := TextureButton.New().
-						SetIgnoreTextureSize(true).
-						SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					tileID := tile.ID()
-					var preview Texture2D.Instance
-					LoadAsync(path, func(tex Texture2D.Instance) {
-						preview = tex
-						if tex == Texture2D.Nil {
-							return
-						}
-						if b, ok := tileID.Instance(); ok {
-							b.SetTextureNormal(tex)
-						}
-					})
-					tile.AsBaseButton().OnButtonDown(func() {
-						ui.armDrag(mode, resource, preview)
-					})
-					tile.AsBaseButton().OnPressed(func() {
-						ui.tapTile(mode, resource)
-					})
-					tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
-					elements.AsNode().AddChild(tile.AsNode())
-					ui.tile_for_resource[resource] = tile.ID()
-				case png:
-					// Prefer a .region sidecar over a raw .png when both
-					// exist — the sidecar describes a sub-region of a
-					// shared atlas material, while the raw .png is the
-					// legacy pre-cropped form.
-					base := strings.TrimSuffix(string(resource), ".png")
-					region_path := library_path + "/" + tab + "/" + base + ".region"
-					resource := library_path + "/" + tab + "/" + resource
-					if FileAccess.FileExists(region_path) {
-						resource = region_path
-					}
-					// Thumbnail loaded off the main thread (see the glb case).
-					tile := TextureButton.New().
-						SetIgnoreTextureSize(true).
-						SetStretchMode(TextureButton.StretchKeepAspectCentered)
-					tileID := tile.ID()
-					var texture Texture2D.Instance
-					LoadAsync(path, func(tex Texture2D.Instance) {
-						texture = tex
-						if tex == Texture2D.Nil {
-							return
-						}
-						if b, ok := tileID.Instance(); ok {
-							b.SetTextureNormal(tex)
-						}
-					})
-					tile.AsBaseButton().OnButtonDown(func() {
-						ui.armDrag(mode, resource, texture)
-					})
-					tile.AsBaseButton().OnPressed(func() {
-						ui.tapTile(mode, resource)
-					})
-					tile.AsControl().SetCustomMinimumSize(Vector2.New(256, 256))
-					tile.AsControl().SetMouseFilter(Control.MouseFilterStop)
-					elements.AsNode().AddChild(tile.AsNode())
-					ui.tile_for_resource[resource] = tile.ID()
+						modBase+"/"+name+png)
 				}
 			}
 			gridflow.Update()

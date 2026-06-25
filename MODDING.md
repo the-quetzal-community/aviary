@@ -26,7 +26,10 @@ mods/<modname>/<category>/<model>.glb
 ```
 
 - **`<modname>`** becomes an author button in the design drawer, grouping all of
-  that mod's models under its own tab set.
+  that mod's models under its own tab set. If you name it after a built-in author
+  (`everything`, `kenney`, `makehuman`, `wildfire_games`, `excog`, `splizard`,
+  `yughues`) your models are **added into that author's existing tabs** instead —
+  a handy way to extend a built-in set with more of your own pieces.
 - **`<category>`** must match a tab shown in the drawer for the editor you want
   the model in (e.g. `housing`, `village`, `farming`, `factory`, `defense`,
   `fencing`, `utility`, `foliage`, `flowers`, `boulder`, `critter`, `swimmer`).

@@ -11,3 +11,9 @@ releases
 aviary
 /graphics/musl_amd64.editor
 /.claude
+
+# Sentry musl libc++ archives (produced by build_sentry_musl.sh; not committed)
+/internal/sentry/lib/
+
+# Sentry DSN baked in at build by inject_dsn.sh (never commit the DSN)
+/internal/sentry/dsn_injected.go
