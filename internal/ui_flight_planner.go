@@ -67,7 +67,7 @@ func (fl *FlightPlanner) Reload() {
 			child.QueueFree()
 		}
 	}
-	fl.Maps.SetColumns(int(fl.AsControl().Size().X/256) - 1)
+	fl.Maps.SetColumns(max(1, int(fl.AsControl().Size().X/256)-1))
 	DirAccess.MakeDirAbsolute("user://snaps")
 	for save := range DirAccess.Open("user://snaps").Iter() {
 		if strings.HasSuffix(save, ".png") {
@@ -222,7 +222,11 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 	defer cancel()
 	saves, err := fl.client.signalling.CloudSaves(ctx)
 	if err != nil {
-		Engine.Raise(err)
+		// A 404 ("not found") just means this account has no cloud saves yet — an
+		// expected state, not an error worth reporting to Sentry on every Reload.
+		if err.Error() != "not found" {
+			Engine.Raise(err)
+		}
 		return
 	}
 	for _, save := range saves {
@@ -235,7 +239,11 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		}
 		snap, err := fl.client.signalling.LookupSnap(ctx, save)
 		if err != nil {
-			Engine.Raise(err)
+			// "not found" (404) just means this save has no preview image uploaded —
+			// an expected state, skip it quietly rather than reporting to Sentry.
+			if err.Error() != "not found" {
+				Engine.Raise(err)
+			}
 			continue
 		}
 		buf, err := io.ReadAll(snap)

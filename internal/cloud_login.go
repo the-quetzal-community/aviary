@@ -11,7 +11,12 @@ import (
 func (ui *CloudControl) loginUpdate() (signalling.User, bool) {
 	user, err := ui.client.signalling.LookupUser(context.Background())
 	if err != nil {
-		Engine.Raise(err)
+		// "Unauthorized" (not signed in) and "not found" (no account yet) are expected
+		// offline states, reflected in the status indicator below — not errors worth
+		// reporting to Sentry on every poll. Only surface genuine failures.
+		if err.Error() != "Unauthorized" && err.Error() != "not found" {
+			Engine.Raise(err)
+		}
 		ui.on_process <- func(cc *CloudControl) {
 			if err.Error() == "Unauthorized" {
 				UserState.Aviary = signalling.User{}
