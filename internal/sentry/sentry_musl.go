@@ -46,11 +46,14 @@ var keep = C.sentry_init_func()
 // Linked reports whether the statically-linked sentry-godot extension is present.
 func Linked() bool { return keep != nil }
 
-// Register loads the statically-linked sentry-godot GDExtension into the running engine via
-// its in-binary entrypoint, then starts the SDK with the build-injected DSN (instantiate).
-// Call once the engine is up (after startup.LoadingScene). The "libgodot://" prefix is
-// required by Godot's function loader; the rest is just the extension's unique identifier.
+// Register loads the statically-linked sentry-godot GDExtension via its in-binary entrypoint,
+// then starts both SDKs with the build-injected DSN: sentry-godot (native crashes + Godot
+// errors) via instantiate, and sentry-go (Go panics) via initGo. Call once the engine is up
+// (after startup.LoadingScene). The "libgodot://" prefix is required by Godot's function
+// loader; the rest is just the extension's unique identifier.
 func Register() {
 	GDExtensionManager.LoadExtensionFromFunction("libgodot://sentry", uintptr(C.sentry_init_func()))
-	instantiate()
+	release := releaseTag()
+	instantiate(release)
+	initGo(release)
 }

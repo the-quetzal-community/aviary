@@ -3,6 +3,7 @@ module the.quetzal.community/aviary
 go 1.26.1
 
 require (
+	github.com/getsentry/sentry-go v0.47.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v4 v4.2.12

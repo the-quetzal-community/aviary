@@ -1,6 +1,8 @@
 package sentry
 
 import (
+	"fmt"
+
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/ProjectSettings"
@@ -27,7 +29,7 @@ func Available() bool { return Engine.HasSingleton("SentrySDK") }
 // in place before sentry_init reads it. No DSN ⇒ Sentry stays off. Skips F5 play-in-editor
 // sessions to match skip_auto_init_on_editor_play. Called by Register once the extension/addon
 // is loaded and the SentrySDK singleton exists.
-func instantiate() {
+func instantiate(release string) {
 	if dsn == "" {
 		return
 	}
@@ -38,9 +40,34 @@ func instantiate() {
 		return
 	}
 	ProjectSettings.SetSetting("sentry/options/dsn", dsn)
+	if release != "" {
+		ProjectSettings.SetSetting("sentry/options/release", release)
+	}
 	if Engine.HasSingleton("SentrySDK") {
 		Object.Call(Engine.GetSingleton("SentrySDK"), "init")
 	}
+}
+
+// releaseTag is the Sentry release for this build — "aviary@<version>". Prefers the
+// build-injected version (deploy.sh's velopack version via inject_dsn.sh); falls back to the
+// project's application/config/version only if that wasn't baked in (it's often stale). "" if
+// neither is set.
+func releaseTag() string {
+	v := version
+	if v == "" {
+		switch x := ProjectSettings.GetSetting("application/config/version", "").(type) {
+		case string:
+			v = x
+		case interface{ String() string }:
+			v = x.String()
+		default:
+			v = fmt.Sprint(x)
+		}
+	}
+	if v == "" {
+		return ""
+	}
+	return "aviary@" + v
 }
 
 // CaptureMessage sends a message event to Sentry at the given level and returns nothing

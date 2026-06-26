@@ -8,7 +8,11 @@ package sentry
 // (only on musl builds — see sentry_musl.go).
 func Linked() bool { return false }
 
-// Register starts the Sentry SDK with the build-injected DSN (instantiate). The .so addon is
-// already loaded via its .gdextension; auto_init is off so we drive init here. No-op without
-// the addon (no SentrySDK singleton) or without a DSN.
-func Register() { instantiate() }
+// Register starts both Sentry SDKs with the build-injected DSN: sentry-godot via instantiate
+// (the .so addon is already loaded via its .gdextension; auto_init is off so we drive init
+// here) and sentry-go via initGo (Go panics). No-op without the addon / without a DSN.
+func Register() {
+	release := releaseTag()
+	instantiate(release)
+	initGo(release)
+}
