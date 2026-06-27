@@ -57,11 +57,11 @@ fi
 GOOS=windows GOARCH=amd64 gd build
 build_monitor windows amd64 releases/windows/amd64/aviary-crashmonitor.exe
 # --- Linux x86_64 (fully-static musl: inproc native capture, runs on glibc + musl) --------
-GOOS=musl GOARCH=amd64 gd build
+GOOS=linux GOARCH=amd64 gd build
 build_monitor linux amd64 releases/musl/amd64/aviary-crashmonitor
 
 [ -f releases/musl/amd64/aviary ] && \
-vpk [linux] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/musl/amd64 --mainExe aviary -o ./releases/velopack
+vpk [linux] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/linux/amd64 --mainExe aviary -o ./releases/velopack
 [ -f releases/windows/amd64/aviary.exe ] && \
 vpk [win] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/windows/amd64 --mainExe aviary.exe -o ./releases/velopack
 
