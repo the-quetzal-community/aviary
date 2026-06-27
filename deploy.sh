@@ -51,19 +51,19 @@ if [ "$(uname)" = "Darwin" ]; then
     --signAppIdentity "Developer ID Application: Quentin Quaadgras" \
     --signInstallIdentity "Developer ID Installer: Quentin Quaadgras" \
     --notaryProfile "QuentinQuaadgras"
-else
-  # --- Windows x86_64 -----------------------------------------------------------------------
-  GOOS=windows GOARCH=amd64 gd build
-  build_monitor windows amd64 releases/windows/amd64/aviary-crashmonitor.exe
-  # --- Linux x86_64 (fully-static musl: inproc native capture, runs on glibc + musl) --------
-  GOOS=musl GOARCH=amd64 gd build
-  build_monitor linux amd64 releases/musl/amd64/aviary-crashmonitor
-
-  [ -f releases/musl/amd64/aviary ] && \
-    vpk [linux] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/musl/amd64 --mainExe aviary -o ./releases/velopack
-  [ -f releases/windows/amd64/aviary.exe ] && \
-    vpk [win] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/windows/amd64 --mainExe aviary.exe -o ./releases/velopack
 fi
+
+# --- Windows x86_64 -----------------------------------------------------------------------
+GOOS=windows GOARCH=amd64 gd build
+build_monitor windows amd64 releases/windows/amd64/aviary-crashmonitor.exe
+# --- Linux x86_64 (fully-static musl: inproc native capture, runs on glibc + musl) --------
+GOOS=musl GOARCH=amd64 gd build
+build_monitor linux amd64 releases/musl/amd64/aviary-crashmonitor
+
+[ -f releases/musl/amd64/aviary ] && \
+vpk [linux] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/musl/amd64 --mainExe aviary -o ./releases/velopack
+[ -f releases/windows/amd64/aviary.exe ] && \
+vpk [win] pack --packId "Aviary.EditorCollection" --packVersion "$VERSION" --packDir ./releases/windows/amd64 --mainExe aviary.exe -o ./releases/velopack
 
 cd releases/velopack || exit 1
 rclone copy -v --max-depth 1 . r2:aviary/
