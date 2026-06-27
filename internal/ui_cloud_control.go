@@ -36,6 +36,7 @@ import (
 	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/classdb/Window"
+	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
@@ -100,6 +101,7 @@ type CloudControl struct {
 	allowedGizmos map[Gizmo]bool
 
 	sharing    bool
+	updateBob  Tween.Instance // looping bob of the Updates icon while a background update downloads
 	client     *Client
 	on_process chan func(*CloudControl)
 
@@ -275,12 +277,56 @@ func (ui *CloudControl) set_update_available(restart func(), available bool) {
 	if available {
 		ui.UpdateProgress.AsCanvasItem().SetVisible(true)
 		ui.JoinCode.Versioning.Updates.AsCanvasItem().SetVisible(true)
+		ui.startUpdateBob()
 	} else {
+		ui.stopUpdateBob()
 		ui.JoinCode.Versioning.Version.SetText("[s]" + ui.JoinCode.Versioning.Version.Text() + "[/s]")
 		ui.JoinCode.Versioning.Updates.AsCanvasItem().SetVisible(false)
 		ui.JoinCode.Versioning.Restart.AsCanvasItem().SetVisible(true)
 		ui.JoinCode.Versioning.Restart.AsBaseButton().OnPressed(restart)
 		ui.UpdateProgress.AsCanvasItem().SetVisible(false)
+	}
+}
+
+// updateBobAmplitude is how far (px) the Updates arrow rises and falls each
+// half-cycle; updateBobHalf is the duration of one rise (or fall).
+const (
+	updateBobAmplitude = 4
+	updateBobHalf      = 0.5
+)
+
+// startUpdateBob gives the Updates arrow a gentle up/down bob for the duration
+// of a background download, signalling that work is ongoing. The bob is started
+// deferred so the HBoxContainer has laid the (just-shown) icon out first —
+// otherwise we'd capture its pre-sort origin and bob around the wrong point. X
+// is left to the container layout; only position.y is animated.
+func (ui *CloudControl) startUpdateBob() {
+	if ui.updateBob != Tween.Nil {
+		return
+	}
+	updates := ui.JoinCode.Versioning.Updates.AsControl()
+	Callable.Defer(Callable.New(func() {
+		// set_update_available(false) may have already fired in the gap; only
+		// bob while the icon is still the one being shown.
+		if ui.updateBob != Tween.Nil || !updates.AsCanvasItem().Visible() {
+			return
+		}
+		restY := updates.Position().Y
+		tw := updates.AsNode().CreateTween().SetLoops()
+		PropertyTweener.Make(tw, updates.AsObject(), "position:y", restY-updateBobAmplitude, updateBobHalf).
+			SetTrans(Tween.TransSine).SetEase(Tween.EaseInOut)
+		PropertyTweener.Make(tw, updates.AsObject(), "position:y", restY, updateBobHalf).
+			SetTrans(Tween.TransSine).SetEase(Tween.EaseInOut)
+		ui.updateBob = tw
+	}))
+}
+
+// stopUpdateBob halts the bob loop, if running. The icon is hidden by the
+// caller right after, so there's no need to restore its resting position.
+func (ui *CloudControl) stopUpdateBob() {
+	if ui.updateBob != Tween.Nil {
+		ui.updateBob.Kill()
+		ui.updateBob = Tween.Nil
 	}
 }
 
