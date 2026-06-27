@@ -13,10 +13,10 @@ import (
 	"graphics.gd/startup"
 )
 
-// initGo starts the pure-Go Sentry SDK (sentry-go) and registers a graphics.gd panic handler
-// via startup.OnPanic, so Go panics — in node callbacks (graphics.gd's recovery path) and in
-// main — are reported with real Go stack traces. This complements sentry-godot, which only
-// sees native crashes and Godot errors (a Go panic is a clean unwind, invisible to it).
+// initGo starts the pure-Go Sentry SDK (sentry-go) and wires the two crash paths it adds on top
+// of sentry-godot: (1) engine crashes (NOTIFICATION_CRASH) via startup.OnCrash, reported with the
+// crash-time Go stack; (2) fatal Go panics via the crash-monitor sidecar (startCrashMonitor /
+// debug.SetCrashOutput) — those unwind past the engine, so OnCrash never sees them.
 //
 // Shipped-game-only: skips the editor/export like instantiate (no "editor" feature), so it
 // doesn't init or hook during `gd build`. No DSN ⇒ no-op. Uses the same build-injected DSN.
@@ -31,15 +31,18 @@ func initGo(release string) {
 	}); err != nil {
 		return
 	}
-	startup.OnPanic(func(recovered any, stack []byte) {
+	startup.OnCrash(func() {
+		// An engine-level crash (NOTIFICATION_CRASH) — a native Godot/C++ crash, not a Go
+		// panic (those unwind past the engine and are caught by startCrashMonitor instead).
+		// There's no recovered value, but the current goroutine's stack still shows where Go
+		// was when the engine went down, so dump it as context alongside the report.
+		stack := debug.Stack()
 		sentrygo.WithScope(func(scope *sentrygo.Scope) {
-			// graphics.gd captures this during its deferred recovery, so it still holds the
-			// panicking frames (the goroutine hasn't unwound yet).
 			scope.SetContext("go", sentrygo.Context{"stack": string(stack)})
 			scope.SetLevel(sentrygo.LevelFatal)
-			sentrygo.CurrentHub().Recover(recovered)
+			sentrygo.CaptureMessage("engine crash (NOTIFICATION_CRASH)")
 		})
-		// Flush so the event is sent even if this panic is about to take the process down.
+		// Flush so the event is sent even though the engine is about to take the process down.
 		sentrygo.Flush(2 * time.Second)
 	})
 	startCrashMonitor(release)
