@@ -326,6 +326,11 @@ type Client struct {
 	// re-instantiates the model instead of just tweening the old one.
 	author_designs map[musical.Author]musical.Design
 
+	// author_editors records the editor each remote author is currently in, from
+	// their LookAt.Editor broadcast. Drives the editor switcher's presence chips
+	// (see EditorIndicator.Process / Client.peerPresenceSnapshot).
+	author_editors map[musical.Author]string
+
 	// possessing_entity records, per remote author, the entity they are currently
 	// driving via GizmoEnter possession — captured from their Commit=false move
 	// broadcasts — so an observed LookAt gesture (an attack/bite) plays on the
@@ -465,6 +470,7 @@ func NewClient() *Client {
 		clients:           make(chan musical.Networking),
 		authors:           make(map[musical.Author]Node3D.ID),
 		author_designs:    make(map[musical.Author]musical.Design),
+		author_editors:    make(map[musical.Author]string),
 		possessing_entity: make(map[musical.Author]musical.Entity),
 
 		load_last_save: true,
@@ -1595,13 +1601,17 @@ func (world *Client) Process(dt Float.X) {
 			Angles: angles,
 			Author: world.id,
 			Design: world.avatar,
+			// The editor we're currently in, so peers can show where we are on
+			// their editor switcher (EditorIndicator presence chips). Also the
+			// routing key the receive path keys on (Client.LookAt).
+			Editor: subjectEditorName(world.Editing),
 			// A queued one-shot gesture (the possessed critter's bite) rides this
 			// LookAt so peers play it; it forces a send below even when we're stock
 			// still, then clears so it fires exactly once.
 			Action: world.pendingGesture,
 			Timing: world.time.Now(),
 		}
-		if world.pendingGesture != "" || world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || world.last_LookAt.Design != view.Design || !world.joining {
+		if world.pendingGesture != "" || world.last_LookAt.Offset != view.Offset || world.last_LookAt.Angles != view.Angles || world.last_LookAt.Design != view.Design || world.last_LookAt.Editor != view.Editor || !world.joining {
 			world.space.LookAt(view)
 			world.last_LookAt = view
 			world.last_lookAt_time = time.Now()

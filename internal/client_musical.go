@@ -712,6 +712,11 @@ func (world musicalImpl) LookAt(view musical.LookAt) error {
 		if view.Author == world.id {
 			return
 		}
+		// Record which editor this peer is in for the editor switcher's presence
+		// chips (EditorIndicator.Process). Updated on every LookAt — even the ones
+		// that early-return below after just tweening an unchanged avatar — so a
+		// peer switching editors without moving is still reflected.
+		world.author_editors[view.Author] = view.Editor
 		// A one-shot gesture riding this LookAt (an attack/bite the peer triggered
 		// while possessing) plays on the body they're driving. Independent of the
 		// avatar bookkeeping below — the bite belongs to the possessed critter.

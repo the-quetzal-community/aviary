@@ -7,6 +7,8 @@ import (
 	"graphics.gd/classdb/TextureRect"
 	"graphics.gd/classdb/VBoxContainer"
 	"graphics.gd/variant/Object"
+
+	"the.quetzal.community/aviary/internal/musical"
 )
 
 type EditorIndicator struct {
@@ -33,6 +35,15 @@ type EditorIndicator struct {
 
 	rollout Rollout
 
+	// editorButtons are the EditorTypes children (the per-editor switcher
+	// buttons), captured in Ready in Subject order so a peer's editor Subject
+	// indexes straight into it. Used as glide targets for the presence chips.
+	editorButtons []Control.Instance
+
+	// chips are the floating avatar thumbnails showing where remote players are,
+	// keyed by author. Created/freed as peers come and go in Process.
+	chips map[musical.Author]*presenceChip
+
 	client *Client
 }
 
@@ -40,9 +51,14 @@ func (ed *EditorIndicator) Ready() {
 	ed.Triangle.AsControl().SetAnchorsPreset(Control.PresetFullRect)
 	ed.EditorIcon.AsBaseButton().OnPressed(ed.toggle)
 	ed.rollout.icon = ed.Arrows.AsControl()
+	ed.chips = make(map[musical.Author]*presenceChip)
 	for i, child := range ed.EditorSelector.EditorTypes.AsNode().GetChildren() {
 		button, ok := Object.As[TextureButton.Instance](child)
 		if ok {
+			// EditorTypes children are in Subject order (the trailing Control
+			// spacer is not a TextureButton, so it's skipped); capture each
+			// button as a presence-chip glide target indexed by its Subject.
+			ed.editorButtons = append(ed.editorButtons, button.AsControl())
 			button.AsBaseButton().OnPressed(func() {
 				if ed.rollout.Animating() {
 					return
