@@ -81,6 +81,13 @@ type SharedResources struct {
 	// without this a single dangling design re-triggers Godot's "Resource file
 	// not found" error on every Process tick for the whole session.
 	missing_scenes map[musical.Design]bool
+
+	// design_creations backs "user design" bookmarks: designs whose renderable is
+	// reconstructed from captured editor musical-data (a CritterCreation for now)
+	// rather than loaded from a file URI. sceneFor rebuilds + packs these on
+	// demand (see MusicalCreation / Client.buildDesignNode). Local-only until the
+	// Upload byte-transport (P3) carries the bundle to peers and into the save.
+	design_creations map[musical.Design]CritterCreation
 }
 
 // The entity↔object↔design bookkeeping below is what every placement
@@ -138,6 +145,26 @@ func (client *Client) designURI(design musical.Design) string {
 	return client.design_to_string[design]
 }
 
+// isMobileDesign reports whether a placed design is a mobile entity (possessable,
+// walk-here-commandable, terrain-reseated). Library designs are classified by
+// their URI category; user-design creations (no library URI) are always treated
+// as mobile critters.
+func (client *Client) isMobileDesign(design musical.Design) bool {
+	if _, ok := client.design_creations[design]; ok {
+		return true
+	}
+	return isMobileDesignCategory(designCategory(client.design_to_string[design]))
+}
+
+// designWalksTerrain reports whether a mobile design rides the terrain surface
+// (vs keeping an absolute air/water height). User creations are ground critters.
+func (client *Client) designWalksTerrain(design musical.Design) bool {
+	if _, ok := client.design_creations[design]; ok {
+		return true
+	}
+	return isTerrainWalkingCategory(designCategory(client.design_to_string[design]))
+}
+
 func (client *Client) MusicalDesign(resource string) musical.Design {
 	design, ok := client.loaded[resource]
 	if !ok {
@@ -150,6 +177,36 @@ func (client *Client) MusicalDesign(resource string) musical.Design {
 			Design: design,
 			Import: resource,
 		})
+	}
+	return design
+}
+
+// MusicalCreation mints a Design backed by an in-place editor creation (a
+// bookmarked build) reconstructed from its captured musical-data, rather than a
+// library file URI. Parallel to MusicalDesign: it allocates a fresh Design and
+// registers the reconstruction data locally so sceneFor can rebuild it.
+//
+// P3 will additionally serialise the creation and emit a musical.Upload so the
+// design resolves on peers and survives reload; until then a creation only
+// resolves on the client that minted it.
+func (client *Client) MusicalCreation(cc CritterCreation) musical.Design {
+	client.design_ids[client.id]++
+	design := musical.Design{
+		Author: client.id,
+		Number: client.design_ids[client.id],
+	}
+	client.design_creations[design] = cc
+	// Transport the creation's data so peers can resolve the design and the save
+	// is self-contained on reload: an Upload carries the serialised bundle, is
+	// broadcast to every client, and is persisted by storage. Local registration
+	// above means our own placement resolves immediately without waiting for the
+	// round-trip.
+	if client.space != nil {
+		if bundle := encodeCreation(cc); bundle != nil {
+			if err := client.space.Upload(musical.Upload{Design: design, Bundle: bundle}); err != nil {
+				Engine.Raise(err)
+			}
+		}
 	}
 	return design
 }

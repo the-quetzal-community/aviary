@@ -516,3 +516,106 @@ func TestClosestAnchor_CapPreservesRadial(t *testing.T) {
 		t.Errorf("off: got %v, want %v", gotOff, off)
 	}
 }
+
+func TestLegKind_NameRoundTrip(t *testing.T) {
+	for _, kind := range []LegKind{LegKindMammal, LegKindArm, LegKindInsect, LegKindBird} {
+		got, ok := LegKindFromName(kind.Name())
+		if !ok || got != kind {
+			t.Errorf("LegKindFromName(%q) = (%v, %v), want (%v, true)", kind.Name(), got, ok, kind)
+		}
+	}
+	if _, ok := LegKindFromName("centaur"); ok {
+		t.Error("unknown kind name should report ok=false")
+	}
+	if LegKind(99).Name() != "mammal" {
+		t.Errorf("out-of-range kind should name as mammal, got %q", LegKind(99).Name())
+	}
+}
+
+func TestSetLegKind(t *testing.T) {
+	c := New()
+	i := c.AppendLeg()
+	if !c.SetLegKind(i, LegKindInsect) {
+		t.Fatal("first SetLegKind should report a change")
+	}
+	if c.SetLegKind(i, LegKindInsect) {
+		t.Error("repeated SetLegKind to the same value should report no change")
+	}
+	if got := c.LegsView()[i].Kind; got != LegKindInsect {
+		t.Errorf("Kind = %v, want %v", got, LegKindInsect)
+	}
+	// Unknown kinds clamp to mammal rather than storing garbage.
+	c.SetLegKind(i, LegKind(42))
+	if got := c.LegsView()[i].Kind; got != LegKindMammal {
+		t.Errorf("out-of-range kind stored as %v, want mammal", got)
+	}
+	if c.SetLegKind(99, LegKindBird) {
+		t.Error("out-of-range leg index should be a no-op")
+	}
+}
+
+func TestLegRestPoseAtPosKind_Silhouettes(t *testing.T) {
+	c := New()
+	hip := Vec3{X: 0.3, Y: 0.2, Z: 0.1}
+
+	mammal, ok := c.LegRestPoseAtPosKind(hip, LegKindMammal)
+	if !ok {
+		t.Fatal("mammal pose not ok")
+	}
+	legacy, _ := c.LegRestPoseAtPos(hip)
+	legacy.Kind = LegKindMammal // only the Kind tag may differ
+	if mammal != legacy {
+		t.Errorf("mammal kind pose %+v != legacy pose %+v", mammal, legacy)
+	}
+	if mammal.Foot.Y != GroundY {
+		t.Errorf("mammal foot Y = %v, want ground %v", mammal.Foot.Y, GroundY)
+	}
+
+	insect, _ := c.LegRestPoseAtPosKind(hip, LegKindInsect)
+	if insect.Knee.Y <= insect.Hip.Y {
+		t.Errorf("insect knee (Y=%v) should peak above the hip (Y=%v)", insect.Knee.Y, insect.Hip.Y)
+	}
+	if insect.Foot.Y != GroundY {
+		t.Errorf("insect foot Y = %v, want ground %v", insect.Foot.Y, GroundY)
+	}
+	if insect.Foot.X <= mammal.Foot.X {
+		t.Errorf("insect foot should splay wider (X=%v) than mammal (X=%v)", insect.Foot.X, mammal.Foot.X)
+	}
+
+	bird, _ := c.LegRestPoseAtPosKind(hip, LegKindBird)
+	if bird.Knee.Z >= bird.Hip.Z {
+		t.Errorf("bird ankle (Z=%v) should trail behind the hip (Z=%v)", bird.Knee.Z, bird.Hip.Z)
+	}
+	if bird.Foot.Y != GroundY {
+		t.Errorf("bird foot Y = %v, want ground %v", bird.Foot.Y, GroundY)
+	}
+
+	arm, _ := c.LegRestPoseAtPosKind(hip, LegKindArm)
+	if arm.Foot.Y <= GroundY {
+		t.Errorf("arm hand (Y=%v) should hang above the ground %v", arm.Foot.Y, GroundY)
+	}
+	if arm.Knee.Z >= arm.Hip.Z {
+		t.Errorf("arm elbow (Z=%v) should trail behind the shoulder (Z=%v)", arm.Knee.Z, arm.Hip.Z)
+	}
+}
+
+func TestAppendLegAtPosKind_StoresKind(t *testing.T) {
+	c := New()
+	i := c.AppendLegAtPosKind(Vec3{X: 0.2, Y: 0.1, Z: 0}, LegKindBird)
+	if i < 0 {
+		t.Fatal("append failed")
+	}
+	if got := c.LegsView()[i].Kind; got != LegKindBird {
+		t.Errorf("Kind = %v, want bird", got)
+	}
+}
+
+func TestRestore_PreservesLegKind(t *testing.T) {
+	c := New()
+	c.AppendLegAtPosKind(Vec3{X: 0.2, Y: 0.1, Z: 0}, LegKindInsect)
+	d := New()
+	d.Restore(c.Bones(), c.Legs(), c.Weights())
+	if got := d.LegsView()[0].Kind; got != LegKindInsect {
+		t.Errorf("restored Kind = %v, want insect", got)
+	}
+}

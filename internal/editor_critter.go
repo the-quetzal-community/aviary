@@ -76,6 +76,11 @@ type CritterEditor struct {
 
 	entityToPart map[musical.Entity]Node3D.ID
 	partToEntity map[Node3D.ID]musical.Entity
+	// partURIs records each placed part's design URI (recovered from the Change
+	// at attach time, since critter parts don't go through a recoverable design
+	// map — see DesignForNode). Used by CaptureCreation to snapshot a creation
+	// as a user-design bookmark.
+	partURIs map[Node3D.ID]string
 
 	// pendingChanges holds Change messages that arrived before their
 	// referenced Design's PackedScene was imported (typical during
@@ -159,10 +164,11 @@ type CritterEditor struct {
 	// "explore") means the normal world view with no overlay.
 	view string
 
-	// Procedural-leg placement state. Clicking the foreleg/forearm
-	// builtin tile sets placingLeg to the tile name ("foreleg" or
-	// "forearm"); a ghost MeshInstance3D mirrors the would-be leg at
-	// the body-raycast hit until the user commits with a click or
+	// Procedural-limb placement state. Clicking a limb builtin tile
+	// sets placingLeg to the limb's animation-kind name ("mammal",
+	// "arm", "insect", "bird" — see critter.LegKindFromName); a
+	// ghost MeshInstance3D mirrors the would-be leg at the
+	// body-raycast hit until the user commits with a click or
 	// cancels with right-click. Acts as a stand-in for the imported
 	// PackedScene preview used by other parts (we don't have a .glb
 	// to load, so we build the ghost geometry procedurally).
@@ -580,6 +586,7 @@ func (ce *CritterEditor) ensureLoaded() {
 		ce.body = body
 		ce.entityToPart = make(map[musical.Entity]Node3D.ID)
 		ce.partToEntity = make(map[Node3D.ID]musical.Entity)
+		ce.partURIs = make(map[Node3D.ID]string)
 		ce.jawCache = make(map[Node3D.ID]*jawState)
 		ce.animatedParts = make(map[Node3D.ID]proceduralPart)
 		// Seed the idle head-look scheduler with the current time
@@ -605,11 +612,19 @@ func (ce *CritterEditor) SelectDesign(mode Mode, design string) {
 	// shape of interaction as imported parts.
 	switch design {
 	case BuiltinForelegDesign:
-		ce.placingLeg = "foreleg"
+		ce.placingLeg = "mammal"
+		ce.ensureLegGhost()
+		return
+	case BuiltinInsectLegDesign:
+		ce.placingLeg = "insect"
+		ce.ensureLegGhost()
+		return
+	case BuiltinBirdLegDesign:
+		ce.placingLeg = "bird"
 		ce.ensureLegGhost()
 		return
 	case BuiltinForearmDesign:
-		ce.placingLeg = "forearm"
+		ce.placingLeg = "arm"
 		ce.ensureLegGhost()
 		return
 	case BuiltinEyesDesign:
@@ -666,9 +681,11 @@ func isStepperDesign(design string) bool {
 // emits a leg/grow sculpt instead of going through the part-
 // placement preview flow.
 const (
-	BuiltinForelegDesign = "procedural://critter/foreleg"
-	BuiltinForearmDesign = "procedural://critter/forearm"
-	BuiltinEyesDesign    = "procedural://critter/eyes"
+	BuiltinForelegDesign   = "procedural://critter/foreleg"
+	BuiltinInsectLegDesign = "procedural://critter/insectleg"
+	BuiltinBirdLegDesign   = "procedural://critter/birdleg"
+	BuiltinForearmDesign   = "procedural://critter/forearm"
+	BuiltinEyesDesign      = "procedural://critter/eyes"
 )
 
 // BuiltinDesigns advertises the critter editor's procedural-only
@@ -681,19 +698,32 @@ func (ce *CritterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 	}
 	switch tab {
 	case "foreleg":
+		// One tile per walking style — the SPORE-ish "pick the kind
+		// of leg" moment. All three share the free-attach placement
+		// flow; the kind rides the grow sculpt and drives the gait.
 		return []BuiltinDesign{
 			{
 				Resource: BuiltinForelegDesign,
+				Icon:     "res://ui/foreleg.svg",
+				Label:    "Mammal Leg",
+			},
+			{
+				Resource: BuiltinInsectLegDesign,
 				Icon:     "res://ui/legwear.svg",
-				Label:    "Procedural Leg",
+				Label:    "Insect Leg",
+			},
+			{
+				Resource: BuiltinBirdLegDesign,
+				Icon:     "res://ui/critter.svg",
+				Label:    "Bird Leg",
 			},
 		}
 	case "forearm":
 		return []BuiltinDesign{
 			{
 				Resource: BuiltinForearmDesign,
-				Icon:     "res://ui/legwear.svg",
-				Label:    "Procedural Forearm",
+				Icon:     "res://ui/forearm.svg",
+				Label:    "Procedural Arm",
 			},
 		}
 	case "sensory":
@@ -930,8 +960,11 @@ func (ce *CritterEditor) applyBoneSculpt(slider string, amount float32) {
 //	leg/grow                         — append default leg
 //	leg/grow/{boneIndex}             — append leg attached to bone N
 //	leg/grow_at                      — append leg with hip at brush.Target
+//	leg/grow_at/{kind}               — same, with an animation kind
+//	                                   (mammal|arm|insect|bird)
 //	leg/shrink/{i}                   — remove leg i
 //	leg/{i}/attach                   — set leg i's attach bone index
+//	leg/{i}/kind                     — set leg i's animation kind (Amount)
 //	leg/{i}/r                        — set every joint's radius
 //	leg/{i}/{hip|knee|foot}/r        — set one joint's radius
 //	leg/{i}/{hip|knee|foot}/{x|y|z}  — set one axis of one joint
@@ -939,7 +972,10 @@ func (ce *CritterEditor) applyBoneSculpt(slider string, amount float32) {
 // Grow / grow_at use deterministic defaults so receivers don't need
 // every joint coordinate piggy-backed in the sculpt — grow_at uses
 // brush.Target (a Vector3) as the hip position and derives the
-// remaining joints from it via LegRestPoseAtPos.
+// remaining joints from it via LegRestPoseAtPos. Clients that
+// predate leg kinds treat leg/grow_at/{kind} as plain leg/grow_at
+// (same base pose, mammal animation) and skip leg/{i}/kind — the
+// geometry still converges, only the animation style downgrades.
 func (ce *CritterEditor) applyLegSculptBrush(brush musical.Sculpt) {
 	ce.ensureLoaded()
 	if ce.body.critter == nil {
@@ -963,11 +999,15 @@ func (ce *CritterEditor) applyLegSculptBrush(brush musical.Sculpt) {
 		ce.body.AppendLeg()
 		return
 	case "grow_at":
-		ce.body.AppendLegAtPos(critter.Vec3{
+		kind := critter.LegKindMammal
+		if len(parts) >= 3 {
+			kind, _ = critter.LegKindFromName(parts[2])
+		}
+		ce.body.AppendLegAtPosKind(critter.Vec3{
 			X: float32(brush.Target.X),
 			Y: float32(brush.Target.Y),
 			Z: float32(brush.Target.Z),
-		})
+		}, kind)
 		return
 	case "shrink":
 		if len(parts) < 3 {
@@ -985,6 +1025,9 @@ func (ce *CritterEditor) applyLegSculptBrush(brush musical.Sculpt) {
 	switch parts[2] {
 	case "attach":
 		ce.body.SetLegAttach(i, int(amount))
+		return
+	case "kind":
+		ce.body.SetLegKind(i, critter.LegKind(amount))
 		return
 	case "r":
 		ce.body.SetLegRadius(i, amount)
@@ -1066,17 +1109,25 @@ func (ce *CritterEditor) clearLegGhost() {
 // updateLegGhostAt rebuilds the ghost's mesh from a leg whose hip
 // lands at the given body-local position. Called each frame in
 // placement mode so the ghost tracks the cursor exactly (no snap
-// to a spine bone — knee/foot derive from the hip, foot lands on
-// the ground plane).
+// to a spine bone — knee/foot derive from the hip using the kind
+// being placed, so an insect ghost previews its sprawled inverted-V
+// and a bird ghost its backward ankle).
 func (ce *CritterEditor) updateLegGhostAt(hip critter.Vec3) {
 	if ce.legGhostArrayMesh == ArrayMesh.Nil || ce.body.critter == nil {
 		return
 	}
-	leg, ok := ce.body.critter.LegRestPoseAtPos(hip)
+	leg, ok := ce.body.critter.LegRestPoseAtPosKind(hip, ce.placingLegKind())
 	if !ok {
 		return
 	}
 	ce.uploadLegGhostMesh(leg)
+}
+
+// placingLegKind maps the active placement tile (placingLeg) to its
+// animation kind. Unknown/empty names read as mammal.
+func (ce *CritterEditor) placingLegKind() critter.LegKind {
+	kind, _ := critter.LegKindFromName(ce.placingLeg)
+	return kind
 }
 
 // uploadLegGhostMesh skins the ghost ArrayMesh from a Leg's rest pose.
@@ -1229,6 +1280,10 @@ func (ce *CritterEditor) dragEmit(slider string, amount float32) {
 // mid-drag so a pending edit isn't silently dropped. No-op when no
 // drag is pending.
 func (ce *CritterEditor) flushDragEmits() {
+	// End-of-drag housekeeping: re-enable (and refresh, if any rebuild
+	// skipped it) the body's picking collision. No-op when no drag
+	// deferred it.
+	ce.body.SetLiveDeform(false)
 	if len(ce.dragEmitOrder) == 0 {
 		return
 	}
@@ -1273,7 +1328,15 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 				bodyOrigin := ce.body.mesh.AsNode3D().GlobalPosition()
 				local := Vector3.Sub(hover.Position, bodyOrigin)
 				ce.lastEditAt = time.Now()
-				ce.emitLegSculptAt("leg/grow_at", local, 0)
+				// Mammal legs keep the bare slider older clients
+				// already understand; other kinds ride a suffix
+				// those clients fall back to a mammal-animated leg
+				// on (same joints — geometry stays converged).
+				slider := "leg/grow_at"
+				if kind := ce.placingLegKind(); kind != critter.LegKindMammal {
+					slider += "/" + kind.Name()
+				}
+				ce.emitLegSculptAt(slider, local, 0)
 				if !Input.IsKeyPressed(Input.KeyShift) {
 					ce.clearLegGhost()
 				}
@@ -1530,10 +1593,14 @@ func (ce *CritterEditor) limboneMousePress() {
 		if !hitOk {
 			return
 		}
-		// World-space joint position is body-origin + body-local
-		// (Y, Z); X stays on the X=0 plane for the side view.
+		// World-space HANDLE position is body-origin + body-local
+		// (Y, Z), with the same legHandleYShift the renderer and the
+		// pickers apply; X stays on the X=0 plane for the side view.
+		// Anchoring the drag offset to the unshifted joint here used
+		// to make the joint leap by the shift the moment the drag
+		// activated (dragEmit subtracts the shift a second time).
 		jw := Vector3.Add(bodyOrigin, Vector3.XYZ{
-			X: 0, Y: Float.X(jp.Y), Z: Float.X(jp.Z),
+			X: 0, Y: Float.X(jp.Y + legHandleYShift), Z: Float.X(jp.Z),
 		})
 		Viewport.Get(ce.AsNode()).SetInputAsHandled()
 		ce.dragging = spineDrag{
@@ -1958,6 +2025,7 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 			ce.body.DetachPart(id)
 			delete(ce.entityToPart, change.Entity)
 			delete(ce.partToEntity, id)
+			delete(ce.partURIs, id)
 			delete(ce.jawCache, id)
 			// Drop any animated procedural part bound to this node
 			// before the Node3D handle goes invalid; otherwise the
@@ -1984,6 +2052,30 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 		ce.pendingChanges = append(ce.pendingChanges, change)
 	}
 	return nil
+}
+
+// CaptureCreation snapshots the critter currently in the editor into a
+// self-contained CritterCreation: the folded procedural skeleton (bones, legs,
+// macro weights) plus every attached part with its design URI and anchor. This
+// is the unit a "user design" bookmark will persist (eventually as musical
+// records — Sculpts for the skeleton, Changes for the parts); the spike captures
+// it from live editor state to prove reconstruction independently.
+func (ce *CritterEditor) CaptureCreation() CritterCreation {
+	var cc CritterCreation
+	if ce.body.critter != nil {
+		c := ce.body.critter
+		cc.Bones = append([]critter.Bone(nil), c.Bones()...)
+		cc.Legs = append([]critter.Leg(nil), c.Legs()...)
+		weights := c.Weights()
+		cc.Weights = make(map[string]float32, len(weights))
+		for k, v := range weights {
+			cc.Weights[k] = v
+		}
+	}
+	for id, anchor := range ce.body.partAnchors {
+		cc.Parts = append(cc.Parts, CritterPartRef{URI: ce.partURIs[id], Anchor: anchor})
+	}
+	return cc
 }
 
 // debugCritterSignature logs a deterministic checksum of the final folded
@@ -2116,6 +2208,9 @@ func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
 	id := node.ID()
 	ce.entityToPart[change.Entity] = id
 	ce.partToEntity[id] = change.Entity
+	if ce.library != nil {
+		ce.partURIs[id] = ce.library.designURI(change.Design)
+	}
 	return true
 }
 
@@ -2219,6 +2314,57 @@ func (ce *CritterEditor) PhysicsProcess(delta Float.X) {
 	}
 }
 
+// reanchorDrag re-derives the in-progress drag's anchor values from
+// the current cursor + model state. Called exactly once, when the
+// dead-zone releases: without it the cursor travel spent inside the
+// dead-zone replays into the first active frame and the handle
+// visibly snaps by that distance. Position drags recompute their
+// world-space offset; radius drags restart their distance baseline
+// at the current hit. (startRadius / startLegPos / startBones are
+// still valid — nothing was emitted during the dead-zone.)
+func (ce *CritterEditor) reanchorDrag() {
+	if ce.body.critter == nil || ce.body.mesh == MeshInstance3D.Nil {
+		return
+	}
+	bodyOrigin := ce.body.mesh.AsNode3D().GlobalPosition()
+	hit, ok := ce.mouseOnXZeroPlane(bodyOrigin)
+	if !ok {
+		return
+	}
+	switch ce.dragging.kind {
+	case dragBone:
+		bone, ok := ce.body.critter.BoneAt(ce.dragging.bone)
+		if !ok {
+			return
+		}
+		bw := Vector3.Add(bodyOrigin, Vector3.XYZ{
+			X: 0, Y: Float.X(bone.Pos.Y), Z: Float.X(bone.Pos.Z),
+		})
+		ce.dragging.offset = Vector3.Sub(bw, hit)
+	case dragLeg:
+		legs := ce.body.critter.LegsView()
+		if ce.dragging.legIdx < 0 || ce.dragging.legIdx >= len(legs) {
+			return
+		}
+		leg := legs[ce.dragging.legIdx]
+		var jp critter.Vec3
+		switch ce.dragging.legJoint {
+		case critter.LegHip:
+			jp = leg.Hip
+		case critter.LegKnee:
+			jp = leg.Knee
+		default:
+			jp = leg.Foot
+		}
+		jw := Vector3.Add(bodyOrigin, Vector3.XYZ{
+			X: 0, Y: Float.X(jp.Y + legHandleYShift), Z: Float.X(jp.Z),
+		})
+		ce.dragging.offset = Vector3.Sub(jw, hit)
+	case dragRadius, dragLegRadius:
+		ce.dragging.startHit = hit
+	}
+}
+
 // spinePhysicsProcess updates the dragging bone (if any) from the
 // current mouse position and refreshes handle positions to follow
 // the body shape.
@@ -2235,6 +2381,15 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 				return
 			}
 			ce.dragging.active = true
+			// Re-anchor the drag to the CURRENT cursor position so the
+			// pixels travelled inside the dead-zone don't get replayed
+			// as a snap on the first active frame — the handle starts
+			// moving from exactly where it sits.
+			ce.reanchorDrag()
+			// Interactive drag: defer the concave-collision upload
+			// (the priciest slice of each per-frame rebuild) until the
+			// drag ends — flushDragEmits clears the flag.
+			ce.body.SetLiveDeform(true)
 		}
 		bodyOrigin := ce.body.mesh.AsNode3D().GlobalPosition()
 		hit, ok := ce.mouseOnXZeroPlane(bodyOrigin)
@@ -2328,10 +2483,12 @@ func (ce *CritterEditor) spinePhysicsProcess(delta Float.X) {
 				// joint now − distance at click). Anchored to start
 				// values so the response is linear in world units,
 				// not accumulated per frame — same idea as the bone
-				// radius drag.
+				// radius drag. The centre carries the same
+				// legHandleYShift the rendered ring does, so the
+				// distances are measured from the circle on screen.
 				jw := Vector3.Add(bodyOrigin, Vector3.XYZ{
 					X: 0,
-					Y: Float.X(ce.dragging.startLegPos.Y),
+					Y: Float.X(ce.dragging.startLegPos.Y + legHandleYShift),
 					Z: Float.X(ce.dragging.startLegPos.Z),
 				})
 				dY := hit.Y - jw.Y
@@ -2472,34 +2629,19 @@ func (ce *CritterEditor) Process(delta Float.X) {
 	// rest-pose surface points and only the body skin breathes.
 	// Pauses in ribcage / limbone view (stable side profile for
 	// editing) and during active placement.
+	// Idle breathing + head-look, via the shared applyCritterIdle (the placed
+	// CritterAnimator uses the same). Suspended (apply=false) while spine-editing /
+	// limbone overlays are open or during active placement — the scheduler still
+	// advances so its gap timing stays continuous, but the body holds at rest.
 	if ce.body.mesh != MeshInstance3D.Nil {
-		// Keep the MI transform at identity scale — historical
-		// breathing wrote here, so reset in case anything else
-		// (control-view gait, etc.) hasn't already.
+		// Keep the MI transform at identity scale — historical breathing wrote here,
+		// so reset in case anything else (control-view gait, etc.) hasn't already.
 		ce.body.mesh.AsNode3D().SetScale(Vector3.New(1, 1, 1))
-		if ce.spineEdit || editing {
-			ce.body.SetBreathe(0)
-		} else {
+		suspended := ce.spineEdit || editing
+		if !suspended {
 			ce.breatheTime += float32(delta)
-			const breathePeriod = float32(4.0)     // seconds per breath
-			const breatheAmplitude = float32(0.03) // ±3 % chest puff
-			phase := ce.breatheTime * (2 * float32(math.Pi) / breathePeriod)
-			ce.body.SetBreathe(breatheAmplitude * float32(math.Sin(float64(phase))))
 		}
-	}
-	// Idle head-look: schedule occasional sideways glances on the
-	// neck. Suspended when actively editing or while the ribcage/
-	// limbone overlays are open (the user wants the bones to stay
-	// still under their cursor). The scheduler keeps ticking when
-	// suspended so the gap timing stays continuous; we just don't
-	// apply the resulting yaw.
-	if ce.idleHeadLook != nil {
-		ce.idleHeadLook.advance(float32(delta))
-		if ce.spineEdit || editing {
-			ce.body.SetHeadLookYaw(0)
-		} else {
-			ce.body.SetHeadLookYaw(ce.idleHeadLook.angle)
-		}
+		applyCritterIdle(&ce.body, ce.idleHeadLook, ce.breatheTime, float32(delta), !suspended)
 	}
 	// Reposition attached parts (eyes, hats, dressings, etc.) using
 	// the current bone poses — LBS over the rest-anchor (T, Theta,

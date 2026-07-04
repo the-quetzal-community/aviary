@@ -96,6 +96,15 @@ type CritterBody struct {
 	rebuildDirty     bool
 	rebuildScheduled bool
 
+	// liveDeform marks an in-progress interactive drag: flushRebuild
+	// skips the concave collision upload (the most expensive slice of
+	// a rebuild, and useless mid-drag — the spine views pick against
+	// handle colliders and procedural overlays, not the body). Any
+	// skipped upload sets collisionStale so SetLiveDeform(false)
+	// refreshes the shape once when the drag ends.
+	liveDeform     bool
+	collisionStale bool
+
 	// legNodes / legArrayMeshes carry one MeshInstance3D + ArrayMesh
 	// per leg in the data model. Kept aligned with critter.Legs() by
 	// rebuildLegs(); excess entries get queue-freed when legs are
@@ -249,7 +258,14 @@ func AttachCritterBody(mi MeshInstance3D.Instance, c *critter.Critter) (CritterB
 		skeleton:       skeleton,
 		skin:           skin,
 	}
-	body.rebuild()
+	// Build synchronously here rather than via rebuild()'s deferred flush. The
+	// deferred flush fires a frame later through Callable.Defer; that's fine for
+	// the editor's long-lived body, but a transiently-built body (a user-design
+	// reconstruction that is packed into a PackedScene and freed the same frame —
+	// see buildCritterInstance) would have its skeleton freed before the deferred
+	// flushRebuild ran, panicking on an invalid Skeleton3D reference. A synchronous
+	// initial build leaves no dangling callback.
+	body.flushRebuild()
 	mi.SetMesh(body.arrayMesh.AsMesh())
 	// Custom AABB so the renderer doesn't recompute the skinned AABB
 	// from per-bone arrays every frame — that recompute path fires
@@ -264,7 +280,13 @@ func AttachCritterBody(mi MeshInstance3D.Instance, c *critter.Critter) (CritterB
 		Position: Vector3.New(-1.5, -1, -2),
 		Size:     Vector3.New(3, 3, 4),
 	})
-	mi.SetSkin(skin)
+	// Do NOT set the placeholder `skin` on the mesh here: flushRebuild above has
+	// already run rebuildSkeleton synchronously, which builds the real skin
+	// (CreateSkinFromRestTransforms) and calls mi.SetSkin with it. Setting the
+	// empty placeholder skin now would clobber that and collapse the skinned body
+	// out of view. (With the old deferred rebuild this line ran before the rebuild,
+	// so it was harmlessly overwritten next frame.) The placeholder skin still
+	// seeds b.skin so rebuildSkeleton's nil-guard passes on that first build.
 	// Standard Godot convention: skeleton lives next to the MI.
 	mi.SetSkeleton("../Skeleton3D")
 	return body, nil
@@ -390,6 +412,22 @@ func (b *CritterBody) AppendLegAtPos(hip critter.Vec3) int {
 	idx := b.critter.AppendLegAtPos(hip)
 	b.rebuild()
 	return idx
+}
+
+// AppendLegAtPosKind is AppendLegAtPos with an explicit animation
+// kind (insect / bird / arm) whose default rest pose differs from
+// the mammalian one.
+func (b *CritterBody) AppendLegAtPosKind(hip critter.Vec3, kind critter.LegKind) int {
+	idx := b.critter.AppendLegAtPosKind(hip, kind)
+	b.rebuild()
+	return idx
+}
+
+// SetLegKind switches leg i's animation style. No mesh rebuild —
+// the kind only affects how the runtime gait poses the limb, not
+// the stored geometry.
+func (b *CritterBody) SetLegKind(i int, kind critter.LegKind) {
+	b.critter.SetLegKind(i, kind)
 }
 
 // RemoveLeg drops leg i.
@@ -678,21 +716,48 @@ func (b *CritterBody) flushRebuild() {
 	}
 	b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 
-	if b.concaveShape != ConcavePolygonShape3D.Nil && len(b.indices)%3 == 0 {
-		need := len(b.indices)
-		if cap(b.faceBuf) < need {
-			b.faceBuf = make([]Vector3.XYZ, need)
-		} else {
-			b.faceBuf = b.faceBuf[:need]
-		}
-		for i, idx := range b.indices {
-			b.faceBuf[i] = b.vertexBuf[idx]
-		}
-		b.concaveShape.SetData(b.faceBuf)
+	if b.liveDeform {
+		b.collisionStale = true
+	} else {
+		b.refreshCollision()
 	}
 
 	b.repositionParts()
 	b.rebuildLegs()
+}
+
+// refreshCollision re-uploads the concave picking shape from the
+// current mesh buffers. Split out of flushRebuild so live drags can
+// defer it (see liveDeform) and refresh once on release.
+func (b *CritterBody) refreshCollision() {
+	b.collisionStale = false
+	if b.concaveShape == ConcavePolygonShape3D.Nil || len(b.indices)%3 != 0 {
+		return
+	}
+	need := len(b.indices)
+	if cap(b.faceBuf) < need {
+		b.faceBuf = make([]Vector3.XYZ, need)
+	} else {
+		b.faceBuf = b.faceBuf[:need]
+	}
+	for i, idx := range b.indices {
+		b.faceBuf[i] = b.vertexBuf[idx]
+	}
+	b.concaveShape.SetData(b.faceBuf)
+}
+
+// SetLiveDeform toggles interactive-drag mode: while on, rebuilds
+// skip the concave collision upload (deferring it); turning it off
+// refreshes the collision shape if any rebuild was skipped. Safe to
+// call redundantly.
+func (b *CritterBody) SetLiveDeform(v bool) {
+	if b.liveDeform == v {
+		return
+	}
+	b.liveDeform = v
+	if !v && b.collisionStale {
+		b.refreshCollision()
+	}
 }
 
 // rebuildSkeleton repopulates the Skeleton3D + Skin from the

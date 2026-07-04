@@ -1,11 +1,11 @@
 package musical
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"reflect"
 	"time"
 
@@ -102,8 +102,8 @@ type Import struct {
 }
 
 type Upload struct {
-	Design Design  // design to overwrite.
-	Upload fs.File // file containing the design data.
+	Design Design // design this upload provides data for.
+	Bundle []byte // the design's serialized data (e.g. a creation's records).
 }
 
 type Change struct {
@@ -280,6 +280,16 @@ func encode(v encodable) (buf []byte, err error) {
 			strLen := uint16(len(str))
 			buf = binary.LittleEndian.AppendUint16(buf, strLen)
 			buf = append(buf, []byte(str)...)
+		case reflect.Slice:
+			// Byte-slice payloads (e.g. Upload.Bundle): uint32 length + raw bytes.
+			// A uint32 length (vs the uint16 string prefix) allows payloads beyond
+			// 64KB. Only []byte slices exist among entry types — no other type has
+			// a slice field — so field.Bytes() is always valid here. Additive: this
+			// case is unreachable for every pre-existing entry type, so the wire
+			// format for them is unchanged (backwards compatible).
+			b := field.Bytes()
+			buf = binary.LittleEndian.AppendUint32(buf, uint32(len(b)))
+			buf = append(buf, b...)
 		case reflect.Interface:
 		default:
 			buf, err = binary.Append(buf, binary.LittleEndian, field.Interface())
@@ -358,6 +368,18 @@ func decode(r io.Reader) (encodable, error) {
 				return nil, xray.New(err)
 			}
 			field.SetString(string(data))
+		case reflect.Slice:
+			// Byte-slice payload (e.g. Upload.Bundle): uint32 length + raw bytes,
+			// matching the encode side.
+			var n uint32
+			if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+				return nil, xray.New(err)
+			}
+			data := make([]byte, n)
+			if _, err := io.ReadFull(r, data); err != nil {
+				return nil, xray.New(err)
+			}
+			field.SetBytes(data)
 		case reflect.Interface:
 		default:
 			err := binary.Read(r, binary.LittleEndian, field.Addr().Interface())
@@ -372,6 +394,47 @@ func decode(r io.Reader) (encodable, error) {
 	}
 	asserted, _ := reflect.TypeAssert[encodable](v)
 	return asserted, nil
+}
+
+// MarshalEntries encodes a sequence of musical entries (Member/Import/Sculpt/
+// Change/Action/LookAt values) into one self-contained byte slice, using the
+// same per-entry format as the wire and on-disk storage (records are
+// self-delimiting, so they're simply concatenated). This lets one UsersSpace3D
+// fragment be carried inside another — e.g. a user-design "creation" (a few
+// Sculpts + Imports + Changes) packed into a single [Upload]. Decode with
+// [UnmarshalEntries]. Entries that aren't musical records are rejected.
+func MarshalEntries(entries []any) ([]byte, error) {
+	var buf []byte
+	for _, e := range entries {
+		enc, ok := e.(encodable)
+		if !ok {
+			return nil, xray.New(errors.New("musical: MarshalEntries given a non-entry value"))
+		}
+		b, err := encode(enc)
+		if err != nil {
+			return nil, xray.New(err)
+		}
+		buf = append(buf, b...)
+	}
+	return buf, nil
+}
+
+// UnmarshalEntries decodes a byte slice produced by [MarshalEntries] back into
+// the original sequence of musical entries. Callers type-switch each element on
+// the concrete entry types (Sculpt, Import, Change, …).
+func UnmarshalEntries(data []byte) ([]any, error) {
+	r := bytes.NewReader(data)
+	var out []any
+	for {
+		e, err := decode(r)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return out, nil
+			}
+			return nil, xray.New(err)
+		}
+		out = append(out, e)
+	}
 }
 
 // fixLegacyBoolCollisions repairs the bool/non-bool bit collision

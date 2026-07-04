@@ -96,6 +96,11 @@ type Library interface {
 	// allocating one (and recording an Import) on first sight.
 	MusicalDesign(resource string) musical.Design
 
+	// MusicalCreation mints a Design backed by an in-place editor creation (a
+	// bookmarked build) reconstructed from captured musical-data, rather than a
+	// library file URI. Parallel to MusicalDesign.
+	MusicalCreation(cc CritterCreation) musical.Design
+
 	// designURI is the reverse mapping. Empty when the design's Import
 	// hasn't been observed yet (e.g. instruction reordering during replay).
 	designURI(design musical.Design) string

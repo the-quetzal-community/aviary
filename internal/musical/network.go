@@ -54,7 +54,14 @@ type client struct {
 }
 
 func (c client) Member(req Member) error { return c.send(req, false) }
-func (c client) Upload(req Upload) error { return c.send(req, true) }
+
+// Upload rides the Instructions channel (media=false) alongside every other
+// mutation. The separate MediaUploads channel exists for large media but is
+// not wired in every deployment (the aviary client stubs it); design-creation
+// bundles are small (a few KB of records), so the instruction stream carries
+// them fine and they stay correctly ordered with the placement Changes that
+// reference them.
+func (c client) Upload(req Upload) error { return c.send(req, false) }
 func (c client) Sculpt(req Sculpt) error { return c.send(req, false) }
 func (c client) Import(req Import) error { return c.send(req, false) }
 func (c client) Change(req Change) error { return c.send(req, false) }
@@ -96,6 +103,8 @@ func (c client) handle(replica UsersSpace3D) {
 		switch v := req.(type) {
 		case Member:
 			replica.Member(v)
+		case Upload:
+			replica.Upload(v)
 		case Sculpt:
 			replica.Sculpt(v)
 		case Import:

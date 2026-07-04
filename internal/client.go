@@ -466,6 +466,7 @@ func NewClient() *Client {
 			textures:           make(map[musical.Design]Texture2D.ID),
 			loaded:             make(map[string]musical.Design),
 			missing_scenes:     make(map[musical.Design]bool),
+			design_creations:   make(map[musical.Design]CritterCreation),
 		},
 		clients:           make(chan musical.Networking),
 		authors:           make(map[musical.Author]Node3D.ID),
@@ -1166,15 +1167,10 @@ func (world *Client) reseatMobileEntities() {
 		return
 	}
 	for design, ids := range world.design_to_entity {
-		uri, ok := world.design_to_string[design]
-		if !ok {
+		if !world.isMobileDesign(design) {
 			continue
 		}
-		category := designCategory(uri)
-		if !isMobileDesignCategory(category) {
-			continue
-		}
-		walksTerrain := isTerrainWalkingCategory(category)
+		walksTerrain := world.designWalksTerrain(design)
 		for _, id := range ids {
 			if _, isFloat := world.entity_float_delta[world.object_to_entity[id]]; isFloat {
 				continue
@@ -2197,10 +2193,10 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 									// category so a selected rock, fence, or building can't
 									// be dragged across the terrain by right-clicking.
 									design, placed := world.findDesignForObject(node3d.ID())
-									category := designCategory(world.design_to_string[design])
-									if !placed || !isMobileDesignCategory(category) {
+									if !placed || !world.isMobileDesign(design) {
 										break
 									}
+									category := designCategory(world.design_to_string[design])
 									// A swimmer is commanded with a depth-aimed "swim here": the
 									// press anchors the target XZ on the seabed and seeds its depth
 									// from the fish's current height; dragging the held button sets

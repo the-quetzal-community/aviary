@@ -158,6 +158,32 @@ func (ui *UI) Setup() {
 	})
 	ui.EditorIndicator.Shading.AsBaseButton().OnPressed(ui.toggleEnvironment)
 
+	// MyStuff bookmarks the active editor's creation as a user design and opens
+	// the design explorer's "user" theme. Its scene home — the Options container —
+	// is a hidden, mis-anchored legacy node (the real Shading moved to the
+	// EditorIndicator), so reveal it at a free top-left slot rather than leaving
+	// the button stranded inside an invisible parent. Re-parenting is avoided
+	// deliberately: graphics.gd rejects RemoveChild+AddChild as a Go→Godot
+	// ownership transfer.
+	if opts, ok := Object.As[Control.Instance](ui.AsNode().GetNode("Options")); ok {
+		opts.SetAnchorsPreset(Control.PresetTopLeft)
+		opts.SetPosition(Vector2.New(24, 24))
+		opts.AsCanvasItem().SetVisible(true)
+	}
+	// Hide the dead duplicate Shading under Options (the live one is on the
+	// EditorIndicator) so only MyStuff shows in the revealed container.
+	if sh, ok := Object.As[Control.Instance](ui.AsNode().GetNode("Options/Shading")); ok {
+		sh.AsCanvasItem().SetVisible(false)
+	}
+	if btn, ok := Object.As[TextureButton.Instance](ui.AsNode().GetNode("Options/MyStuff")); ok {
+		btn.SetIgnoreTextureSize(true)
+		btn.SetStretchMode(TextureButton.StretchKeepAspectCentered)
+		btn.AsControl().SetCustomMinimumSize(Vector2.New(72, 72))
+		btn.AsControl().SetTooltipText("Save this creation to My Stuff")
+		btn.AsCanvasItem().SetVisible(true)
+		btn.AsBaseButton().OnPressed(ui.client.bookmarkActiveCreation)
+	}
+
 	ui.buildSettingsMenu()
 	ui.buildEnvironmentMenu()
 

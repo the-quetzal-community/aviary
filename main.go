@@ -53,6 +53,7 @@ func main() {
 	classdb.Register[internal.DesignExplorer]()
 	classdb.Register[internal.CritterCollider]()
 	classdb.Register[internal.AvatarFlight]()
+	classdb.Register[internal.CritterAnimator]()
 	classdb.Register[internal.EntityAnimator]()
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
 	internal.ProfMark("main: classes registered")

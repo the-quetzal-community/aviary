@@ -159,10 +159,24 @@ func (editor *SceneryEditor) TryPlacePreview() bool {
 	editor.previewEntity = musical.Entity{}
 	editor.previewDesign = ""
 	editor.previewLastPos = Vector3.Zero
+	// A user-design bookmark (creation://<id>) mints a creation-backed Design
+	// bound to its saved musical-data; a library URI maps to an Import-backed
+	// Design as usual.
+	design := editor.Preview.Design()
+	var placedDesign musical.Design
+	if id, ok := creationID(design); ok {
+		cc, ok := readBookmarkCreation(id)
+		if !ok {
+			return false
+		}
+		placedDesign = editor.library.MusicalCreation(cc)
+	} else {
+		placedDesign = editor.library.MusicalDesign(design)
+	}
 	placement := musical.Change{
 		Author: editor.recorder.localAuthor(),
 		Entity: entity,
-		Design: editor.library.MusicalDesign(editor.Preview.Design()),
+		Design: placedDesign,
 		Offset: editor.Preview.AsNode3D().Position(),
 		Angles: editor.Preview.AsNode3D().Rotation(),
 		// Carry the preview's scale forward so a duplicate-from-

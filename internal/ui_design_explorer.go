@@ -228,6 +228,11 @@ func (de *DesignExplorer) Ready() {
 			}
 		}
 	}
+	// The "user" theme holds the player's bookmarked creations (user designs).
+	// Its button is created unconditionally but only shown when at least one
+	// bookmark exists (gated in Refresh via hasBookmarks); its tiles and tabs are
+	// built specially (refreshUserBookmarks), not from the library/mods dir scan.
+	de.addThemeButton("user")
 }
 
 // authorTabDirs opens an author's library-preview and mods directories for a
@@ -248,6 +253,9 @@ func (de *DesignExplorer) authorTabDirs(author, tab string) (lib, mod DirAccess.
 // (or library+mod) author uses its res://library icon; a pure mod author uses its
 // mod icon sidecar or the generic glyph.
 func (de *DesignExplorer) authorThemeIcon(author string) Texture2D.Instance {
+	if author == "user" {
+		return LoadSync[Texture2D.Instance]("res://ui/mystuff.svg")
+	}
 	if de.theme_lib[author] {
 		return LoadSync[Texture2D.Instance]("res://library/" + author + "/icon.png")
 	}
@@ -604,6 +612,13 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			visible_authors[theme] = struct{}{}
 		}
 	}
+	// The "user" theme isn't a dir-scanned author; surface it whenever the player
+	// has saved at least one bookmark, for every editor/mode (a saved creation
+	// can be placed anywhere). Its availability isn't cached because the bookmark
+	// set changes at runtime as the player saves new designs.
+	if hasBookmarks() {
+		visible_authors["user"] = struct{}{}
+	}
 	if _, ok := visible_authors[author]; !ok {
 		author = ""
 	}
@@ -619,6 +634,12 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		}
 		button, _ := ui.themes[theme].Instance()
 		button.AsCanvasItem().SetVisible(true)
+	}
+	// The "user" theme builds its tiles from the bookmark store rather than the
+	// library/mods dir scan, so it bypasses the per-tab directory logic below.
+	if author == "user" {
+		ui.refreshUserBookmarks(mode)
+		return
 	}
 	// Bail if the chosen author has no content root at all (e.g. preferredAuthor
 	// returned "" or a stale name). Otherwise each tab pulls tiles from whichever
@@ -839,6 +860,36 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	// design grids with a slider couldn't be collapsed. A slider-only panel (no grid
 	// tabs) has nothing to expand, so the arrow stays hidden there.
 	expansion.AsCanvasItem().SetVisible(len(ui.tabbed) > 0)
+}
+
+// refreshUserBookmarks builds the "user" theme's single tab from the bookmark
+// store (user://user/*.crt), one tile per saved creation referenced by its
+// creation:// URI so it flows through the normal preview/placement pipeline.
+// Mirrors the per-tab gridflow construction in Refresh, sourced from disk
+// bookmarks instead of a library/mods directory scan.
+func (ui *DesignExplorer) refreshUserBookmarks(mode Mode) {
+	gridflow := new(GridFlowContainer)
+	gridflow.AsControl().SetMouseFilter(Control.MouseFilterStop)
+	gridflow.scroll_lock = true
+	gridflow.AsNode().SetName("saved")
+	ui.Tabs.AsNode().AddChild(gridflow.AsNode())
+	gridflow.Scrollable.GetHScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
+	gridflow.Scrollable.GetVScrollBar().AsControl().SetMouseFilter(Control.MouseFilterPass)
+	ui.tabbed = append(ui.tabbed, gridflow)
+	elements := gridflow.Scrollable.GridContainer
+	for _, bm := range listBookmarks() {
+		// Reuse the mod-tile builder: same drag/tap placement wiring, with a
+		// generic glyph when no <id>.png thumbnail sidecar exists yet (runtime
+		// thumbnail generation is a later polish step).
+		ui.addModTile(elements.AsNode(), mode, creationURI(bm.ID), userBookmarksDir+"/"+bm.ID+".png")
+	}
+	gridflow.Update()
+	ui.Tabs.SetTabIcon(0, ui.authorThemeIcon("user"))
+	ui.Tabs.SetTabTitle(0, "")
+	ui.AsCanvasItem().SetVisible(true)
+	if expansion, ok := ui.ExpansionIndicator.Instance(); ok {
+		expansion.AsCanvasItem().SetVisible(true)
+	}
 }
 
 func (ui *DesignExplorer) UnhandledInput(event InputEvent.Instance) {

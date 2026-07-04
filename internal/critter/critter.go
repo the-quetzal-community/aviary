@@ -56,6 +56,12 @@ type Critter struct {
 // HipRadius / KneeRadius / FootRadius let the user thin the limb
 // to a tapered claw or fatten it to a barrel — the mesh
 // interpolates linearly between them along the femur and tibia.
+//
+// Kind selects the limb's animation style (mammal stride, insect
+// scuttle, bird strut, arm swing) — see LegKind. It never affects
+// the stored joint geometry, only how the runtime gait poses the
+// limb, so peers that predate a given kind still converge on the
+// same rest shape.
 type Leg struct {
 	Attach     int
 	Hip        Vec3
@@ -64,6 +70,54 @@ type Leg struct {
 	HipRadius  float32
 	KneeRadius float32
 	FootRadius float32
+	Kind       LegKind
+}
+
+// LegKind is a limb's animation style. The zero value is the
+// original mammalian walk so every leg recorded before kinds
+// existed keeps its behaviour.
+type LegKind int
+
+const (
+	// LegKindMammal strides with a diagonal trot: knees bend
+	// forward, feet plant on the ground, moderate body bob.
+	LegKindMammal LegKind = 0
+	// LegKindArm never seeks the ground: it swings fore-aft from
+	// the shoulder like a walking human's arm, elbow trailing.
+	LegKindArm LegKind = 1
+	// LegKindInsect scuttles: strict tripod/alternating phasing,
+	// fast low steps, knees held high above the hip in an
+	// inverted V, feet splaying outward on the swing.
+	LegKindInsect LegKind = 2
+	// LegKindBird struts: high exaggerated lift with a backward-
+	// bending ankle joint and a strong head-bob pitch.
+	LegKindBird LegKind = 3
+)
+
+// legKindNames maps LegKind values to the names used in sculpt
+// slider paths ("leg/grow_at/<name>") and back. Order matches the
+// constant values above.
+var legKindNames = [...]string{"mammal", "arm", "insect", "bird"}
+
+// Name returns the protocol name for the kind ("mammal", "arm",
+// "insect", "bird"). Unknown values fall back to "mammal".
+func (k LegKind) Name() string {
+	if k < 0 || int(k) >= len(legKindNames) {
+		return legKindNames[0]
+	}
+	return legKindNames[k]
+}
+
+// LegKindFromName is the inverse of LegKind.Name. Unknown names
+// return (LegKindMammal, false) so a newer peer's kind degrades to
+// the default animation rather than corrupting state.
+func LegKindFromName(name string) (LegKind, bool) {
+	for i, n := range legKindNames {
+		if n == name {
+			return LegKind(i), true
+		}
+	}
+	return LegKindMammal, false
 }
 
 // LegJoint names the three editable joints on a leg. The integer
@@ -237,6 +291,16 @@ func (c *Critter) defaultLegAttach() int {
 // they produce the exact same rest pose. ok=false on an empty
 // spine.
 func (c *Critter) LegRestPoseAtPos(hip Vec3) (Leg, bool) {
+	return c.LegRestPoseAtPosKind(hip, LegKindMammal)
+}
+
+// LegRestPoseAtPosKind is LegRestPoseAtPos with a kind-specific
+// silhouette, so an insect leg lands sprawled with the knee held
+// above the hip, a bird leg lands with a backward-bending ankle,
+// and an arm hangs from the shoulder without seeking the ground.
+// Deterministic in (hip, kind) — the ghost preview and the
+// replicated grow sculpt both call this and must agree exactly.
+func (c *Critter) LegRestPoseAtPosKind(hip Vec3, kind LegKind) (Leg, bool) {
 	if len(c.bones) == 0 {
 		return Leg{}, false
 	}
@@ -247,32 +311,101 @@ func (c *Critter) LegRestPoseAtPos(hip Vec3) (Leg, bool) {
 		hip.Y = GroundY
 	}
 	attach := c.NearestBone(hip)
-	footY := GroundY
-	kneeY := (hip.Y + footY) * 0.5
-	if kneeY < GroundY {
-		kneeY = GroundY
-	}
-	return Leg{
+	// h is the hip's height above the ground plane — the natural
+	// length scale for the default silhouette of a ground-seeking
+	// limb (and a reasonable proxy for arm length too).
+	h := hip.Y - GroundY
+	leg := Leg{
 		Attach:     attach,
 		Hip:        hip,
-		Knee:       Vec3{X: hip.X + 0.05, Y: kneeY, Z: hip.Z + 0.05},
-		Foot:       Vec3{X: hip.X + 0.05, Y: footY, Z: hip.Z},
 		HipRadius:  0.06,
 		KneeRadius: 0.048,
 		FootRadius: 0.036,
-	}, true
+		Kind:       kind,
+	}
+	switch kind {
+	case LegKindInsect:
+		// Inverted V: femur rises up and out from the body, tibia
+		// drops to a fine point on the ground further out. Thin,
+		// chitinous taper.
+		leg.Knee = Vec3{X: hip.X + 0.45*h, Y: hip.Y + 0.35*h, Z: hip.Z}
+		leg.Foot = Vec3{X: hip.X + 0.75*h, Y: GroundY, Z: hip.Z}
+		leg.HipRadius, leg.KneeRadius, leg.FootRadius = 0.045, 0.032, 0.015
+	case LegKindBird:
+		// The visible mid-joint on a bird is the ankle, which bends
+		// BACKWARD — put the rest knee behind the hip→foot line so
+		// the gait's IK keeps that bend direction while stepping.
+		leg.Knee = Vec3{X: hip.X + 0.03, Y: hip.Y - 0.45*h, Z: hip.Z - 0.22*h}
+		leg.Foot = Vec3{X: hip.X + 0.04, Y: GroundY, Z: hip.Z + 0.08*h}
+		leg.HipRadius, leg.KneeRadius, leg.FootRadius = 0.055, 0.038, 0.028
+	case LegKindArm:
+		// Arms hang from the socket rather than reaching for the
+		// ground: length scales with the socket height but clamps so
+		// a low- or high-mounted arm still reads as an arm. Elbow
+		// trails slightly behind, hand drifts slightly forward.
+		l := 0.5 * h
+		if l < 0.18 {
+			l = 0.18
+		}
+		if l > 0.6 {
+			l = 0.6
+		}
+		leg.Knee = Vec3{X: hip.X + 0.05, Y: hip.Y - 0.5*l, Z: hip.Z - 0.18*l}
+		leg.Foot = Vec3{X: hip.X + 0.06, Y: hip.Y - l, Z: hip.Z + 0.12*l}
+		leg.HipRadius, leg.KneeRadius, leg.FootRadius = 0.05, 0.04, 0.03
+	default: // LegKindMammal — the original silhouette, unchanged.
+		kneeY := (hip.Y + GroundY) * 0.5
+		if kneeY < GroundY {
+			kneeY = GroundY
+		}
+		leg.Knee = Vec3{X: hip.X + 0.05, Y: kneeY, Z: hip.Z + 0.05}
+		leg.Foot = Vec3{X: hip.X + 0.05, Y: GroundY, Z: hip.Z}
+	}
+	// Clamp every joint to the ground plane; a very low hip could
+	// otherwise push a default knee/foot underground.
+	if leg.Knee.Y < GroundY {
+		leg.Knee.Y = GroundY
+	}
+	if leg.Foot.Y < GroundY {
+		leg.Foot.Y = GroundY
+	}
+	return leg, true
 }
 
 // AppendLegAtPos adds a leg whose hip lands at the given body-local
 // position with the default rest pose from LegRestPoseAtPos.
 // Returns the new leg's index, or -1 if the spine is empty.
 func (c *Critter) AppendLegAtPos(hip Vec3) int {
-	leg, ok := c.LegRestPoseAtPos(hip)
+	return c.AppendLegAtPosKind(hip, LegKindMammal)
+}
+
+// AppendLegAtPosKind adds a leg of the given kind whose hip lands
+// at the given body-local position, using the kind's default rest
+// pose. Returns the new leg's index, or -1 if the spine is empty.
+func (c *Critter) AppendLegAtPosKind(hip Vec3, kind LegKind) int {
+	leg, ok := c.LegRestPoseAtPosKind(hip, kind)
 	if !ok {
 		return -1
 	}
 	c.legs = append(c.legs, leg)
 	return len(c.legs) - 1
+}
+
+// SetLegKind switches leg i's animation style. Returns true on a
+// real change. Geometry (joints, radii) is untouched — the kind
+// only drives the runtime gait.
+func (c *Critter) SetLegKind(i int, kind LegKind) bool {
+	if i < 0 || i >= len(c.legs) {
+		return false
+	}
+	if kind < 0 || int(kind) >= len(legKindNames) {
+		kind = LegKindMammal
+	}
+	if c.legs[i].Kind == kind {
+		return false
+	}
+	c.legs[i].Kind = kind
+	return true
 }
 
 // NearestBone returns the index of the spine bone closest to the

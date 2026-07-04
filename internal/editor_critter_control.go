@@ -6,14 +6,11 @@ import (
 	"graphics.gd/classdb/Camera3D"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/MeshInstance3D"
-	"graphics.gd/classdb/Node3D"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Basis"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector3"
-
-	"the.quetzal.community/aviary/internal/critter"
 )
 
 // controlVis is the saved state we restore on exit from "control"
@@ -32,25 +29,16 @@ type controlVis struct {
 	savedBodyPos   Vector3.XYZ
 	savedBodyBasis Basis.XYZ
 
-	// Procedural-gait state. legContainer is a Node3D parented under
-	// body.mesh that holds our custom per-side leg MeshInstance3Ds —
-	// one (right, left) pair per data leg. The body's own leg meshes
-	// are hidden for the duration of the view so we don't render two
-	// copies on top of each other. legRenders caches the spawned
-	// (node, mesh) pairs so per-frame uploads don't have to walk the
-	// scene tree.
+	// gaitState is the shared procedural leg-gait driver (legContainer/legRenders,
+	// gaitTime/gaitActive, jump state, feetBuf). It's embedded so its fields and
+	// methods promote — existing cv.gaitTime / cv.setupLegs() usage keeps working —
+	// and the placed-creation animator (CritterAnimator) drives the same code.
+	// controlEnter sets cv.body = &ce.body and cv.applyBodyBob = true (the editor
+	// layers a body bob via applyBodyGait; a placed creation does not).
 	//
-	// gaitTime is the accumulated cycle position (in [0, ∞), wrapped
-	// into [0, 1) per-leg before evaluation); gaitActive blends the
-	// gait offset against the rest pose so legs ease in/out when the
-	// user starts or stops walking instead of snapping mid-stride.
-	//
-	// Note: head-look state now lives on CritterEditor.idleHeadLook
-	// and is applied by Process() across every view, not just here.
-	legContainer Node3D.Instance
-	legRenders   [][2]gaitLegRender
-	gaitTime     float32
-	gaitActive   float32
+	// Note: head-look state lives on CritterEditor.idleHeadLook and is applied by
+	// Process() across every view, not just here.
+	gaitState
 
 	// walkPos / walkBasis snapshot the body Node3D's transform AFTER
 	// each frame's WASD translate/rotate but BEFORE the gait bob/
@@ -60,21 +48,6 @@ type controlVis struct {
 	// current local frame, so a rolled body would walk sideways).
 	walkPos   Vector3.XYZ
 	walkBasis Basis.XYZ
-
-	// Procedural jump state. jumpActive is true between spacebar
-	// press and landing; jumpTime accumulates seconds since the
-	// jump started and feeds jumpYOffset to produce the body Y
-	// overlay (crouch → arc → land recoil). One in-flight jump at a
-	// time — holding spacebar doesn't queue another, but it also
-	// can't double-trigger (no edge detection needed since
-	// !jumpActive gates the trigger).
-	jumpActive bool
-	jumpTime   float32
-
-	// feetBuf is the per-tick scratch slice fed to
-	// CritterBody.SetAnimatedLegFeet so the gait pipeline doesn't
-	// allocate a fresh [N][2]Vec3 every PhysicsProcess.
-	feetBuf [][2]critter.Vec3
 }
 
 const (
@@ -166,8 +139,11 @@ func (ce *CritterEditor) controlEnter() {
 	// the first WASD press flips gaitActive above zero, but having
 	// them visible from the first frame avoids a one-frame popless
 	// where the body's own legs are hidden but ours haven't been
-	// uploaded yet.
-	ce.setupGaitLegs(cv)
+	// uploaded yet. Point the shared gait at the editor's body and enable the
+	// body-bob feet-compensation (the editor layers a bob via applyBodyGait).
+	cv.body = &ce.body
+	cv.applyBodyBob = true
+	cv.setupLegs()
 }
 
 // controlExit undoes controlEnter — restores camera + body
@@ -182,7 +158,7 @@ func (ce *CritterEditor) controlExit() {
 	// (about to become visible again) aren't briefly stacked under
 	// ours. Order matters here: SetVisible(true) flips inside
 	// teardownGaitLegs.
-	ce.teardownGaitLegs(cv)
+	cv.teardownLegs()
 	if ce.body.mesh != MeshInstance3D.Nil {
 		ce.body.mesh.AsNode3D().SetPosition(cv.savedBodyPos)
 		ce.body.mesh.AsNode3D().SetBasis(cv.savedBodyBasis)
@@ -275,8 +251,14 @@ func (ce *CritterEditor) controlPhysicsProcess(delta float32) {
 	// Drive the procedural gait. State advances even when stopped so
 	// gaitActive can ease back to 0 (the leg meshes are blended
 	// against rest pose by `gaitActive` inside computeGaitPose).
-	updateGaitState(cv, moving, delta)
-	ce.uploadGaitLegs(cv)
+	// Speed feeds the speed-matched cycle rate; turning in place
+	// passes 0 so the legs shuffle at the profile's base rate.
+	var speed float32
+	if forward != 0 {
+		speed = controlWalkSpeed
+	}
+	cv.update(moving, speed, delta)
+	cv.uploadLegs()
 	// Idle head-look ticks every frame, regardless of gaitActive —
 	// Idle head-look ticks on CritterEditor.Process now (see
 	// idleHeadLook); we don't double-advance it here.
@@ -296,33 +278,16 @@ func (ce *CritterEditor) applyBodyGait(cv *controlVis) {
 	if ce.body.mesh == MeshInstance3D.Nil {
 		return
 	}
-	var jumpY float32
-	if cv.jumpActive {
-		jumpY = jumpYOffset(cv.jumpTime / jumpDuration)
-	}
-	// Skip the gait math entirely when gaitActive is essentially
-	// zero AND there's no jump in progress — saves a handful of
-	// trig calls per idle frame. Head-look is no longer applied
-	// here (it's driven by CritterEditor.Process for all views),
-	// so it doesn't gate this short-circuit.
-	if cv.gaitActive < 0.001 && jumpY == 0 {
+	// Shared with the placed CritterAnimator: bobY already folds in the jump Y.
+	bobY, rollZ, pitchX := cv.bobOffset()
+	// Skip the application entirely when there's nothing to apply (idle, no jump)
+	// — saves a handful of SetX calls per idle frame.
+	if cv.gaitActive < 0.001 && bobY == 0 {
 		return
 	}
-	phase := 2 * math.Pi * float64(cv.gaitTime)
-	bobY := -gaitBodyBob * cv.gaitActive *
-		float32(math.Cos(2*phase))
-	rollZ := gaitBodyRoll * cv.gaitActive *
-		float32(math.Sin(phase))
-	pitchX := gaitBodyPitch * cv.gaitActive *
-		float32(math.Sin(2*phase))
-
 	node := ce.body.mesh.AsNode3D()
 	pos := node.Position()
-	// Jump Y dominates the bob when active; otherwise pure gait
-	// bob. Composing them additively makes the bob ride on top of
-	// the leap, which reads as a critter that's still "alive"
-	// while airborne rather than freezing mid-arc.
-	pos.Y += Float.X(bobY) + Float.X(jumpY)
+	pos.Y += Float.X(bobY)
 	node.SetPosition(pos)
 	// Local-frame rotations: Z is body forward (roll axis), X is
 	// body right (pitch axis). Applying Rotate in body-local

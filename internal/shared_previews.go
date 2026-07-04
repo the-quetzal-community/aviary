@@ -107,6 +107,15 @@ func (preview *PreviewRenderer) SetDesign(design string) *PreviewRenderer {
 		}
 		return preview
 	}
+	// User-design bookmarks (creation://<id>) are reconstructed from their saved
+	// musical-data into a node tree (see bookmarks.go / buildCritterInstance),
+	// the same way mod designs are built at runtime. Local read, so synchronous.
+	if isCreationPath(design) {
+		if node, ok := loadCreationSceneNode(design); ok {
+			preview.attach(node, gen)
+		}
+		return preview
+	}
 	// Load the PackedScene on the dedicated loader thread so a not-yet-
 	// downloaded design never blocks the main thread / VR compositor. The
 	// scene geometry is usually local (preview.pck) and returns quickly;

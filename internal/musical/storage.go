@@ -94,17 +94,10 @@ func (mus3 storage) Member(req Member) error {
 }
 
 func (mus3 storage) Upload(file Upload) error {
-	if mus3.limits.design[file.Design.Author] < uint16(file.Design.Number) {
-		return nil
-	}
-	stat, err := file.Upload.Stat()
-	if err != nil {
-		return xray.New(err)
-	}
-	name := stat.Name()
-	if len(name) > math.MaxUint16 {
-		return xray.New(errors.New("file name too long"))
-	}
+	// Persist unconditionally so the design's data is self-contained in the save
+	// (a placed user creation reconstructs on reload and for joining peers). The
+	// old per-author memory-limit gate was never wired (limits.design is never
+	// populated, so it dropped every upload) — removed.
 	mus3.client.Upload(file)
 	buf, err := encode(file)
 	if err != nil {

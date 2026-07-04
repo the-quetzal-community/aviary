@@ -27,7 +27,7 @@ type possessState struct {
 	active         bool
 	entity         musical.Entity
 	player         AnimationPlayer.Instance
-	hasJump        bool   // the model carries a real jump clip (gates the leap)
+	hasJump        bool   // a real jump clip OR a procedural rig (gates the leap)
 	hasAttack      bool   // the model carries a real bite/attack clip (gates the strike)
 	hasBark        bool   // the model carries a real bark/vocal clip (gates the bark)
 	terrainWalking bool   // ground-walker (snap to terrain) vs air/water (keep Y)
@@ -118,27 +118,34 @@ func (world *Client) enterPossess() bool {
 	if !node.AsNode().HasNode("AnimationPlayer") {
 		return false
 	}
-	// Only the mobile dressing categories may be possessed — static scenery
-	// (rocks, fences, buildings) stays put. Mirrors the right-click "walk here"
-	// gate so the two ways of moving a placed entity agree on what's mobile.
+	// Only mobile entities may be possessed — static scenery (rocks, fences,
+	// buildings) stays put. Mirrors the right-click "walk here" gate so the two
+	// ways of moving a placed entity agree on what's mobile. User-design creations
+	// count as mobile (isMobileDesign) even though they have no library category.
 	design, has := world.findDesignForObject(Node3D.ID(node.ID()))
 	if !has {
 		return false
 	}
-	category := designCategory(world.design_to_string[design])
-	if !isMobileDesignCategory(category) {
+	if !world.isMobileDesign(design) {
 		return false
 	}
+	category := designCategory(world.design_to_string[design])
 	player := Object.To[AnimationPlayer.Instance](node.AsNode().GetNode("AnimationPlayer"))
 
 	world.possess = possessState{
-		active:         true,
-		entity:         entity,
-		player:         player,
-		hasJump:        hasJumpClip(player),
+		active: true,
+		entity: entity,
+		player: player,
+		// A model jumps if it carries a real jump clip; a user-design
+		// creation jumps procedurally instead — its CritterAnimator
+		// reads the root's arc (crouch dip → leap) straight from the
+		// altitude above the terrain, so peers reconstruct the same
+		// animation from the broadcast motion (playCritterClip on its
+		// empty AnimationPlayer is a harmless no-op).
+		hasJump:        hasJumpClip(player) || node.AsNode().HasNode("CritterAnimator"),
 		hasAttack:      hasAttackClip(player),
 		hasBark:        hasCritterClip(player, "bark"),
-		terrainWalking: isTerrainWalkingCategory(category),
+		terrainWalking: world.designWalksTerrain(design),
 		swimmer:        isSwimmerCategory(category),
 		startPos:       node.AsNode3D().Position(),
 		startRot:       node.AsNode3D().Rotation(),

@@ -211,7 +211,24 @@ func (world musicalImpl) Member(req musical.Member) error {
 	return nil
 }
 
-func (world musicalImpl) Upload(file musical.Upload) error { return nil }
+func (world musicalImpl) Upload(file musical.Upload) error {
+	world.enqueue(func() {
+		defer timeIn(&bucketImport)()
+		// A user-design bookmark's data: decode the creation and register it so
+		// sceneFor can reconstruct the design (mirrors Import's URI→Design map).
+		cc, ok := decodeCreation(file.Bundle)
+		if !ok {
+			return
+		}
+		world.design_ids[file.Design.Author] = max(world.design_ids[file.Design.Author], file.Design.Number)
+		world.design_creations[file.Design] = cc
+		// The placement Change referencing this design may have arrived first (it
+		// rides the same channel but a peer/reload can interleave them), leaving an
+		// empty placeholder; rebuild those now that the creation data is here.
+		world.rebuildDesignEntities(file.Design)
+	})
+	return nil
+}
 func (world musicalImpl) Sculpt(brush musical.Sculpt) error {
 	world.enqueue(func() {
 		defer timeIn(&bucketSculpt)()
@@ -250,6 +267,10 @@ func (client *Client) sceneFor(design musical.Design) (PackedScene.Instance, boo
 			return inst, true
 		}
 	}
+	// User "creation" designs are NOT resolved here: PackedScene.Pack does not
+	// round-trip the procedural skinned body (rigid parts survive but the skinned
+	// mesh collapses to nothing), so they are built fresh per instance via
+	// buildDesignNode / buildCritterInstance rather than cached as a PackedScene.
 	// A design that already failed to load once will fail the same way every
 	// time (the file is absent from the pck, or it is the wrong resource type) —
 	// LoadSync blocks through any on-demand download, so a nil result is a real
@@ -299,10 +320,31 @@ func (client *Client) sceneFor(design musical.Design) (PackedScene.Instance, boo
 // placement Change handlers (scenery/shelter/vehicle/coaster, world replay)
 // repeat verbatim.
 func (client *Client) instantiateDesign(design musical.Design) Node3D.Instance {
-	if scene, ok := client.sceneFor(design); ok {
-		return Object.To[Node3D.Instance](scene.Instantiate())
+	if node, ok := client.buildDesignNode(design); ok {
+		return node
 	}
 	return Node3D.New()
+}
+
+// buildDesignNode produces a fresh node for a design, ok=false when its data
+// hasn't arrived yet. User-design creations are reconstructed live from their
+// captured musical-data (buildCritterInstance) — never via PackedScene, which
+// drops the skinned body — while ordinary designs instantiate their cached
+// PackedScene. Shared by instantiateDesign and rebuildDesignEntities.
+func (client *Client) buildDesignNode(design musical.Design) (Node3D.Instance, bool) {
+	if cc, ok := client.design_creations[design]; ok {
+		// Placed in the world: hand the animator the terrain probe so
+		// the legs respond to vertical root motion (possession jump).
+		node, err := buildCritterInstance(cc, client.TerrainEditor.HeightAt)
+		if err != nil {
+			return Node3D.Nil, false
+		}
+		return node, true
+	}
+	if scene, ok := client.sceneFor(design); ok {
+		return Object.To[Node3D.Instance](scene.Instantiate()), true
+	}
+	return Node3D.Nil, false
 }
 
 func (world musicalImpl) Import(uri musical.Import) error {
@@ -341,38 +383,50 @@ func (world musicalImpl) Import(uri musical.Import) error {
 		world.loaded[uri.Import] = uri.Design
 		world.design_to_string[uri.Design] = uri.Import
 
-		redesigns := world.design_to_entity[uri.Design]
-		for i, id := range redesigns {
-			node, ok := id.Instance()
-			if !ok {
-				continue
-			}
-			if scene, ok := world.sceneFor(uri.Design); ok {
-				new_node := Object.To[Node3D.Instance](scene.Instantiate()).
-					SetPosition(node.AsNode3D().Position()).
-					SetRotation(node.AsNode3D().Rotation()).
-					SetScale(node.AsNode3D().Scale())
-				if new_node.AsNode().HasNode("AnimationPlayer") {
-					anim := Object.To[AnimationPlayer.Instance](new_node.AsNode().GetNode("AnimationPlayer"))
-					playCritterClip(new_node, anim, "idle")
-				}
-				world.maybeAttachEntityAnimator(world.object_to_entity[id], uri.Design, new_node)
-				maybeAttachSnakeCollider(uri.Import, new_node)
-				node.AsNode().ReplaceBy(new_node.AsNode())
-				node.AsNode().QueueFree()
-				redesigns[i] = new_node.ID()
-				world.entity_to_object[world.object_to_entity[id]] = new_node.ID()
-				world.object_to_entity[new_node.ID()] = world.object_to_entity[id]
-				delete(world.object_to_entity, id)
-				// Library-sizing debug mode: entities created before their
-				// design streamed in had no visuals to measure; preview the
-				// sizes.txt entry now that the real mesh is attached.
-				world.applyLibrarySizeOverride(world.object_to_entity[new_node.ID()], uri.Design, new_node, true)
-			}
-		}
-		world.design_to_entity[uri.Design] = redesigns
+		// Re-instantiate any entities rendered as placeholders before this
+		// design's scene could be built.
+		world.rebuildDesignEntities(uri.Design)
 	})
 	return nil
+}
+
+// rebuildDesignEntities re-instantiates every entity currently rendered as a
+// placeholder (or stale design) for `design`, now that its scene can be built —
+// its Import URI has loaded, or its Upload bundle has arrived. Shared by the
+// Import and Upload handlers; runs on the main thread (from their enqueued
+// closures).
+func (world musicalImpl) rebuildDesignEntities(design musical.Design) {
+	redesigns := world.design_to_entity[design]
+	uri := world.design_to_string[design]
+	for i, id := range redesigns {
+		node, ok := id.Instance()
+		if !ok {
+			continue
+		}
+		if new_node, ok := world.buildDesignNode(design); ok {
+			new_node.
+				SetPosition(node.AsNode3D().Position()).
+				SetRotation(node.AsNode3D().Rotation()).
+				SetScale(node.AsNode3D().Scale())
+			if new_node.AsNode().HasNode("AnimationPlayer") {
+				anim := Object.To[AnimationPlayer.Instance](new_node.AsNode().GetNode("AnimationPlayer"))
+				playCritterClip(new_node, anim, "idle")
+			}
+			world.maybeAttachEntityAnimator(world.object_to_entity[id], design, new_node)
+			maybeAttachSnakeCollider(uri, new_node)
+			node.AsNode().ReplaceBy(new_node.AsNode())
+			node.AsNode().QueueFree()
+			redesigns[i] = new_node.ID()
+			world.entity_to_object[world.object_to_entity[id]] = new_node.ID()
+			world.object_to_entity[new_node.ID()] = world.object_to_entity[id]
+			delete(world.object_to_entity, id)
+			// Library-sizing debug mode: entities created before their design
+			// streamed in had no visuals to measure; preview the sizes.txt entry
+			// now that the real mesh is attached.
+			world.applyLibrarySizeOverride(world.object_to_entity[new_node.ID()], design, new_node, true)
+		}
+	}
+	world.design_to_entity[design] = redesigns
 }
 func (world musicalImpl) Change(con musical.Change) error {
 	world.enqueue(func() {

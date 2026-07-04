@@ -14,27 +14,106 @@ import (
 	"the.quetzal.community/aviary/internal/critter"
 )
 
-// Gait tuning. Picked by eye against the editor's default critter
-// (5-bone spine, 2 leg pairs at ~0.5 unit limb length). The ratios
-// are length-relative so the same numbers read fine on a tiny
-// hamster or a long-legged stilted thing.
+// gaitProfile is one animation style's tuning: how a limb of that
+// kind steps (stride/lift/duty/splay, as leg-length-relative ratios
+// so the same numbers read fine on a tiny hamster or a stilted
+// wader), how the legs phase against each other, and how much the
+// body sways along. Ratios picked by eye against the editor's
+// default critter (5-bone spine, 2 leg pairs at ~0.5 unit limbs).
+type gaitProfile struct {
+	// cycleRate is the fallback leg cycle frequency (Hz) when the
+	// body speed is unknown (turning in place, easing to rest).
+	// While moving, update() overrides it with a speed-matched rate
+	// so foot ground-velocity tracks the body and slip stays subtle.
+	cycleRate float32
+	// stride is the half-amplitude of the foot's body-local Z sweep,
+	// as a fraction of leg length.
+	stride float32
+	// lift is the peak swing-phase foot lift (+Y), as a fraction of
+	// leg length. Small reads as a shuffle, large as high-stepping.
+	lift float32
+	// duty is the stance fraction of the cycle — the slice the foot
+	// spends planted. Ground speed during stance = 2·stride·rate/duty.
+	duty float32
+	// splay bows the foot outward (+X, mirrored per side) during the
+	// swing, as a fraction of lift. Gives insects their skittery
+	// wide-track scuttle; zero for everything else.
+	splay float32
+	// bob / roll / pitch scale the shared body-motion amplitudes
+	// (gaitBodyBob etc.) for this style: insects barely sway, birds
+	// exaggerate the strut pitch into a head-bob.
+	bob, roll, pitch float32
+	// tripod switches the phase pattern to strict alternation —
+	// adjacent legs and opposite sides always move in anti-phase
+	// (the insect tripod). Otherwise legs trot (diagonal pairs) with
+	// a slight travelling wave down the body.
+	tripod bool
+	// wave is the per-pair phase lag when !tripod, so long bodies
+	// with many pairs ripple slightly instead of pogoing in lockstep.
+	wave float32
+	// kneeFallback is the IK bend direction used when a leg's rest
+	// knee is collinear with hip→foot and can't disambiguate the
+	// bend: mammals/birds drop the knee, insects raise it, arms
+	// trail the elbow backward.
+	kneeFallback critter.Vec3
+}
+
+// gaitProfiles is indexed by critter.LegKind. The arm entry only
+// matters for a body whose EVERY limb is an arm (profile selection
+// ignores arms otherwise) — it reuses the mammal body timing so a
+// torso dragging itself around on arms still animates coherently.
+var gaitProfiles = [...]gaitProfile{
+	critter.LegKindMammal: {
+		cycleRate: 1.6, stride: 0.30, lift: 0.22, duty: 0.55,
+		bob: 1, roll: 1, pitch: 1, wave: 0.08,
+		kneeFallback: critter.Vec3{Y: -1},
+	},
+	critter.LegKindArm: {
+		cycleRate: 1.6, stride: 0.30, lift: 0.22, duty: 0.55,
+		bob: 1, roll: 1, pitch: 1, wave: 0.08,
+		kneeFallback: critter.Vec3{Z: -1},
+	},
+	critter.LegKindInsect: {
+		cycleRate: 2.8, stride: 0.35, lift: 0.12, duty: 0.60, splay: 0.5,
+		bob: 0.25, roll: 0.35, pitch: 0.3, tripod: true,
+		kneeFallback: critter.Vec3{Y: 1},
+	},
+	critter.LegKindBird: {
+		cycleRate: 1.9, stride: 0.38, lift: 0.32, duty: 0.60,
+		bob: 1.25, roll: 0.5, pitch: 2.2, wave: 0.1,
+		kneeFallback: critter.Vec3{Y: -1},
+	},
+}
+
+// legKindProfile looks up the profile for one leg's kind, clamping
+// unknown kinds (from a newer peer) to mammal.
+func legKindProfile(kind critter.LegKind) gaitProfile {
+	if kind < 0 || int(kind) >= len(gaitProfiles) {
+		kind = critter.LegKindMammal
+	}
+	return gaitProfiles[kind]
+}
+
 const (
-	// gaitCycleRate is the leg cycle frequency while moving (Hz).
-	// 1.5 reads as a brisk walk rather than a sprint; with full
-	// stride this puts foot ground-velocity in the right neighbourhood
-	// of controlWalkSpeed (≈ 2 units/s) to keep foot-slip subtle.
-	gaitCycleRate = float32(1.5)
+	// gaitArmSwingRatio is the fore-aft half-amplitude of an arm's
+	// pendulum swing (fraction of arm length), and gaitArmLiftRatio
+	// the slight rise of the hand at each swing extreme relative to
+	// that amplitude.
+	gaitArmSwingRatio = float32(0.35)
+	gaitArmLiftRatio  = float32(0.25)
 
-	// gaitStrideRatio is the half-amplitude of the foot's Z swing as
-	// a fraction of leg length. A foot moves ±strideRatio·legLen in
-	// body-local Z over a cycle.
-	gaitStrideRatio = float32(0.25)
+	// gaitArmReachSlack: a limb whose rest foot hangs more than this
+	// fraction of its length above the ground plane can't plausibly
+	// walk on it — it animates as an arm regardless of its kind.
+	// This is what stops a shoulder-mounted "leg" from pawing at
+	// air it can never reach (the old wonky-arms look).
+	gaitArmReachSlack = float32(0.35)
 
-	// gaitLiftRatio is the peak foot lift in +Y, as a fraction of leg
-	// length. Too small and the swing looks like a shuffle; too large
-	// and the critter looks like it's high-stepping over invisible
-	// obstacles.
-	gaitLiftRatio = float32(0.20)
+	// Speed-matched cycle rate clamps, as multiples of the profile's
+	// base rate: below the floor the gait reads as slow-motion, above
+	// the ceiling as vibration.
+	gaitRateFloor   = float32(0.6)
+	gaitRateCeiling = float32(2.4)
 
 	// gaitAttackRate / gaitReleaseRate are exponential-blend rates
 	// (1/seconds) for easing gaitActive toward 1 when WASD is held
@@ -131,120 +210,219 @@ func (r *gaitLegRender) upload(m critter.Mesh) {
 	r.mesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }
 
-// setupGaitLegs spawns 2 MeshInstance3Ds per data leg (right, left)
-// under a fresh container parented to body.mesh, then hides the
-// body's own leg MeshInstance3Ds so we don't render two copies
-// stacked on top of each other. Caches the spawned (node, mesh)
-// pairs on cv so per-frame uploads can skip the scene-tree walk.
-func (ce *CritterEditor) setupGaitLegs(cv *controlVis) {
-	if ce.body.critter == nil || ce.body.mesh == MeshInstance3D.Nil {
+// gaitState is the procedural leg-gait driver, shared by the critter editor's
+// control (walk-test) view and by placed user-design creations (CritterAnimator).
+// It owns the per-side animated leg meshes and the cycle state, and re-skins the
+// legs each frame from the body's spine + leg data. The editor additionally
+// layers a body bob/roll/pitch on top (applyBodyGait, editor-only); a placed
+// creation leaves applyBodyBob false so its feet aren't pre-compensated for a bob
+// that isn't applied (its body node is positioned by possession/walk, not here).
+type gaitState struct {
+	body         *CritterBody
+	legContainer Node3D.Instance
+	legRenders   [][2]gaitLegRender
+	gaitTime     float32
+	gaitActive   float32
+	jumpActive   bool
+	jumpTime     float32
+	feetBuf      [][2]critter.Vec3
+	applyBodyBob bool
+
+	// rootDY is an EXTERNAL vertical animation offset (world units)
+	// imposed on the critter by whoever moves its root node — e.g.
+	// the possession jump arcs the placed creation's wrapper through
+	// jumpYOffset, dipping it below the terrain for the crouch and
+	// lifting it for the leap. It folds into the bodyDY handed to
+	// computeGaitPose, so the legs respond exactly as they do to the
+	// gait's own jump: knees bend to keep feet planted while the
+	// root dips, feet tuck and ride while it rises. Derived from
+	// observed motion (CritterAnimator altitude-above-terrain), so
+	// peers reproduce it with no extra mutation. Zero when unused
+	// (the editor's control view drives jumps internally instead).
+	rootDY float32
+
+	// profile is the body-level gait style — phase pattern, cycle
+	// rate, body sway — picked from the dominant kind among the
+	// ground-walking legs (arms don't vote). Per-limb pose shape
+	// (stride/lift/splay/arm-swing) still follows each leg's OWN
+	// kind, so a chimera with insect forelegs and mammal hindlegs
+	// steps each limb in its own style over a shared rhythm.
+	// avgLegLen (ground legs only) feeds the speed-matched cycle
+	// rate in update(). Both refresh at the top of uploadLegs.
+	profile   gaitProfile
+	avgLegLen float32
+}
+
+// refreshProfile re-derives the body-level profile + average leg
+// length from the current legs. O(legs) — cheap enough to run per
+// frame, which keeps it correct when kinds/joints change mid-view
+// (a peer's sculpt, an editor drag).
+func (g *gaitState) refreshProfile() {
+	g.profile = gaitProfiles[critter.LegKindMammal]
+	g.avgLegLen = 0
+	if g.body == nil || g.body.critter == nil {
+		return
+	}
+	var counts [len(gaitProfiles)]int
+	var sum float32
+	ground := 0
+	for _, leg := range g.body.critter.LegsView() {
+		legLen := vecDist(leg.Hip, leg.Foot)
+		if legActsAsArm(leg, legLen) {
+			continue
+		}
+		kind := leg.Kind
+		if kind < 0 || int(kind) >= len(gaitProfiles) {
+			kind = critter.LegKindMammal
+		}
+		counts[kind]++
+		sum += legLen
+		ground++
+	}
+	if ground == 0 {
+		return
+	}
+	best := critter.LegKindMammal
+	for k := range counts {
+		if counts[k] > counts[best] {
+			best = critter.LegKind(k)
+		}
+	}
+	g.profile = gaitProfiles[best]
+	g.avgLegLen = sum / float32(ground)
+}
+
+// legActsAsArm reports whether a limb should animate as an arm: an
+// explicit arm kind, or any limb whose rest foot hangs too far above
+// the ground plane to plausibly walk on it (see gaitArmReachSlack).
+func legActsAsArm(leg critter.Leg, legLen float32) bool {
+	if leg.Kind == critter.LegKindArm {
+		return true
+	}
+	return leg.Foot.Y-critter.GroundY > gaitArmReachSlack*legLen
+}
+
+// setupLegs spawns 2 MeshInstance3Ds per data leg (right, left) under a fresh
+// container parented to body.mesh, then hides the body's own leg MeshInstance3Ds
+// so we don't render two copies stacked on top of each other. Caches the spawned
+// (node, mesh) pairs so per-frame uploads can skip the scene-tree walk.
+func (g *gaitState) setupLegs() {
+	if g.body == nil || g.body.critter == nil || g.body.mesh == MeshInstance3D.Nil {
 		return
 	}
 	container := Node3D.New()
-	ce.body.mesh.AsNode().AddChild(container.AsNode())
-	cv.legContainer = container
-	legCount := ce.body.critter.LegCount()
-	cv.legRenders = make([][2]gaitLegRender, legCount)
+	g.body.mesh.AsNode().AddChild(container.AsNode())
+	g.legContainer = container
+	legCount := g.body.critter.LegCount()
+	g.legRenders = make([][2]gaitLegRender, legCount)
 	for i := 0; i < legCount; i++ {
 		for s := 0; s < 2; s++ {
 			mi := MeshInstance3D.New()
 			am := ArrayMesh.New()
 			mi.AsMeshInstance3D().SetMesh(am.AsMesh())
 			container.AsNode().AddChild(mi.AsNode())
-			cv.legRenders[i][s] = gaitLegRender{node: mi, mesh: am}
+			g.legRenders[i][s] = gaitLegRender{node: mi, mesh: am}
 		}
 	}
-	// Hide the body's own leg renders so we own the leg pixels for
-	// the duration of the view. controlExit (via teardownGaitLegs)
-	// reverses this.
-	for _, mi := range ce.body.legNodes {
+	// Hide the body's own leg renders so we own the leg pixels while the gait is
+	// active (the editor's controlExit / teardownLegs reverses this).
+	for _, mi := range g.body.legNodes {
 		if mi != MeshInstance3D.Nil {
 			mi.AsNode3D().SetVisible(false)
 		}
 	}
-	// Push an initial rest pose so the first frame isn't a flash of
-	// empty geometry while we wait for the first upload tick.
-	ce.uploadGaitLegs(cv)
+	// Push an initial rest pose so the first frame isn't a flash of empty
+	// geometry while we wait for the first upload tick.
+	g.uploadLegs()
 }
 
 // teardownGaitLegs frees the gait container (which QueueFrees its
 // child MeshInstance3Ds) and restores visibility on the body's own
 // leg renders. Idempotent.
-func (ce *CritterEditor) teardownGaitLegs(cv *controlVis) {
-	if cv.legContainer != Node3D.Nil {
-		cv.legContainer.AsNode().QueueFree()
-		cv.legContainer = Node3D.Nil
+func (g *gaitState) teardownLegs() {
+	if g.legContainer != Node3D.Nil {
+		g.legContainer.AsNode().QueueFree()
+		g.legContainer = Node3D.Nil
 	}
-	cv.legRenders = nil
-	for _, mi := range ce.body.legNodes {
+	g.legRenders = nil
+	if g.body == nil {
+		return
+	}
+	for _, mi := range g.body.legNodes {
 		if mi != MeshInstance3D.Nil {
 			mi.AsNode3D().SetVisible(true)
 		}
 	}
 }
 
-// uploadGaitLegs computes per-side leg poses at the current
-// (gaitTime, gaitActive) and re-skins each MeshInstance3D. Called
-// every PhysicsProcess while the control view is active — cheap
-// because per-leg mesh is small (~50 verts) and BuildLegMesh is a
-// straight CPU walk.
+// uploadLegs computes per-side leg poses at the current (gaitTime, gaitActive)
+// and re-skins each MeshInstance3D. Called every frame while the gait is active —
+// cheap because per-leg mesh is small (~50 verts) and BuildLegMesh is a straight
+// CPU walk.
 //
-// If the leg count has changed since the last upload (a sculpt
-// arrived while in control view), the gait nodes are torn down and
-// respawned to match.
-func (ce *CritterEditor) uploadGaitLegs(cv *controlVis) {
-	if ce.body.critter == nil || cv.legContainer == Node3D.Nil {
+// If the leg count has changed since the last upload (a sculpt arrived while in
+// control view), the gait nodes are torn down and respawned to match.
+func (g *gaitState) uploadLegs() {
+	if g.body == nil || g.body.critter == nil || g.legContainer == Node3D.Nil {
 		return
 	}
-	legs := ce.body.critter.LegsView()
-	if len(legs) != len(cv.legRenders) {
-		ce.teardownGaitLegs(cv)
-		ce.setupGaitLegs(cv)
+	legs := g.body.critter.LegsView()
+	if len(legs) != len(g.legRenders) {
+		g.teardownLegs()
+		g.setupLegs()
 		return
 	}
-	// Collect the animated foot positions per (data leg, side) as we
-	// build the meshes — fed to CritterBody.SetAnimatedLegFeet below
-	// so OnLeg-anchored parts (duck-foot steppers) ride the same
-	// animated foot the rendered leg mesh terminates at. The slice
-	// uses 2 entries per leg (right, left); side 1's pose has X
-	// already negated by computeGaitPose so we can store the values
-	// straight in.
-	// Compute the same body-Y overlay applyBodyGait will apply this
-	// frame (gait bob + jump curve) so the leg poses can subtract it
-	// from foot Y. The body is about to move up/down by `bodyDY`
-	// world-units; if we DON'T compensate, the feet ride that motion
-	// and look like they're glued to the ankles — what the user
-	// wants is feet planted on the ground while the body crouches
-	// and leaps over them.
-	bodyDY := bodyAnimationY(cv)
-	if cap(cv.feetBuf) < len(legs) {
-		cv.feetBuf = make([][2]critter.Vec3, len(legs))
+	// Track kind/joint edits (peer sculpts, editor drags) before the
+	// body sway below reads the profile.
+	g.refreshProfile()
+	// Collect the animated foot positions per (data leg, side) as we build the
+	// meshes — fed to CritterBody.SetAnimatedLegFeet below so OnLeg-anchored parts
+	// (duck-foot steppers) ride the same animated foot the rendered leg mesh
+	// terminates at. Side 1's pose has X already negated by computeGaitPose.
+	//
+	// bodyDY is the body-Y overlay applyBodyGait imposes this frame (bob + jump);
+	// the leg poses subtract it so feet stay planted while the body bobs/leaps.
+	// Only meaningful when this gait drives the body bob (the editor); a placed
+	// creation leaves applyBodyBob false, so its feet aren't compensated for a bob
+	// that isn't applied.
+	var bodyDY float32
+	if g.applyBodyBob {
+		bodyDY = g.bodyAnimationY()
+	}
+	// External root motion (possession jump / terrain lag) composes
+	// with the gait's own body animation — see the rootDY field doc.
+	bodyDY += g.rootDY
+	if cap(g.feetBuf) < len(legs) {
+		g.feetBuf = make([][2]critter.Vec3, len(legs))
 	} else {
-		cv.feetBuf = cv.feetBuf[:len(legs)]
+		g.feetBuf = g.feetBuf[:len(legs)]
 	}
 	for i, leg := range legs {
 		for s := 0; s < 2; s++ {
-			phase := gaitPhase(cv.gaitTime, i, len(legs), s)
-			posed := computeGaitPose(leg, phase, cv.gaitActive, s == 1, bodyDY)
-			cv.feetBuf[i][s] = posed.Foot
-			cv.legRenders[i][s].upload(ce.body.critter.BuildLegMesh(posed, 6, 8, false))
+			phase := gaitPhase(g.profile, g.gaitTime, i, s)
+			posed := computeGaitPose(leg, phase, g.gaitActive, s == 1, bodyDY)
+			g.feetBuf[i][s] = posed.Foot
+			g.legRenders[i][s].upload(g.body.critter.BuildLegMesh(posed, 6, 8, false))
 		}
 	}
-	ce.body.SetAnimatedLegFeet(cv.feetBuf)
+	g.body.SetAnimatedLegFeet(g.feetBuf)
 }
 
 // gaitPhase returns the cycle phase ∈ [0, 1) for one rendered leg.
-// Sides are 180° out of phase (0.5 offset between right and left of
-// the same data leg), and successive data legs are scattered by
-// 1/N so a 4-pair quadruped lands on a recognisable diagonal trot
-// without having to encode the gait pattern as a separate table.
-func gaitPhase(t float32, legIdx, legCount, side int) float32 {
-	var base float32
-	if legCount > 0 {
-		base = float32(legIdx) / float32(legCount)
-	}
-	if side == 1 {
-		base += 0.5
+// Sides are 180° out of phase, and (legIdx+side) parity puts
+// diagonal limbs in phase with each other:
+//
+//	quadruped  → a trot (front-right steps with hind-left);
+//	hexapod    → the insect tripod (with profile.tripod, exact);
+//	biped/bird → simple alternating steps.
+//
+// Non-tripod bodies additionally lag each successive pair by
+// profile.wave so long many-legged bodies ripple down the spine
+// instead of pogoing in two rigid blocks.
+func gaitPhase(prof gaitProfile, t float32, legIdx, side int) float32 {
+	base := 0.5 * float32((legIdx+side)%2)
+	if !prof.tripod {
+		base += prof.wave * float32(legIdx)
 	}
 	p := t + base
 	p -= float32(math.Floor(float64(p)))
@@ -261,11 +439,19 @@ func gaitPhase(t float32, legIdx, legCount, side int) float32 {
 // with mirror=false) and have the result land on the correct half
 // of the body.
 //
-// Phase semantics:
-//   - [0.0, 0.5] stance: foot stays on the ground (Y rest), moves
-//     from +stride (in front) to −stride (behind) along body Z.
-//   - [0.5, 1.0] swing: foot moves back to +stride and lifts in a
-//     sin·π arc so it peaks at lift mid-swing then lands flat.
+// The pose shape follows the LEG's own kind (its gaitProfile), so a
+// mixed body steps each limb in its own style:
+//
+//   - Ground limbs: [0, duty) stance — foot planted (Y rest),
+//     sweeping from +stride (in front) to −stride (behind) along
+//     body Z; [duty, 1) swing — foot returns forward, lifting in a
+//     sin·π arc (insects also splay the foot outward mid-swing).
+//   - Arms (explicit kind, or any limb whose rest foot can't reach
+//     the ground — see legActsAsArm): a shoulder pendulum. The hand
+//     sweeps fore-aft sinusoidally over the full cycle and rises
+//     slightly at each extreme; no ground logic at all, which is
+//     what stops high-mounted limbs air-walking against a floor
+//     they'll never touch.
 //
 // `bodyDY` is the body's current vertical animation offset (jump +
 // bob) in world units. Only the DOWNWARD half (bodyDY < 0) is
@@ -274,36 +460,53 @@ func gaitPhase(t float32, legIdx, legCount, side int) float32 {
 // the knees naturally. On the way UP (bodyDY > 0) we deliberately
 // don't compensate: the feet tuck under the body and ride along
 // instead of stretching into 1.5-metre poles dangling to the
-// ground from the apex of the jump.
+// ground from the apex of the jump. Arms skip the compensation
+// entirely — they hang from the body and ride every bob with it.
 //
 // The knee is solved by 2-bone analytic IK from the live foot, with
 // the rest-knee position used to disambiguate the bend direction
-// (so a foreleg keeps bending forward and a hind leg keeps bending
-// backward even when the foot tracks far from rest).
+// (so a foreleg keeps bending forward, a hind leg backward, and an
+// insect knee stays peaked above the hip even when the foot tracks
+// far from rest).
 func computeGaitPose(leg critter.Leg, phase, active float32, leftSide bool, bodyDY float32) critter.Leg {
+	prof := legKindProfile(leg.Kind)
 	legLen := vecDist(leg.Hip, leg.Foot)
-	stride := gaitStrideRatio * legLen
-	lift := gaitLiftRatio * legLen
-	var dz, dy float32
-	if phase < 0.5 {
-		// Stance: foot moves from +stride (front) to −stride (back).
-		dz = stride * (1 - 4*phase)
+	arm := legActsAsArm(leg, legLen)
+	var dx, dy, dz float32
+	if arm {
+		// Shoulder pendulum: full-cycle sinusoid fore-aft, hands
+		// rising a little at both extremes (1−cos(4πt) peaks at the
+		// quarter phases where sin(2πt) = ±1).
+		amp := gaitArmSwingRatio * legLen
+		dz = amp * float32(math.Sin(2*math.Pi*float64(phase)))
+		dy = gaitArmLiftRatio * amp * 0.5 *
+			(1 - float32(math.Cos(4*math.Pi*float64(phase))))
 	} else {
-		// Swing: foot returns from −stride to +stride and lifts.
-		t := (phase - 0.5) * 2 // 0..1
-		dz = stride * (2*t - 1)
-		dy = lift * float32(math.Sin(math.Pi*float64(t)))
+		stride := prof.stride * legLen
+		lift := prof.lift * legLen
+		if phase < prof.duty {
+			// Stance: foot planted, sweeping front → back.
+			t := phase / prof.duty
+			dz = stride * (1 - 2*t)
+		} else {
+			// Swing: foot returns to the front and lifts.
+			t := (phase - prof.duty) / (1 - prof.duty)
+			dz = stride * (2*t - 1)
+			s := float32(math.Sin(math.Pi * float64(t)))
+			dy = lift * s
+			dx = prof.splay * lift * s
+		}
 	}
 	// One-sided compensation: only plant-the-feet when the body is
 	// dropping (crouch or landing recoil). Going up, leave the foot
 	// at rest pose so it lifts with the body — see doc comment
-	// above for the full rationale.
+	// above for the full rationale. Arms ride the body instead.
 	planted := bodyDY
-	if planted > 0 {
+	if planted > 0 || arm {
 		planted = 0
 	}
 	foot := critter.Vec3{
-		X: leg.Foot.X,
+		X: leg.Foot.X + dx*active,
 		Y: leg.Foot.Y + dy*active - planted,
 		Z: leg.Foot.Z + dz*active,
 	}
@@ -316,17 +519,17 @@ func computeGaitPose(leg critter.Leg, phase, active float32, leftSide bool, body
 	// extra body Y is absorbed by the part landing slightly off
 	// the ground rather than by the limb mesh stretching.
 	maxR := (lenFemur + lenTibia) * 1.6
-	dx := foot.X - leg.Hip.X
+	dx2 := foot.X - leg.Hip.X
 	dy2 := foot.Y - leg.Hip.Y
 	dz2 := foot.Z - leg.Hip.Z
-	d := float32(math.Sqrt(float64(dx*dx + dy2*dy2 + dz2*dz2)))
+	d := float32(math.Sqrt(float64(dx2*dx2 + dy2*dy2 + dz2*dz2)))
 	if d > maxR && d > 1e-6 {
 		k := maxR / d
-		foot.X = leg.Hip.X + dx*k
+		foot.X = leg.Hip.X + dx2*k
 		foot.Y = leg.Hip.Y + dy2*k
 		foot.Z = leg.Hip.Z + dz2*k
 	}
-	knee := twoBoneIK(leg.Hip, foot, lenFemur, lenTibia, leg.Knee)
+	knee := twoBoneIK(leg.Hip, foot, lenFemur, lenTibia, leg.Knee, prof.kneeFallback)
 	posed := critter.Leg{
 		Attach:     leg.Attach,
 		Hip:        leg.Hip,
@@ -335,6 +538,7 @@ func computeGaitPose(leg critter.Leg, phase, active float32, leftSide bool, body
 		HipRadius:  leg.HipRadius,
 		KneeRadius: leg.KneeRadius,
 		FootRadius: leg.FootRadius,
+		Kind:       leg.Kind,
 	}
 	if leftSide {
 		posed.Hip.X = -posed.Hip.X
@@ -352,9 +556,11 @@ func computeGaitPose(leg critter.Leg, phase, active float32, leftSide bool, body
 // stretches the leg along the hip→foot line rather than producing
 // NaNs from the law-of-cosines step. The bend direction is the
 // rest-knee's projection onto the plane perpendicular to hip→foot,
-// renormalised — collapse to a fallback (world-down then world-+X)
-// when the rest knee happens to be collinear with the hip→foot line.
-func twoBoneIK(hip, foot critter.Vec3, lenF, lenT float32, restKnee critter.Vec3) critter.Vec3 {
+// renormalised — collapse to `fallback` (a per-kind bend hint:
+// down for mammals, up for insect knees, backward for elbows; then
+// world-+X as the last resort) when the rest knee happens to be
+// collinear with the hip→foot line.
+func twoBoneIK(hip, foot critter.Vec3, lenF, lenT float32, restKnee, fallback critter.Vec3) critter.Vec3 {
 	d := critter.Vec3{X: foot.X - hip.X, Y: foot.Y - hip.Y, Z: foot.Z - hip.Z}
 	D := vecLen(d)
 	if D < 1e-6 {
@@ -391,12 +597,18 @@ func twoBoneIK(hip, foot critter.Vec3, lenF, lenT float32, restKnee critter.Vec3
 	}
 	bm := vecLen(bend)
 	if bm < 1e-6 {
-		// Rest knee collinear with hip→foot. Fall back to world
-		// −Y (legs bend downward); if that's also collinear (a
-		// vertical leg), pick +X.
-		down := critter.Vec3{Y: -1}
-		along = down.Y * axis.Y
-		bend = critter.Vec3{X: -along * axis.X, Y: -1 - along*axis.Y, Z: -along * axis.Z}
+		// Rest knee collinear with hip→foot. Fall back to the
+		// kind's bend hint; if that's also collinear (e.g. a
+		// vertical leg with a downward hint), pick +X.
+		if fallback == (critter.Vec3{}) {
+			fallback = critter.Vec3{Y: -1}
+		}
+		along = fallback.X*axis.X + fallback.Y*axis.Y + fallback.Z*axis.Z
+		bend = critter.Vec3{
+			X: fallback.X - along*axis.X,
+			Y: fallback.Y - along*axis.Y,
+			Z: fallback.Z - along*axis.Z,
+		}
 		bm = vecLen(bend)
 		if bm < 1e-6 {
 			bend = critter.Vec3{X: 1}
@@ -480,15 +692,59 @@ func (h *headLookState) advance(delta float32) float32 {
 // frame. uploadGaitLegs reads it BEFORE applyBodyGait runs so the
 // leg poses can pre-compensate — feet stay planted at world Y ≈ 0
 // while the body crouches and leaps over them.
-func bodyAnimationY(cv *controlVis) float32 {
+func (g *gaitState) bodyAnimationY() float32 {
 	var jumpY float32
-	if cv.jumpActive {
-		jumpY = jumpYOffset(cv.jumpTime / jumpDuration)
+	if g.jumpActive {
+		jumpY = jumpYOffset(g.jumpTime / jumpDuration)
 	}
-	phase := 2 * math.Pi * float64(cv.gaitTime)
-	bobY := -gaitBodyBob * cv.gaitActive *
+	phase := 2 * math.Pi * float64(g.gaitTime)
+	bobY := -gaitBodyBob * g.profile.bob * g.gaitActive *
 		float32(math.Cos(2*phase))
 	return bobY + jumpY
+}
+
+// bobOffset returns the body's local-Y bob (gait + jump), roll, and pitch for the
+// current cycle, scaled by gaitActive. Shared by the editor's applyBodyGait and
+// the placed CritterAnimator so both derive the body sway identically; each
+// applies it to its own body node (the editor adds to the WASD-restored
+// transform; the animator restores the body mesh's base then applies).
+func (g *gaitState) bobOffset() (bobY, rollZ, pitchX float32) {
+	bobY = g.bodyAnimationY()
+	phase := 2 * math.Pi * float64(g.gaitTime)
+	rollZ = gaitBodyRoll * g.profile.roll * g.gaitActive * float32(math.Sin(phase))
+	pitchX = gaitBodyPitch * g.profile.pitch * g.gaitActive * float32(math.Sin(2*phase))
+	return
+}
+
+const (
+	critterBreathePeriod    = float32(4.0)  // seconds per breath
+	critterBreatheAmplitude = float32(0.03) // ±3 % chest puff
+)
+
+// applyCritterIdle advances the head-look scheduler and applies the idle
+// breathing puff + head-look glance to body's skeleton (composing with the leg
+// gait on the same bones). Shared by the critter editor (CritterEditor.Process)
+// and placed creations (CritterAnimator); the caller owns breatheTime and the
+// headLookState so each critter keeps independent phase/scheduling. apply=false
+// (the editor while spine-editing / placing) advances the scheduler but holds the
+// body at rest.
+func applyCritterIdle(body *CritterBody, headLook *headLookState, breatheTime, delta float32, apply bool) {
+	if headLook != nil {
+		headLook.advance(delta)
+	}
+	if body == nil {
+		return
+	}
+	if !apply {
+		body.SetBreathe(0)
+		body.SetHeadLookYaw(0)
+		return
+	}
+	phase := breatheTime * (2 * float32(math.Pi) / critterBreathePeriod)
+	body.SetBreathe(critterBreatheAmplitude * float32(math.Sin(float64(phase))))
+	if headLook != nil {
+		body.SetHeadLookYaw(headLook.angle)
+	}
 }
 
 // jumpYOffset returns the body-Y delta for the current jump phase.
@@ -519,13 +775,21 @@ func jumpYOffset(t float32) float32 {
 	}
 }
 
-// updateGaitState eases gaitActive toward 1 when the critter is
-// moving and toward 0 when it isn't, using the same
-// frame-rate-independent exponential blend pattern as the camera
-// recenter. gaitTime advances regardless so a brief stop-and-start
-// doesn't reset the cycle — phases stay continuous and a leg that
-// was mid-swing keeps swinging when motion resumes.
-func updateGaitState(cv *controlVis, moving bool, delta float32) {
+// update eases gaitActive toward 1 when the critter is moving and
+// toward 0 when it isn't, using the same frame-rate-independent
+// exponential blend pattern as the camera recenter. gaitTime
+// advances regardless so a brief stop-and-start doesn't reset the
+// cycle — phases stay continuous and a leg that was mid-swing keeps
+// swinging when motion resumes.
+//
+// `speed` is the body's current horizontal speed in world units/s
+// (0 when unknown, e.g. turning in place). When moving with a known
+// speed the cycle rate is matched so the feet's ground velocity
+// during stance tracks the body — 2·stride·legLen per duty·cycle —
+// which is what kills the moonwalk foot-slip: short-legged critters
+// patter, long-legged ones lope, at the same body speed. Clamped to
+// [gaitRateFloor, gaitRateCeiling]× the profile's base rate.
+func (g *gaitState) update(moving bool, speed, delta float32) {
 	var rate float32
 	target := float32(0)
 	if moving {
@@ -535,13 +799,26 @@ func updateGaitState(cv *controlVis, moving bool, delta float32) {
 		rate = gaitReleaseRate
 	}
 	t := 1 - float32(math.Exp(-float64(rate)*float64(delta)))
-	cv.gaitActive += (target - cv.gaitActive) * t
-	cv.gaitTime += delta * gaitCycleRate
+	g.gaitActive += (target - g.gaitActive) * t
+	cycleRate := g.profile.cycleRate
+	if moving && speed > 0 && g.avgLegLen > 1e-4 && g.profile.stride > 0 {
+		matched := speed * g.profile.duty / (2 * g.profile.stride * g.avgLegLen)
+		lo := gaitRateFloor * g.profile.cycleRate
+		hi := gaitRateCeiling * g.profile.cycleRate
+		if matched < lo {
+			matched = lo
+		}
+		if matched > hi {
+			matched = hi
+		}
+		cycleRate = matched
+	}
+	g.gaitTime += delta * cycleRate
 	// Keep gaitTime bounded so float drift doesn't accumulate over a
 	// very long session. Wrap at 1 — gaitPhase wraps again per-leg
 	// after adding the per-leg offset, so this is purely numerical
 	// hygiene.
-	cv.gaitTime -= float32(math.Floor(float64(cv.gaitTime)))
+	g.gaitTime -= float32(math.Floor(float64(g.gaitTime)))
 }
 
 func vecDist(a, b critter.Vec3) float32 {
