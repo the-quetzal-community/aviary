@@ -238,6 +238,11 @@ func resolveSecret(t *testing.T) string {
 // buffered so the (synchronous) server/client apply loops never block on a
 // slow assertion.
 type recorder struct {
+	// all is every non-Member record in arrival order (the per-kind
+	// channels below lose cross-kind ordering); read via (*recorder).ordered.
+	mu  sync.Mutex
+	all []any
+
 	members chan musical.Member
 	uploads chan musical.Upload
 	sculpts chan musical.Sculpt
@@ -260,12 +265,25 @@ func newRecorder() *recorder {
 }
 
 func (r *recorder) Member(v musical.Member) error { send(r.members, v); return nil }
-func (r *recorder) Upload(v musical.Upload) error { send(r.uploads, v); return nil }
-func (r *recorder) Sculpt(v musical.Sculpt) error { send(r.sculpts, v); return nil }
-func (r *recorder) Import(v musical.Import) error { send(r.imports, v); return nil }
-func (r *recorder) Change(v musical.Change) error { send(r.changes, v); return nil }
-func (r *recorder) Action(v musical.Action) error { send(r.actions, v); return nil }
-func (r *recorder) LookAt(v musical.LookAt) error { send(r.lookAts, v); return nil }
+func (r *recorder) Upload(v musical.Upload) error { r.log(v); send(r.uploads, v); return nil }
+func (r *recorder) Sculpt(v musical.Sculpt) error { r.log(v); send(r.sculpts, v); return nil }
+func (r *recorder) Import(v musical.Import) error { r.log(v); send(r.imports, v); return nil }
+func (r *recorder) Change(v musical.Change) error { r.log(v); send(r.changes, v); return nil }
+func (r *recorder) Action(v musical.Action) error { r.log(v); send(r.actions, v); return nil }
+func (r *recorder) LookAt(v musical.LookAt) error { r.log(v); send(r.lookAts, v); return nil }
+
+func (r *recorder) log(v any) {
+	r.mu.Lock()
+	r.all = append(r.all, v)
+	r.mu.Unlock()
+}
+
+// ordered returns a copy of every record seen so far, in arrival order.
+func (r *recorder) ordered() []any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]any(nil), r.all...)
+}
 
 // send never blocks the caller (the apply loop): if a buffer fills because a
 // test isn't draining that instruction type, the extra is dropped rather than
