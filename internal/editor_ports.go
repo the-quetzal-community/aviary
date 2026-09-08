@@ -196,6 +196,15 @@ type CameraRig interface {
 	// xrPointer returns the VR aim controller, ok when XR is active and
 	// the controller is present.
 	xrPointer() (XRController3D.Instance, bool)
+
+	// driveInput samples the merged movement intent (keyboard + touch
+	// overlay + VR sticks) for a drive view; consumeDriveExit reports a
+	// pending exit request from a non-keyboard affordance; setDriveMode
+	// flags the view active so the touch overlay appears alongside it.
+	// See input_drive.go.
+	driveInput() DriveInput
+	consumeDriveExit() bool
+	setDriveMode(active bool)
 }
 
 // LightingConsole drives the live world-lighting renderer state. It is the

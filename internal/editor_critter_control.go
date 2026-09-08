@@ -122,6 +122,9 @@ func (ce *CritterEditor) controlEnter() {
 		))
 	}
 	ce.control = cv
+	if ce.rig != nil {
+		ce.rig.setDriveMode(true) // touch overlay: joystick + Jump/Run/Exit
+	}
 	// Initial snap: place the FocalPoint at the critter with the
 	// "behind-the-critter" yaw so the first frame already reads as
 	// chase cam. After this, controlPhysicsProcess only re-pins the
@@ -176,6 +179,7 @@ func (ce *CritterEditor) controlExit() {
 		ce.rig.viewportCamera().AsNode3D().SetPosition(cv.savedCamPos)
 		ce.rig.viewportCamera().SetProjection(cv.savedProjection)
 		ce.rig.setMovementLocked(false)
+		ce.rig.setDriveMode(false)
 	}
 	ce.control = nil
 }
@@ -198,19 +202,20 @@ func (ce *CritterEditor) controlPhysicsProcess(delta float32) {
 	bodyNode.SetPosition(cv.walkPos)
 	bodyNode.SetBasis(cv.walkBasis)
 
-	var forward, turn float32
-	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		forward += 1
+	// The touch overlay's EXIT (or a VR exit) drops back to the explore
+	// view — same as picking it in the view selector, which stays
+	// clickable here for mouse users.
+	if ce.rig != nil && ce.rig.consumeDriveExit() {
+		ce.SwitchToView("explore")
+		if ce.workbench != nil {
+			ce.workbench.refreshViewSelector(0, ce.Views())
+		}
+		return
 	}
-	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		forward -= 1
-	}
-	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		turn += 1
-	}
-	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		turn -= 1
-	}
+	// Merged drive axes: keyboard, touch joystick, or VR stick.
+	drive := ce.rig.driveInput()
+	forward := float32(drive.Move.Y)
+	turn := float32(-drive.Move.X)
 	if turn != 0 {
 		bodyNode.Rotate(
 			Vector3.New(0, 1, 0),
@@ -237,7 +242,7 @@ func (ce *CritterEditor) controlPhysicsProcess(delta float32) {
 	// the key during a jump just makes the trigger wait until the
 	// current jump finishes, which feels right (no key-repeat bunny
 	// hops, no buffered second jump).
-	if Input.IsKeyPressed(Input.KeySpace) && !cv.jumpActive {
+	if drive.Jump && !cv.jumpActive {
 		cv.jumpActive = true
 		cv.jumpTime = 0
 	}
@@ -253,10 +258,9 @@ func (ce *CritterEditor) controlPhysicsProcess(delta float32) {
 	// against rest pose by `gaitActive` inside computeGaitPose).
 	// Speed feeds the speed-matched cycle rate; turning in place
 	// passes 0 so the legs shuffle at the profile's base rate.
-	var speed float32
-	if forward != 0 {
-		speed = controlWalkSpeed
-	}
+	// Speed scales with the analog deflection (keyboard gives ±1, so
+	// desktop behaviour is unchanged) and feeds the speed-matched gait.
+	speed := controlWalkSpeed * absF(forward)
 	cv.update(moving, speed, delta)
 	cv.uploadLegs()
 	// Idle head-look ticks every frame, regardless of gaitActive —

@@ -118,6 +118,22 @@ type Client struct {
 	// channel. See client_flight.go.
 	flight flightState
 
+	// touchControls is the on-screen drive overlay (virtual joystick +
+	// Jump/Run/Exit) for touchscreen devices. Created only when a
+	// touchscreen is available (or AVIARY_TOUCH=1); shown while a drive
+	// mode is active. Nil on plain desktop. See ui_touch_controls.go +
+	// input_drive.go.
+	touchControls *TouchControls
+	// editorDrive marks an editor-owned drive view (critter/citizen
+	// walk-test) as active, so the touch overlay shows there too.
+	// Set via the CameraRig port (setDriveMode).
+	editorDrive bool
+	// vrJumpHeld / vrExitRequest are the VR drive-mode buttons: A/X (or
+	// an off-UI trigger while possessing) holds jump, B/Y requests an
+	// exit. Merged by driveInput()/consumeDriveExit().
+	vrJumpHeld    bool
+	vrExitRequest bool
+
 	// swimAim drives the right-drag "swim here" target for a selected swimmer: a
 	// 3D move whose depth you set by dragging, previewed by a depth indicator.
 	// See client_swimmer.go.
@@ -615,7 +631,7 @@ func (world *Client) loadUserState() {
 		UserState.Editor = Editing.Scenery
 	}
 	if !UserState.GraphicsQualitySet {
-		UserState.GraphicsQuality = defaultGraphicsQuality
+		UserState.GraphicsQuality = defaultPlatformQuality()
 	}
 }
 
@@ -790,6 +806,11 @@ func (world *Client) Ready() {
 		editor.Setup()
 	}
 	profMark("Ready: editor UI set up")
+	// Touch drive overlay (virtual joystick + Jump/Run/Exit) on
+	// touch-capable devices; hidden until a drive mode activates.
+	if touchControlsWanted() {
+		world.touchControls = attachTouchControls(world.AsNode())
+	}
 	world.FocalPoint.Lens.Camera.AsNode3D().
 		SetPosition(Vector3.New(0, 1, 3)).
 		LookAt(Vector3.Zero)
@@ -1697,6 +1718,16 @@ func (world *Client) Process(dt Float.X) {
 		world.updateSwimAim()
 	}
 
+	// Keep the touch drive overlay in sync with whichever mode owns
+	// movement this frame (possession, flight, FPS, editor walk-test).
+	if world.touchControls != nil {
+		world.touchControls.SetActive(world.driveModeActive())
+	}
+	// The touch overlay's EXIT button lifts out of first-person ground
+	// mode; possession/flight/walk-tests consume the latch themselves.
+	if world.fpsMode && world.consumeDriveExit() {
+		world.exitFPS()
+	}
 	if Input.IsKeyPressed(Input.KeyCtrl) {
 		return
 	}
@@ -1768,17 +1799,15 @@ func (world *Client) Process(dt Float.X) {
 	// Grow the shadow reach with the same zoom so shadows don't fade out from
 	// under the far ground when the camera pulls back.
 	world.updateShadowDistance(zoom)
-	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(-moveSpeed, 0, 0))
+	// Pan via the merged drive axes: keyboard WASD/arrows exactly as
+	// before (each key contributes ±1), plus the touch joystick while
+	// first-person ground mode has the overlay up.
+	drive := world.driveInput()
+	if drive.Move.X != 0 {
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(moveSpeed*drive.Move.X, 0, 0))
 	}
-	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(moveSpeed, 0, 0))
-	}
-	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, moveSpeed))
-	}
-	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, -moveSpeed))
+	if drive.Move.Y != 0 {
+		world.FocalPoint.AsNode3D().Translate(Vector3.New(0, 0, -moveSpeed*drive.Move.Y))
 	}
 	if Input.IsKeyPressed(Input.KeyR) {
 		world.lookPitch(-Angle.Radians(dt), grounded)
@@ -1943,7 +1972,14 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 	if mouse, ok := Object.As[InputEventMouseMotion.Instance](event); ok {
 		middle := Input.IsMouseButtonPressed(Input.MouseButtonMiddle)
 		relative := mouse.Relative()
+		// Touch devices mirror finger 0 as an emulated mouse (device
+		// −1). Drive-mode look for touches is handled once, in the
+		// ScreenDrag block below — skip the mouse-look cases for
+		// emulated motion so one finger doesn't steer twice per event.
+		emulated := mouse.AsInputEvent().Device() == -1
 		switch {
+		case emulated && (world.flight.active || world.possess.active || world.fpsMode):
+			// Steered by the ScreenDrag path.
 		case world.flight.active:
 			// Self-flight: captured mouse steers the chase cam, which is the glide
 			// direction. Pitch clamped (grounded=true) so you can't loop over.
@@ -1979,6 +2015,17 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 		}
 	}
 	if gesture, ok := Object.As[InputEventScreenDrag.Instance](event); ok {
+		// Drive modes (possession / flight / first-person) steer the
+		// look with ANY finger the touch overlay didn't claim — the
+		// overlay consumed joystick/button fingers before this handler
+		// runs, so what reaches here is a free "look" finger. Same
+		// sensitivity and clamped pitch as the captured-mouse path.
+		if world.flight.active || world.possess.active || world.fpsMode {
+			relative := gesture.Relative()
+			world.turnYaw(-Angle.Radians(relative.X * 0.005))
+			world.lookPitch(-Angle.Radians(relative.Y*0.005), true)
+			return
+		}
 		if gesture.Index() != 0 {
 			return
 		}

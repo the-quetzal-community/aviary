@@ -73,6 +73,7 @@ func (ce *CitizenEditor) controlEnter() {
 		cv.savedProjection = ce.rig.viewportCamera().Projection()
 		ce.rig.setMovementLocked(true)
 		ce.rig.setOverlayVisible(false) // clean chase-cam view; Escape restores it
+		ce.rig.setDriveMode(true)       // touch overlay: joystick + Jump/Run/Exit
 		ce.rig.viewportCamera().SetPerspective(75, 0.05, 2000)
 		ce.rig.lensNode().SetRotation(Euler.Radians{X: Angle.Radians(citizenCamPitch)})
 		ce.rig.viewportCamera().AsNode3D().SetPosition(Vector3.New(float32(0), citizenCamHeight, citizenCamDist))
@@ -106,6 +107,7 @@ func (ce *CitizenEditor) controlExit() {
 		ce.rig.viewportCamera().SetProjection(cv.savedProjection)
 		ce.rig.setMovementLocked(false)
 		ce.rig.setOverlayVisible(true)
+		ce.rig.setDriveMode(false)
 	}
 	ce.control = nil
 }
@@ -121,41 +123,34 @@ func (ce *CitizenEditor) controlPhysicsProcess(delta float32) {
 	cv := ce.control
 	root := ce.rigScene.root
 
-	// Escape leaves the walk-test (the UI is hidden, so the view dropdown can't
-	// be clicked). Edge-detected so a held key doesn't re-trigger.
-	if esc := Input.IsKeyPressed(Input.KeyEscape); esc && !cv.escapeDown {
-		cv.escapeDown = true
+	// Escape (or the touch overlay's EXIT / a VR exit) leaves the
+	// walk-test — the UI is hidden, so the view dropdown can't be
+	// clicked. Edge-detected so a held key doesn't re-trigger.
+	esc := Input.IsKeyPressed(Input.KeyEscape)
+	if (esc && !cv.escapeDown) || ce.rig.consumeDriveExit() {
+		cv.escapeDown = esc
 		ce.SwitchToView("edit") // controlExit restores the camera/body + UI
 		if ce.workbench != nil {
 			ce.workbench.refreshViewSelector(0, ce.Views()) // dropdown → "edit"
 		}
 		return
-	} else {
-		cv.escapeDown = esc
 	}
+	cv.escapeDown = esc
 
-	var forward, turn float32
-	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		forward += 1
-	}
-	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		forward -= 1
-	}
-	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		turn += 1
-	}
-	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		turn -= 1
-	}
-	running := Input.IsKeyPressed(Input.KeyShift)
+	// Merged drive axes: keyboard, touch joystick, or VR stick.
+	drive := ce.rig.driveInput()
+	forward := float32(drive.Move.Y)
+	turn := float32(-drive.Move.X)
+	running := drive.Run
 
 	if turn != 0 {
 		root.Rotate(Vector3.New(0, 1, 0), Angle.Radians(turn*citizenTurnRate*delta))
 	}
 
-	// Arm a one-shot jump on Space (gated by jumpTime so a held key doesn't
-	// re-trigger mid-air); advance any in-flight jump.
-	if Input.IsKeyPressed(Input.KeySpace) && cv.jumpTime <= 0 {
+	// Arm a one-shot jump on Space / the touch JUMP button (gated by
+	// jumpTime so a held press doesn't re-trigger mid-air); advance any
+	// in-flight jump.
+	if drive.Jump && cv.jumpTime <= 0 {
 		cv.jumpTime = 1e-4
 	}
 	grounded := true

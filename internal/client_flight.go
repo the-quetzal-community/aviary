@@ -5,6 +5,7 @@ import (
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/XRCamera3D"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Euler"
 	"graphics.gd/variant/Float"
@@ -120,7 +121,7 @@ func (world *Client) enterFlight() bool {
 		active:    true,
 		avatar:    avatar,
 		speed:     flightCruise, // launch into a glide, not a drop
-		spaceHeld: Input.IsKeyPressed(Input.KeySpace),
+		spaceHeld: world.driveInput().Jump,
 	}
 	if avatar.AsNode().HasNode("AnimationPlayer") {
 		world.flight.player = Object.To[AnimationPlayer.Instance](avatar.AsNode().GetNode("AnimationPlayer"))
@@ -181,12 +182,18 @@ func (world *Client) updateFlight(dt Float.X) {
 		world.exitFlight()
 		return
 	}
+	// The touch overlay's EXIT button lands you back in the editing view
+	// (desktop exits via Enter/toggleEnter as before).
+	if world.consumeDriveExit() {
+		world.exitFlight()
+		return
+	}
 	body := world.flight.avatar.AsNode3D()
 	pos := body.GlobalPosition()
 	fwd := cameraForward(world)
 	ground := world.TerrainEditor.HeightAt(Vector3.New(pos.X, 0, pos.Z))
 
-	space := Input.IsKeyPressed(Input.KeySpace)
+	space := world.driveInput().Jump
 	flap := space && !world.flight.spaceHeld
 	world.flight.spaceHeld = space
 
@@ -208,20 +215,12 @@ func (world *Client) flightWalk(body Node3D.Instance, pos *Vector3.XYZ, fwd Vect
 	// Right-hand strafe vector for a +Z-forward heading (x,z): rotating the
 	// heading −90° about Y gives (−z, 0, x), so D/Right strafes to screen-right.
 	right := Vector3.New(-heading.Z, 0, heading.X)
-	move := Vector3.Zero
-	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		move = Vector3.Add(move, heading)
-	}
-	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		move = Vector3.Sub(move, heading)
-	}
-	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		move = Vector3.Add(move, right)
-	}
-	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		move = Vector3.Sub(move, right)
-	}
-	moving := Vector3.Length(move) > 0.001
+	drive := world.driveInput()
+	move := Vector3.Add(
+		Vector3.MulX(heading, drive.Move.Y),
+		Vector3.MulX(right, drive.Move.X),
+	)
+	moving := Vector3.Length(move) > 0.05
 	if moving {
 		*pos = Vector3.Add(*pos, Vector3.MulX(Vector3.Normalized(move), flightWalkSpeed*dt))
 	}
@@ -360,9 +359,14 @@ func (world *Client) trackFlightCamera(pos Vector3.XYZ) {
 }
 
 // cameraForward is the unit view direction (−Z of the camera basis) — where the
-// player is looking, which the glide follows.
+// player is looking, which the glide/possession follows. In XR the headset is
+// the eye, so the gaze steers instead of the (untracked) desktop camera node.
 func cameraForward(world *Client) Vector3.XYZ {
-	t := world.FocalPoint.Lens.Camera.AsNode3D().GlobalTransform()
+	cam := world.FocalPoint.Lens.Camera.AsNode3D()
+	if world.xr && world.xrCamera != XRCamera3D.Nil {
+		cam = world.xrCamera.AsNode3D()
+	}
+	t := cam.GlobalTransform()
 	fwd := Vector3.New(-t.Basis.Z.X, -t.Basis.Z.Y, -t.Basis.Z.Z)
 	if Vector3.Length(fwd) < 1e-4 {
 		return Vector3.New(0, 0, -1)

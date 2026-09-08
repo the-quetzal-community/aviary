@@ -342,6 +342,12 @@ func (world *Client) setupControllerPointers(left, right XRController3D.Instance
 			world.vrPointerClickPanel(world.vrUIHoverViewportRight, world.vrUIHoverPixelRight, true)
 			return
 		}
+		// While driving a possessed entity, the off-UI trigger is the
+		// jump button (selection/placement are parked until exit).
+		if world.possess.active {
+			world.vrJumpHeld = true
+			return
+		}
 		// Off-UI: if the active editor has a preview ready to drop
 		// (user previously clicked a design tile in the palette and
 		// the preview is now tracking the laser), commit the
@@ -361,6 +367,7 @@ func (world *Client) setupControllerPointers(left, right XRController3D.Instance
 			return
 		}
 		world.vrRightTrigger = false
+		world.vrJumpHeld = false // trigger-jump (possession) releases with the trigger
 		if world.vrUIHoverViewportRight != SubViewport.Nil {
 			world.vrPointerClickPanel(world.vrUIHoverViewportRight, world.vrUIHoverPixelRight, false)
 		}
@@ -409,6 +416,12 @@ func (world *Client) setupControllerPointers(left, right XRController3D.Instance
 			world.vrPointerClickPanel(world.vrUIHoverViewportLeft, world.vrUIHoverPixelLeft, true)
 			return
 		}
+		// Driving a possessed entity: off-UI trigger jumps (see the
+		// right-hand handler).
+		if world.possess.active {
+			world.vrJumpHeld = true
+			return
+		}
 		if world.tryPlaceVRPreview() {
 			return
 		}
@@ -418,12 +431,35 @@ func (world *Client) setupControllerPointers(left, right XRController3D.Instance
 			world.armGizmoDrag()
 		}
 	})
+	// Face buttons for drive modes: A/X holds jump (either hand — an
+	// alternative to the off-UI trigger), B/Y requests an exit from a
+	// possession, the VR stand-in for Escape. Uses Godot's default
+	// OpenXR action-map names ("ax_button" / "by_button").
+	for _, ctrl := range []XRController3D.Instance{left, right} {
+		ctrl.OnButtonPressed(func(name string) {
+			switch name {
+			case "ax_button":
+				world.vrJumpHeld = true
+			case "by_button":
+				if world.possess.active {
+					world.vrExitRequest = true
+				}
+			}
+		})
+		ctrl.OnButtonReleased(func(name string) {
+			if name == "ax_button" {
+				world.vrJumpHeld = false
+			}
+		})
+	}
+
 	left.OnButtonReleased(func(name string) {
 		fmt.Println("vr-button-released: left", name)
 		if !isTriggerButton(name) {
 			return
 		}
 		world.vrLeftTrigger = false
+		world.vrJumpHeld = false // trigger-jump (possession) releases with the trigger
 		if world.vrUIHoverViewportLeft != SubViewport.Nil {
 			world.vrPointerClickPanel(world.vrUIHoverViewportLeft, world.vrUIHoverPixelLeft, false)
 		}
@@ -667,7 +703,11 @@ func (world *Client) processVRLocomotion(dt Float.X) {
 		return
 	}
 	// --- Strafe (left stick) ---
-	if world.xrLeft != XRController3D.Nil {
+	// While a drive mode owns movement (a possessed entity, an editor
+	// walk-test) the left stick drives THAT via driveInput() — don't
+	// also strafe the origin underneath it. Snap-rotate stays live
+	// below: turning the view is how you steer the entity.
+	if world.xrLeft != XRController3D.Nil && !world.driveModeActive() {
 		stick := world.xrLeft.GetVector2("primary")
 		mag := float32(Vector2.Length(stick))
 		if mag > vrStickDead {

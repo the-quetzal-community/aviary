@@ -270,26 +270,26 @@ func (world *Client) hideSwimAimIndicator() {
 // it; no yaw recenter). The pose is broadcast terrain-relative by sendPossessChange
 // so peers reconstruct the depth (and its EntityAnimator the swim clip).
 func (world *Client) updateSwimPossess(node Node3D.Instance, dt Float.X) {
+	// The touch overlay's EXIT / VR B-Y backs out, mirroring Escape.
+	if world.consumeDriveExit() {
+		world.exitPossess()
+		return
+	}
 	body := node.AsNode3D()
 	pos := body.Position()
 	fwd := cameraForward(world)
 	heading := horizontal(fwd)
 	right := Vector3.New(-heading.Z, 0, heading.X) // screen-right for a +Z heading
 
-	move := Vector3.Zero
-	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		move = Vector3.Add(move, fwd)
-	}
-	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		move = Vector3.Sub(move, fwd)
-	}
-	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		move = Vector3.Add(move, right)
-	}
-	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		move = Vector3.Sub(move, right)
-	}
-	moving := Vector3.Length(move) > 0.001
+	// Merged drive axes (keyboard / touch joystick / VR stick): forward
+	// swims along the full 3D view direction (look up to rise), strafe
+	// stays horizontal.
+	drive := world.driveInput()
+	move := Vector3.Add(
+		Vector3.MulX(fwd, drive.Move.Y),
+		Vector3.MulX(right, drive.Move.X),
+	)
+	moving := Vector3.Length(move) > 0.05
 	if moving {
 		pos = Vector3.Add(pos, Vector3.MulX(Vector3.Normalized(move), swimControlSpeed*dt))
 	}

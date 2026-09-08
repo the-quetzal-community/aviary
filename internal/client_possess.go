@@ -105,7 +105,7 @@ func (world *Client) toggleEnter() {
 // design (critter/citizen/swimmer/…) with an AnimationPlayer, while the scenery
 // editor is active. Returns false (no-op) when there's no controllable selection.
 func (world *Client) enterPossess() bool {
-	if world.possess.active || world.xr {
+	if world.possess.active {
 		return false
 	}
 	if world.Editing != Editing.Scenery {
@@ -169,14 +169,20 @@ func (world *Client) enterPossess() bool {
 	Select(node.AsNode(), false)
 
 	world.setMovementLocked(true)
-	if world.ui != nil {
-		world.ui.hideOverlay() // full-screen the third-person view while driving
+	// In VR the "overlay" is the wrist panels — they must stay up so the
+	// GizmoEnter button remains reachable as the exit, and the headset is
+	// the look so there's no mouse to capture. Desktop/touch full-screens
+	// the view; touch keeps its own drive overlay (Exit button included).
+	if !world.xr {
+		if world.ui != nil {
+			world.ui.hideOverlay() // full-screen the third-person view while driving
+		}
+		// Capture the mouse so it steers the chase cam first-person style — for
+		// ground walkers/citizens as well as look-to-swim fish (the camera heading
+		// is the move direction; see updatePossess / updateSwimPossess and the
+		// possess case in UnhandledInput). Released on exit.
+		Input.SetMouseMode(Input.MouseModeCaptured)
 	}
-	// Capture the mouse so it steers the chase cam first-person style — for ground
-	// walkers/citizens as well as look-to-swim fish (the camera heading is the move
-	// direction; see updatePossess / updateSwimPossess and the possess case in
-	// UnhandledInput). Released on exit.
-	Input.SetMouseMode(Input.MouseModeCaptured)
 
 	// Frame the chase cam zoomed in behind the model (which faces +Z, see
 	// ActionRenderer.OrientModel): lens tilted down, camera lifted and pulled back a
@@ -213,10 +219,12 @@ func (world *Client) exitPossess() {
 	world.FocalPoint.Lens.AsNode3D().SetRotation(world.possess.savedLensRot)
 	world.FocalPoint.Lens.Camera.AsNode3D().SetPosition(world.possess.savedCamPos)
 	world.setMovementLocked(false)
-	if world.ui != nil {
-		world.ui.showOverlay()
+	if !world.xr {
+		if world.ui != nil {
+			world.ui.showOverlay()
+		}
+		Input.SetMouseMode(Input.MouseModeVisible) // release the mouse-look capture
 	}
-	Input.SetMouseMode(Input.MouseModeVisible) // release the mouse-look capture
 	world.possess.active = false
 }
 
@@ -247,29 +255,31 @@ func (world *Client) updatePossess(dt Float.X) {
 
 	body := node.AsNode3D()
 
-	// Mouse-look steers the camera (FPS-style, like self-flight); WASD moves the
-	// entity relative to that view heading — W/S forward/back, A/D strafe — and the
-	// entity is turned to face where the camera looks. The camera follows behind via
-	// trackFlightCamera with no yaw recenter, so the player steers entirely by mouse.
+	// The touch overlay's EXIT button / the VR B-Y button back out of the
+	// possession, mirroring the desktop Escape (handled in UnhandledInput).
+	if world.consumeDriveExit() {
+		world.exitPossess()
+		return
+	}
+
+	// The look steers the camera (captured mouse on desktop, a free look-
+	// finger on touch, the headset in VR); the drive axes move the entity
+	// relative to that view heading — forward/back + strafe — and the
+	// entity is turned to face where the camera looks. The camera follows
+	// behind via trackFlightCamera with no yaw recenter, so the player
+	// steers entirely by look.
 	fwd := cameraForward(world)
 	heading := horizontal(fwd)
 	right := Vector3.New(-heading.Z, 0, heading.X) // screen-right for a +Z heading
-	move := Vector3.Zero
-	if Input.IsKeyPressed(Input.KeyW) || Input.IsKeyPressed(Input.KeyUp) {
-		move = Vector3.Add(move, heading)
-	}
-	if Input.IsKeyPressed(Input.KeyS) || Input.IsKeyPressed(Input.KeyDown) {
-		move = Vector3.Sub(move, heading)
-	}
-	if Input.IsKeyPressed(Input.KeyD) || Input.IsKeyPressed(Input.KeyRight) {
-		move = Vector3.Add(move, right)
-	}
-	if Input.IsKeyPressed(Input.KeyA) || Input.IsKeyPressed(Input.KeyLeft) {
-		move = Vector3.Sub(move, right)
-	}
-	moving := Vector3.Length(move) > 0.001
-	// Shift sprints: faster travel, and (when actually moving) the run-cadence clip.
-	running := Input.IsKeyPressed(Input.KeyShift)
+	drive := world.driveInput()
+	move := Vector3.Add(
+		Vector3.MulX(heading, drive.Move.Y),
+		Vector3.MulX(right, drive.Move.X),
+	)
+	moving := Vector3.Length(move) > 0.05
+	// Sprint (Shift / the touch RUN toggle): faster travel, and (when
+	// actually moving) the run-cadence clip.
+	running := drive.Run
 	speed := possessWalkSpeed
 	if running {
 		speed *= possessRunMultiplier
@@ -280,8 +290,11 @@ func (world *Client) updatePossess(dt Float.X) {
 	// held button fires once, not every frame), and on nothing else one-shot already
 	// playing. The intent is queued onto the next LookAt so peers play the same
 	// gesture on the critter we're driving (see playObservedGesture).
-	leftPressed := Input.IsMouseButtonPressed(Input.MouseButtonLeft)
-	rightPressed := Input.IsMouseButtonPressed(Input.MouseButtonRight)
+	// The emulated mouse a touch overlay finger produces must not read as
+	// a bite/bark — suppress the gesture buttons while finger 0 is on the
+	// overlay's controls.
+	leftPressed := Input.IsMouseButtonPressed(Input.MouseButtonLeft) && !world.touchPointerClaimed()
+	rightPressed := Input.IsMouseButtonPressed(Input.MouseButtonRight) && !world.touchPointerClaimed()
 	if !world.possess.gestureActive && !world.possess.jumpActive {
 		switch {
 		case world.possess.hasAttack && leftPressed && !world.possess.attackHeld:
@@ -301,10 +314,11 @@ func (world *Client) updatePossess(dt Float.X) {
 		}
 	}
 
-	// Spacebar leaps — gated on a real jump clip, on no jump already in flight
-	// (holding space can't bunny-hop or buffer a second jump), and on no gesture
-	// playing.
-	if world.possess.hasJump && Input.IsKeyPressed(Input.KeySpace) &&
+	// Jump (Space / touch JUMP / VR A-X or off-UI trigger) — gated on a
+	// real jump clip or procedural rig, on no jump already in flight
+	// (holding the button can't bunny-hop or buffer a second jump), and
+	// on no gesture playing.
+	if world.possess.hasJump && drive.Jump &&
 		!world.possess.jumpActive && !world.possess.gestureActive {
 		world.possess.jumpActive = true
 		world.possess.jumpTime = 0

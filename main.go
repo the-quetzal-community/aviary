@@ -55,6 +55,7 @@ func main() {
 	classdb.Register[internal.AvatarFlight]()
 	classdb.Register[internal.CritterAnimator]()
 	classdb.Register[internal.EntityAnimator]()
+	classdb.Register[internal.TouchControls]()
 	classdb.Register[internal.CommunityResourceLoader](internal.NewCommunityResourceLoader)
 	internal.ProfMark("main: classes registered")
 	startup.LoadingScene()

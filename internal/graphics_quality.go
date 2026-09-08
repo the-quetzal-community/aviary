@@ -1,10 +1,12 @@
 package internal
 
 import (
+	"runtime"
 	"sync"
 
 	"graphics.gd/classdb/Environment"
 	"graphics.gd/classdb/Node"
+	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/RDTextureFormat"
 	"graphics.gd/classdb/RDTextureView"
 	"graphics.gd/classdb/Rendering"
@@ -50,6 +52,22 @@ const graphicsQualitySteps = QualityHighest + 1
 // no persisted choice exists in UserState). QualityRefined (2× MSAA) gives
 // a smooth look without forcing the most expensive tier on first run.
 const defaultGraphicsQuality = QualityRefined
+
+// defaultPlatformQuality seeds the first-launch tier by platform:
+// phones / tablets / Quest ("mobile" feature) start at Toaster and web
+// builds (single-threaded wasm) at Average, instead of booting a weak
+// GPU into Refined's MSAA + soft shadows. Desktop keeps Refined. Only
+// consulted when no persisted choice exists — the Settings slider
+// still owns the value afterwards.
+func defaultPlatformQuality() GraphicsQuality {
+	switch {
+	case OS.HasFeature("mobile"):
+		return QualityToaster
+	case runtime.GOOS == "js":
+		return QualityAverage
+	}
+	return defaultGraphicsQuality
+}
 
 // directionalShadowAtlasSize maps each quality level to the directional
 // shadow atlas resolution. project.godot ships 8192; we only shrink it
