@@ -101,7 +101,45 @@ var coasterPieces = map[string]coasterPiece{
 		entry: Vector3.XYZ{0, 0, 0},
 		exit:  Vector3.XYZ{0, 0, 4},
 	},
+	// Measured 2026-09-08 from the end faces of the wood GLBs (see
+	// .claude/ASSET_AUDIT.md): "curve" is a lane change, not a turn —
+	// the track shifts two units left over four and exits parallel to
+	// the entry. The "skew" pieces bank the track without turning or
+	// climbing, so they chain as level straights (the roll itself is
+	// cosmetic until a banked-turn set exists). "hill-complete-half" is
+	// a gentler climb, half the height of hill-beginning.
+	"curve": {
+		entry: Vector3.XYZ{0, 0, 0},
+		exit:  Vector3.XYZ{-2, 0, 4},
+	},
+	"skew-left": {
+		entry: Vector3.XYZ{0, 0, 0},
+		exit:  Vector3.XYZ{0, 0, 4},
+	},
+	"skew-left-side": {
+		entry: Vector3.XYZ{0, 0, 0},
+		exit:  Vector3.XYZ{0, 0, 4},
+	},
+	"skew-right": {
+		entry: Vector3.XYZ{0, 0, 0},
+		exit:  Vector3.XYZ{0, 0, 4},
+	},
+	"skew-right-side": {
+		entry: Vector3.XYZ{0, 0, 0},
+		exit:  Vector3.XYZ{0, 0, 4},
+	},
+	"hill-complete-half": {
+		entry:        Vector3.XYZ{0, 0, 0},
+		exit:         Vector3.XYZ{0, 0.6, 4},
+		exitRotation: Euler.Radians{X: -Angle.Atan2(0.6, 4)},
+	},
 }
+
+// coasterTrackLift is how far (in piece units) a track piece's origin
+// sits above the ground it is started on. The Kenney rails hang a unit
+// below the piece origin (the kit's support columns are one unit tall),
+// so a station started at terrain height would bury its rails.
+const coasterTrackLift = 1.0
 
 // coasterCategories lists the editor tab names that hold coaster
 // track pieces. Park-prop dressing tabs aren't in this set — they

@@ -793,6 +793,7 @@ func (world *Client) Ready() {
 	world.CoasterEditor.recorder = world
 	world.CoasterEditor.library = world
 	world.CoasterEditor.workbench = world
+	world.CoasterEditor.rig = world
 	world.CoasterEditor.terrain = world.TerrainEditor
 	profMark("Ready: loading editor.tscn")
 	editor_scene := LoadSync[PackedScene.Instance]("res://ui/editor.tscn")
