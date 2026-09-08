@@ -50,7 +50,9 @@ const coasterJoinTolerance = 0.05
 //     the track, shown as an arrow. Every track piece previews attached
 //     to that cursor rather than under the pointer; clicking commits it
 //     and advances the cursor, so a run of clicks lays a run of pieces.
-//     Track pieces never place freely.
+//     Track pieces never place freely, and the explorer only offers
+//     pieces that fit the cursor: the track's theme, with a joining end
+//     at the cursor's grade (see HidesDesign).
 //   - Delete/Backspace pops the last piece; Ctrl+Z does the same
 //     through the shared undo stack (and peers see either as a plain
 //     removal). Right-click with nothing selected closes the track.
@@ -85,6 +87,15 @@ type CoasterEditor struct {
 	cursor      Transform3D.BasisOrigin
 	cursorValid bool
 	reverse     bool
+	// cursorPitch is the track's grade at the cursor (see
+	// coasterPiece.entryPitch): only pieces whose joining end has the
+	// same grade are offered.
+	cursorPitch Angle.Radians
+
+	// filter is the last explorer filter state pushed to the explorer
+	// (see refilter), so tiles are only rebuilt when the answer to
+	// HidesDesign actually changes.
+	filter coasterFilter
 
 	// theme is the track's theme once one piece is on it ("" while no
 	// track is open). The explorer hides other themes' pieces and
@@ -117,6 +128,15 @@ type coasterChainEntry struct {
 	entity      musical.Entity
 	priorCursor Transform3D.BasisOrigin
 	priorValid  bool
+	priorPitch  Angle.Radians
+}
+
+// coasterFilter is everything HidesDesign depends on.
+type coasterFilter struct {
+	theme   string
+	open    bool
+	reverse bool
+	pitch   Angle.Radians
 }
 
 // coasterFloor is the plane the track is built on in the grid space.
@@ -153,6 +173,7 @@ func (*CoasterEditor) Tabs(mode Mode) []string {
 		return []string{
 			"station",
 			"track_f",
+			"track_d",
 			"track_l",
 			"track_r",
 			"track_s",
@@ -182,6 +203,10 @@ func (editor *CoasterEditor) EnableEditor() {
 	editor.grid_shader = shader.ID()
 	editor.rig.setCameraCover(shader.AsMaterial())
 	editor.marker.AsNode3D().SetVisible(editor.cursorValid)
+	// The explorer is rebuilt right after EnableEditor and will ask
+	// HidesDesign with this state; remember it so refilter doesn't
+	// rebuild it again for nothing.
+	editor.filter = editor.currentFilter()
 }
 
 func (editor *CoasterEditor) ChangeEditor() {
@@ -191,14 +216,41 @@ func (editor *CoasterEditor) ChangeEditor() {
 	editor.rig.applyCoverDefault()
 }
 
-// HidesDesign implements [DesignFilter]: while a track is open only its
-// own theme's pieces are offered.
+// HidesDesign implements [DesignFilter]: only track pieces that can
+// actually go on the track are offered. With no track open that is
+// the stations; with one open it is the pieces of the track's theme
+// whose joining end matches the grade at the cursor (a hill-end only
+// after a hill-beginning, level pieces only on level track...).
 func (editor *CoasterEditor) HidesDesign(mode Mode, resource string) bool {
-	if editor.theme == "" {
-		return false
+	piece, ok := coasterPieceForPath(resource)
+	if !ok {
+		return false // park props are always available
 	}
-	theme := coasterTheme(resource)
-	return theme != "" && theme != editor.theme
+	if !editor.cursorValid {
+		return !piece.startable
+	}
+	if theme := coasterTheme(resource); theme != "" && theme != editor.theme {
+		return true
+	}
+	if editor.reverse {
+		return piece.exitPitch != editor.cursorPitch
+	}
+	return piece.entryPitch != editor.cursorPitch
+}
+
+// refilter pushes the current filter state to the explorer when it
+// differs from what the explorer last built its tiles from.
+func (editor *CoasterEditor) refilter() {
+	filter := editor.currentFilter()
+	if filter == editor.filter {
+		return
+	}
+	editor.filter = filter
+	editor.workbench.refreshDesignExplorer()
+}
+
+func (editor *CoasterEditor) currentFilter() coasterFilter {
+	return coasterFilter{theme: editor.theme, open: editor.cursorValid, reverse: editor.reverse, pitch: editor.cursorPitch}
 }
 
 func (editor *CoasterEditor) SelectDesign(mode Mode, design string) {
@@ -252,17 +304,9 @@ func (editor *CoasterEditor) closeTrack() {
 	editor.reverse = false
 	editor.chain = editor.chain[:0]
 	editor.marker.AsNode3D().SetVisible(false)
-	editor.setTheme("")
-}
-
-// setTheme locks (or with "" unlocks) the track's theme and re-filters
-// the explorer.
-func (editor *CoasterEditor) setTheme(theme string) {
-	if editor.theme == theme {
-		return
-	}
-	editor.theme = theme
-	editor.workbench.refreshDesignExplorer()
+	editor.theme = ""
+	editor.cursorPitch = 0
+	editor.refilter()
 }
 
 // coasterPlaced is a placed track piece with its entry and exit poses
@@ -270,13 +314,13 @@ func (editor *CoasterEditor) setTheme(theme string) {
 type coasterPlaced struct {
 	entity musical.Entity
 	design string
+	piece  coasterPiece
 	entry  Transform3D.BasisOrigin
 	exit   Transform3D.BasisOrigin
 }
 
 // placedPieces recovers every placed track piece's entry and exit
-// poses. The node sits where computePlacement put it (origin = entry -
-// basis*entry_local), so both ends follow from its transform.
+// poses from where its node sits.
 func (editor *CoasterEditor) placedPieces() map[musical.Entity]coasterPlaced {
 	pieces := make(map[musical.Entity]coasterPlaced)
 	for entity, id := range editor.entity_to_object {
@@ -293,13 +337,11 @@ func (editor *CoasterEditor) placedPieces() map[musical.Entity]coasterPlaced {
 		if !ok {
 			continue // a park prop, not track
 		}
-		basis := Basis.FromEuler(node.Rotation(), Angle.OrderXYZ)
-		entry := Transform3D.BasisOrigin{
-			Basis:  basis,
-			Origin: Vector3.Add(node.Position(), Basis.Transform(Vector3.MulX(piece.entry, coasterPieceScale), basis)),
-		}
-		_, exit := editor.computePlacement(piece, entry)
-		pieces[entity] = coasterPlaced{entity: entity, design: uri, entry: entry, exit: exit}
+		entry, exit := piece.ends(Transform3D.BasisOrigin{
+			Basis:  Basis.FromEuler(node.Rotation(), Angle.OrderXYZ),
+			Origin: node.Position(),
+		})
+		pieces[entity] = coasterPlaced{entity: entity, design: uri, piece: piece, entry: entry, exit: exit}
 	}
 	return pieces
 }
@@ -387,17 +429,19 @@ func (editor *CoasterEditor) resumeAtPointer() {
 	editor.chain = editor.chain[:0]
 	editor.reverse = reverse
 	editor.cursorValid = false
+	editor.cursorPitch = 0
+	editor.theme = ""
 	if reverse {
 		// Pop order runs from the entry end back along the track, so
 		// the chain is the track reversed; each piece's prior cursor is
 		// its own exit (the entry of the piece that came before it).
 		for i := len(track) - 1; i >= 0; i-- {
 			p := track[i]
-			editor.openTrack(p.entry, p.entity, p.design, p.exit, i < len(track)-1)
+			editor.openTrack(p.entry, p.piece.entryPitch, p.entity, p.design, p.exit, i < len(track)-1)
 		}
 	} else {
 		for i, p := range track {
-			editor.openTrack(p.exit, p.entity, p.design, p.entry, i > 0)
+			editor.openTrack(p.exit, p.piece.exitPitch, p.entity, p.design, p.entry, i > 0)
 		}
 	}
 }
@@ -405,14 +449,16 @@ func (editor *CoasterEditor) resumeAtPointer() {
 // openTrack sets the cursor after `entity` was laid (or resumed from),
 // recording the pre-placement cursor so popping it can rewind, and
 // locks the track's theme on the first themed piece.
-func (editor *CoasterEditor) openTrack(next Transform3D.BasisOrigin, entity musical.Entity, design string, prior Transform3D.BasisOrigin, priorValid bool) {
+func (editor *CoasterEditor) openTrack(next Transform3D.BasisOrigin, pitch Angle.Radians, entity musical.Entity, design string, prior Transform3D.BasisOrigin, priorValid bool) {
+	editor.chain = append(editor.chain, coasterChainEntry{entity: entity, priorCursor: prior, priorValid: priorValid, priorPitch: editor.cursorPitch})
 	editor.cursor = next
+	editor.cursorPitch = pitch
 	editor.cursorValid = true
-	editor.chain = append(editor.chain, coasterChainEntry{entity: entity, priorCursor: prior, priorValid: priorValid})
 	editor.marker.AsNode3D().SetVisible(true)
 	if editor.theme == "" {
-		editor.setTheme(coasterTheme(design))
+		editor.theme = coasterTheme(design)
 	}
+	editor.refilter()
 }
 
 // inChain reports whether entity is already part of the open track.
@@ -458,9 +504,9 @@ func (editor *CoasterEditor) commitPreview() {
 		}
 		place = editor.start
 	}
-	worldTransform, next := editor.attach(piece, place)
+	worldTransform, next, pitch := editor.attach(piece, place)
 	entity := editor.recorder.NextEntity()
-	editor.openTrack(next, entity, design, editor.cursor, editor.cursorValid)
+	editor.openTrack(next, pitch, entity, design, editor.cursor, editor.cursorValid)
 
 	placement := musical.Change{
 		Entity: entity,
@@ -502,42 +548,17 @@ func (editor *CoasterEditor) commitProp(design string) {
 }
 
 // attach returns the world transform a piece is instantiated at when
-// joined to the cursor, and the cursor after it: forward, the piece's
-// entry lands on the cursor and the cursor moves to its exit; in
-// reverse the piece's exit lands on the cursor and the cursor moves to
-// its entry.
-func (editor *CoasterEditor) attach(piece coasterPiece, cursor Transform3D.BasisOrigin) (Transform3D.BasisOrigin, Transform3D.BasisOrigin) {
-	if !editor.reverse {
-		return editor.computePlacement(piece, cursor)
+// joined to the cursor, the cursor after it, and the track's grade
+// there: forward, the track enters the piece at the cursor and the
+// cursor moves to where it leaves; in reverse the track leaves the
+// piece at the cursor and the cursor moves to where it enters.
+func (editor *CoasterEditor) attach(piece coasterPiece, cursor Transform3D.BasisOrigin) (transform, next Transform3D.BasisOrigin, pitch Angle.Radians) {
+	if editor.reverse {
+		transform, next = piece.atExit(cursor)
+		return transform, next, piece.entryPitch
 	}
-	entryWorld := Vector3.MulX(piece.entry, coasterPieceScale)
-	exitWorld := Vector3.MulX(piece.exit, coasterPieceScale)
-	basis := Basis.Mul(cursor.Basis, Basis.Inverse(Basis.FromEuler(piece.exitRotation, Angle.OrderXYZ)))
-	pieceTransform := Transform3D.BasisOrigin{
-		Basis:  basis,
-		Origin: Vector3.Sub(cursor.Origin, Basis.Transform(exitWorld, basis)),
-	}
-	entry := Transform3D.BasisOrigin{
-		Basis:  basis,
-		Origin: Vector3.Add(pieceTransform.Origin, Basis.Transform(entryWorld, basis)),
-	}
-	return pieceTransform, entry
-}
-
-// computePlacement returns (a) the world transform at which the
-// piece's mesh should be instantiated so its entry lands on `place`,
-// and (b) the world pose of the piece's exit.
-func (editor *CoasterEditor) computePlacement(piece coasterPiece, place Transform3D.BasisOrigin) (Transform3D.BasisOrigin, Transform3D.BasisOrigin) {
-	entryWorld := Vector3.MulX(piece.entry, coasterPieceScale)
-	exitWorld := Vector3.MulX(piece.exit, coasterPieceScale)
-
-	pieceTransform := Transform3D.BasisOrigin{
-		Basis:  place.Basis,
-		Origin: Vector3.Sub(place.Origin, Basis.Transform(entryWorld, place.Basis)),
-	}
-	nextOrigin := Vector3.Add(place.Origin, Basis.Transform(Vector3.Sub(exitWorld, entryWorld), place.Basis))
-	nextBasis := Basis.Mul(place.Basis, Basis.FromEuler(piece.exitRotation, Angle.OrderXYZ))
-	return pieceTransform, Transform3D.BasisOrigin{Basis: nextBasis, Origin: nextOrigin}
+	transform, next = piece.atEntry(cursor)
+	return transform, next, piece.exitPitch
 }
 
 // popLast removes the last piece of the open track (Delete key). The
@@ -651,7 +672,7 @@ func (editor *CoasterEditor) PhysicsProcess(_ Float.X) {
 		editor.start = snap
 		place = snap
 	}
-	pieceTransform, _ := editor.attach(piece, place)
+	pieceTransform, _, _ := editor.attach(piece, place)
 	editor.Preview.AsNode3D().
 		SetGlobalPosition(pieceTransform.Origin).
 		SetGlobalRotation(Basis.AsEulerAngles(pieceTransform.Basis, Angle.OrderXYZ)).
@@ -719,12 +740,12 @@ func (editor *CoasterEditor) chainArrival(entity musical.Entity) {
 	}
 	if editor.reverse {
 		if Vector3.Distance(p.exit.Origin, editor.cursor.Origin) < coasterJoinTolerance {
-			editor.openTrack(p.entry, entity, p.design, editor.cursor, true)
+			editor.openTrack(p.entry, p.piece.entryPitch, entity, p.design, editor.cursor, true)
 		}
 		return
 	}
 	if Vector3.Distance(p.entry.Origin, editor.cursor.Origin) < coasterJoinTolerance {
-		editor.openTrack(p.exit, entity, p.design, editor.cursor, true)
+		editor.openTrack(p.exit, p.piece.exitPitch, entity, p.design, editor.cursor, true)
 	}
 }
 
@@ -742,12 +763,14 @@ func (editor *CoasterEditor) unchain(entity musical.Entity) {
 			last := editor.chain[i]
 			editor.cursor = last.priorCursor
 			editor.cursorValid = last.priorValid
+			editor.cursorPitch = last.priorPitch
 			editor.marker.AsNode3D().SetVisible(editor.cursorValid)
 		}
 		editor.chain = append(editor.chain[:i], editor.chain[i+1:]...)
 		if len(editor.chain) == 0 && !editor.cursorValid {
 			editor.closeTrack()
 		}
+		editor.refilter()
 		return
 	}
 }

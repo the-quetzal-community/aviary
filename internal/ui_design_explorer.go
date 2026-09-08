@@ -840,6 +840,15 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 						modBase+"/"+name+png)
 				}
 			}
+			// A tab whose every tile the editor's DesignFilter hid has
+			// nothing to offer right now: drop it rather than show an
+			// empty grid.
+			if elements.AsNode().GetChildCount() == 0 {
+				ui.Tabs.AsNode().RemoveChild(gridflow.AsNode())
+				gridflow.AsNode().QueueFree()
+				ui.tabbed = ui.tabbed[:len(ui.tabbed)-1]
+				continue
+			}
 			gridflow.Update()
 			if ExistsSync("res://ui/" + tab + ".svg") {
 				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+tab+".svg"))
