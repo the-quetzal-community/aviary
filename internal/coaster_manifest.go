@@ -42,9 +42,13 @@ type coasterPiece struct {
 // theme tile the player picked or whether the path is track_l vs
 // track_r — directional handedness is applied by coasterPieceForPath.
 var coasterPieces = map[string]coasterPiece{
+	// The station is a library composite (compose_glb.py in the
+	// library repo): one straight of the theme's track with four
+	// platform tiles along it, so it chains exactly like a straight and
+	// the rails are inside the platforms from the moment it is placed.
 	"station": {
-		entry:     Vector3.XYZ{0, 0, -0.5},
-		exit:      Vector3.XYZ{0, 0, 0.5},
+		entry:     Vector3.XYZ{0, 0, 0},
+		exit:      Vector3.XYZ{0, 0, 4},
 		startable: true,
 	},
 	"straight": {
@@ -136,9 +140,10 @@ var coasterPieces = map[string]coasterPiece{
 }
 
 // coasterTrackLift is how far (in piece units) a track piece's origin
-// sits above the ground it is started on. The Kenney rails hang a unit
-// below the piece origin (the kit's support columns are one unit tall),
-// so a station started at terrain height would bury its rails.
+// sits above the ground it is started on. The Kenney track meshes carry
+// a -1 node offset (the rails hang a unit below the piece origin, the
+// height of the kit's support columns), so a piece whose origin sits
+// one unit up has its rails resting on the ground.
 const coasterTrackLift = 1.0
 
 // coasterCategories lists the editor tab names that hold coaster
@@ -154,10 +159,9 @@ var coasterCategories = map[string]string{
 
 // coasterParsePath splits a design path of the form
 // "res://library/<author>/<category>/<file>.glb" into (category code,
-// theme, shape). For the four track_* categories the filename is
+// theme, shape). In every coaster category the filename is
 // "<theme>-<shape>" (theme is wood/steel/monorail/hanging/mouse/flume,
-// no hyphens). The "station" category is theme-less; the filename is
-// the shape directly.
+// no hyphens); a filename without a hyphen is a theme-less shape.
 func coasterParsePath(design string) (category, theme, shape string, ok bool) {
 	folder := designCategory(design)
 	cat, isCoaster := coasterCategories[folder]
@@ -165,9 +169,6 @@ func coasterParsePath(design string) (category, theme, shape string, ok bool) {
 		return "", "", "", false
 	}
 	base := strings.TrimSuffix(path.Base(design), ".glb")
-	if cat == "station" {
-		return cat, "", base, true
-	}
 	idx := strings.Index(base, "-")
 	if idx < 0 {
 		return cat, "", base, true
@@ -175,12 +176,30 @@ func coasterParsePath(design string) (category, theme, shape string, ok bool) {
 	return cat, base[:idx], base[idx+1:], true
 }
 
+// coasterTheme returns the theme of a coaster track design ("" for park
+// props and theme-less shapes).
+func coasterTheme(design string) string {
+	_, theme, _, ok := coasterParsePath(design)
+	if !ok {
+		return ""
+	}
+	return theme
+}
+
+// coasterRetheme returns the same shape in another theme: the sibling
+// file "<theme>-<shape>.glb" in the design's folder. Designs that carry
+// no theme are returned unchanged.
+func coasterRetheme(design, theme string) string {
+	_, current, shape, ok := coasterParsePath(design)
+	if !ok || current == "" || current == theme {
+		return design
+	}
+	return path.Dir(design) + "/" + theme + "-" + shape + ".glb"
+}
+
 // coasterPieceForPath returns the manifest entry for a design,
-// applying right-handed mirroring when the path is in track_r. For
-// the station category, any shape falls back to the "station" entry
-// when no specific shape match exists, since all station-tab items
-// (station, park-entrance, ride-entrance) behave like a 1m start
-// piece.
+// applying right-handed mirroring when the path is in track_r. Any
+// shape in the station category falls back to the "station" entry.
 func coasterPieceForPath(design string) (coasterPiece, bool) {
 	category, _, shape, ok := coasterParsePath(design)
 	if !ok {

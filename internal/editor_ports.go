@@ -156,6 +156,12 @@ type Workbench interface {
 	// toolbar, hides the indicator, and removes the brush button (plus any
 	// leftover brush-named nodes). No-op before the UI is built.
 	dismissBrushGizmo()
+
+	// refreshDesignExplorer rebuilds the design explorer's tiles for the
+	// current editor and mode, so an editor whose DesignFilter answer
+	// changed (e.g. the coaster locking onto a theme) can re-filter.
+	// No-op before the UI is built.
+	refreshDesignExplorer()
 }
 
 // SceneIndex exposes the client-global placed-entity bookkeeping to the
@@ -237,6 +243,13 @@ func (world *Client) publishChange(change musical.Change) error {
 
 // uiMode is nil-safe (the terrain tiles consult it during Ready, before the
 // UI scene is instantiated): without a UI the mode is the default Geometry.
+func (world *Client) refreshDesignExplorer() {
+	if world.ui == nil {
+		return
+	}
+	world.ui.Editor.Refresh(world.Editing, "", world.ui.mode)
+}
+
 func (world *Client) uiMode() Mode {
 	if world.ui == nil {
 		return ModeGeometry

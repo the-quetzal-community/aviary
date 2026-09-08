@@ -756,6 +756,9 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 						if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
 							resource = tscn
 						}
+						if filter, ok := ui.editor.(DesignFilter); ok && filter.HidesDesign(mode, resource) {
+							continue
+						}
 						// Load the thumbnail off the main thread: the palette has
 						// hundreds of these and they aren't needed for the world to
 						// render, so blocking on each one stalled the whole load. The

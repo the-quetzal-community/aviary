@@ -62,7 +62,7 @@ func (world *Client) StartEditing(subject Subject) {
 	// reset the framing so a zoomed-out world view doesn't carry over and leave
 	// the model a tiny speck. Per-editor cases below may override (e.g. foliage).
 	switch subject {
-	case Editing.Scenery, Editing.Terrain, Editing.Shelter:
+	case Editing.Scenery, Editing.Terrain, Editing.Shelter, Editing.Coaster:
 	default:
 		world.FocalPoint.AsNode3D().SetPosition(Vector3.New(0, 0.9, 0))
 		world.FocalPoint.AsNode3D().SetRotation(Euler.Radians{})
@@ -101,8 +101,9 @@ func (world *Client) StartEditing(subject Subject) {
 		editor = world.CritterEditor
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/critter.svg"))
 	case Editing.Coaster:
+		// A grid space like shelter: the world stays hidden while a
+		// track is built.
 		editor = world.CoasterEditor
-		world.TerrainEditor.AsNode3D().SetVisible(true)
 		world.ui.EditorIndicator.EditorIcon.AsTextureButton().SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/coaster.svg"))
 	}
 	editor.AsNode3D().SetVisible(true).
@@ -377,6 +378,15 @@ type BuiltinDesign struct {
 // editors don't need to know it exists.
 type BuiltinDesignProvider interface {
 	BuiltinDesigns(mode Mode, tab string) []BuiltinDesign
+}
+
+// DesignFilter is an optional interface an editor can implement to
+// hide library tiles from the design explorer while some editor state
+// holds (the coaster editor hides every other theme's track once a
+// track is open). Call Workbench.refreshDesignExplorer when the answer
+// changes.
+type DesignFilter interface {
+	HidesDesign(mode Mode, resource string) bool
 }
 
 /*
