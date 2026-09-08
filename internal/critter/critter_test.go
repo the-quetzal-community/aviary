@@ -476,9 +476,14 @@ func TestBuildLegMesh_HasMirrorAndIndicesInRange(t *testing.T) {
 	const rings, around = 4, 6
 	m := c.BuildLegMesh(leg, rings, around, true)
 	// Single continuous tube: rings*2 - 1 ring samples (shared knee)
-	// times segmentsAround verts per ring, plus one foot cap vert.
-	// Mirror doubles the total.
-	wantPerSide := (rings*2-1)*around + 1
+	// times segmentsAround verts per ring, plus one foot cap vert,
+	// plus the hip hemisphere (pole + hemiRings-1 latitude rings,
+	// hemiRings = max(2, rings/2)). Mirror doubles the total.
+	hemiRings := rings / 2
+	if hemiRings < 2 {
+		hemiRings = 2
+	}
+	wantPerSide := (rings*2-1)*around + 1 + 1 + (hemiRings-1)*around
 	if len(m.Verts) != wantPerSide*2 {
 		t.Errorf("Verts = %d, want %d (per-side x 2)", len(m.Verts), wantPerSide*2)
 	}
@@ -617,5 +622,37 @@ func TestRestore_PreservesLegKind(t *testing.T) {
 	d.Restore(c.Bones(), c.Legs(), c.Weights())
 	if got := d.LegsView()[0].Kind; got != LegKindInsect {
 		t.Errorf("restored Kind = %v, want insect", got)
+	}
+}
+
+func TestBuildLegMesh_HipCapIsSpherical(t *testing.T) {
+	c := New()
+	c.AppendLeg()
+	leg := c.Legs()[0]
+	const rings, around = 4, 6
+	m := c.BuildLegMesh(leg, rings, around, false)
+	// The hip hemisphere's verts trail the tube + foot cap; every one
+	// must sit exactly hipR from the hip (it's a sphere section), and
+	// on the far side of the hip from the knee (the dome points away
+	// from the femur, closing the tube's previously-open top).
+	tubeAndFoot := (rings*2-1)*around + 1
+	if len(m.Verts) <= tubeAndFoot {
+		t.Fatalf("no hip-cap verts: %d total, tube+foot %d", len(m.Verts), tubeAndFoot)
+	}
+	femur := Vec3{
+		X: leg.Knee.X - leg.Hip.X,
+		Y: leg.Knee.Y - leg.Hip.Y,
+		Z: leg.Knee.Z - leg.Hip.Z,
+	}
+	for i := tubeAndFoot; i < len(m.Verts); i++ {
+		v := m.Verts[i]
+		d := Vec3{X: v.X - leg.Hip.X, Y: v.Y - leg.Hip.Y, Z: v.Z - leg.Hip.Z}
+		r := float32(math.Sqrt(float64(d.X*d.X + d.Y*d.Y + d.Z*d.Z)))
+		if !approx(r, leg.HipRadius, 1e-4) {
+			t.Errorf("cap vert %d at radius %v, want %v", i, r, leg.HipRadius)
+		}
+		if dot := d.X*femur.X + d.Y*femur.Y + d.Z*femur.Z; dot > 1e-6 {
+			t.Errorf("cap vert %d leans toward the knee (dot %v > 0)", i, dot)
+		}
 	}
 }

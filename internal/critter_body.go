@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"graphics.gd/classdb/ArrayMesh"
+	"graphics.gd/classdb/BoxShape3D"
 	"graphics.gd/classdb/CollisionShape3D"
 	"graphics.gd/classdb/ConcavePolygonShape3D"
 	"graphics.gd/classdb/Material"
@@ -13,9 +14,11 @@ import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/Shape3D"
 	"graphics.gd/classdb/Skeleton3D"
 	"graphics.gd/classdb/Skin"
 	"graphics.gd/classdb/StaticBody3D"
+	"graphics.gd/classdb/VisualInstance3D"
 	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Basis"
 	"graphics.gd/variant/Callable"
@@ -430,10 +433,35 @@ func (b *CritterBody) SetLegKind(i int, kind critter.LegKind) {
 	b.critter.SetLegKind(i, kind)
 }
 
-// RemoveLeg drops leg i.
+// RemoveLeg drops leg i. Parts anchored to that leg's feet (duck-foot
+// steppers) are detached with it — a foot with no leg is orphaned
+// floating geometry — and anchors on higher-indexed legs shift down to
+// track the data model's index compaction (mirroring how RemoveLeg
+// itself compacts the legs slice). The cleanup is local and
+// deterministic: every client applies the same rule when the
+// leg/shrink sculpt replays, so state converges with no extra
+// mutation. The detached parts' musical Change records stay in the
+// log; on a fresh replay they attach and are then detached again at
+// the same point in the timeline.
 func (b *CritterBody) RemoveLeg(i int) bool {
 	if !b.critter.RemoveLeg(i) {
 		return false
+	}
+	var drop []Node3D.ID
+	for id, anchor := range b.partAnchors {
+		if !anchor.OnLeg {
+			continue
+		}
+		switch {
+		case anchor.LegFoot == i:
+			drop = append(drop, id)
+		case anchor.LegFoot > i:
+			anchor.LegFoot--
+			b.partAnchors[id] = anchor
+		}
+	}
+	for _, id := range drop {
+		b.DetachPart(id)
 	}
 	b.rebuild()
 	return true
@@ -533,15 +561,114 @@ func (b *CritterBody) AttachPartNode(anchor PartAnchor, node Node3D.Instance) No
 		node = Node3D.New()
 	}
 	b.parts.AsNode().AddChild(node.AsNode())
-	// Library scenes already ship with a trimesh StaticBody3D
-	// baked in by the import-time AviaryModelLoader extension
-	// (Owner=root), so clicking the part lands on the global
-	// selection raycast and our Delete handler can find the
-	// entity. Nothing extra to wire here for selection.
+	// Library scenes usually ship with a trimesh StaticBody3D baked in
+	// by the import-time AviaryModelLoader extension (Owner=root), so
+	// clicking the part lands on the global selection raycast and our
+	// Delete handler can find the entity. But not always: the loader
+	// skips Skeleton3D-nested meshes (several stepper duck-feet come
+	// from rigged packs) and mod:// drop-ins may carry nothing — those
+	// parts were unselectable and undeletable. Bake a fallback AABB box
+	// collider for any part that arrives without one.
+	ensurePartSelectable(node)
 	id := node.ID()
 	b.partAnchors[id] = anchor
 	b.positionPart(node, anchor)
 	return node
+}
+
+// ensurePartSelectable guarantees an attached part can be picked by
+// the global selection raycast: if its subtree has no collision shape
+// at all, a StaticBody3D + BoxShape3D sized to the part's local visual
+// bounds is added, with Owner set to the part root (selection resolves
+// collider.Owner()). Mirrors the fallback loadStaticObjNode bakes for
+// .obj dressing items. No-op when the import already shipped
+// collision.
+func ensurePartSelectable(node Node3D.Instance) {
+	if node == Node3D.Nil || hasCollisionShape(node.AsNode()) {
+		return
+	}
+	bmin, bmax, found := localVisualBounds(node.AsNode(), Transform3D.Identity)
+	if !found {
+		return
+	}
+	size := Vector3.Sub(bmax, bmin)
+	// Floor each axis so flat meshes (a duck foot is nearly planar)
+	// still present a clickable volume.
+	const minSize = Float.X(0.02)
+	if size.X < minSize {
+		size.X = minSize
+	}
+	if size.Y < minSize {
+		size.Y = minSize
+	}
+	if size.Z < minSize {
+		size.Z = minSize
+	}
+	box := BoxShape3D.New()
+	box.SetSize(size)
+	col := CollisionShape3D.New()
+	col.SetShape(box.AsShape3D())
+	col.AsNode3D().SetPosition(Vector3.MulX(Vector3.Add(bmin, bmax), 0.5))
+	body := StaticBody3D.New()
+	body.AsNode().AddChild(col.AsNode())
+	node.AsNode().AddChild(body.AsNode())
+	body.AsNode().SetOwner(node.AsNode())
+	col.AsNode().SetOwner(node.AsNode())
+}
+
+// hasCollisionShape reports whether node's subtree contains any
+// CollisionShape3D that actually carries a shape (an empty
+// CollisionShape3D can't be hit by a ray).
+func hasCollisionShape(node Node.Instance) bool {
+	if col, ok := Object.As[CollisionShape3D.Instance](node); ok && col.Shape() != Shape3D.Nil {
+		return true
+	}
+	for _, child := range node.GetChildren() {
+		if hasCollisionShape(child) {
+			return true
+		}
+	}
+	return false
+}
+
+// localVisualBounds accumulates the AABB of every VisualInstance3D
+// under node, expressed in NODE's local space (xform is the transform
+// accumulated from node down to the current child — pass
+// Transform3D.Identity at the root). Local-space bounds are what a
+// child collider needs; the world-space variant (worldVisualBounds)
+// would bake in the part's placement scale/rotation.
+func localVisualBounds(node Node.Instance, xform Transform3D.BasisOrigin) (bmin, bmax Vector3.XYZ, found bool) {
+	if vi, ok := Object.As[VisualInstance3D.Instance](node); ok {
+		aabb := vi.GetAabb()
+		for i := range 8 {
+			corner := Vector3.New(
+				aabb.Position.X+aabb.Size.X*Float.X(i&1),
+				aabb.Position.Y+aabb.Size.Y*Float.X(i>>1&1),
+				aabb.Position.Z+aabb.Size.Z*Float.X(i>>2&1),
+			)
+			p := Transform3D.Transform(corner, xform)
+			if !found {
+				bmin, bmax, found = p, p, true
+			} else {
+				bmin, bmax = Vector3.Min(bmin, p), Vector3.Max(bmax, p)
+			}
+		}
+	}
+	for _, child := range node.GetChildren() {
+		cx := xform
+		if c3d, ok := Object.As[Node3D.Instance](child); ok {
+			cx = Transform3D.Mul(xform, c3d.Transform())
+		}
+		cmin, cmax, childFound := localVisualBounds(child, cx)
+		if childFound {
+			if !found {
+				bmin, bmax, found = cmin, cmax, true
+			} else {
+				bmin, bmax = Vector3.Min(bmin, cmin), Vector3.Max(bmax, cmax)
+			}
+		}
+	}
+	return bmin, bmax, found
 }
 
 // PartSelectionMask is the layer mask the editor's placement

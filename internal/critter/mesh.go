@@ -350,16 +350,7 @@ func (c *Critter) BuildLegMesh(leg Leg, ringsPerSegment, segmentsAround int, mir
 
 	indices := make([]int32, 0, (n-1)*segmentsAround*6+segmentsAround*3)
 	for i := 0; i < n-1; i++ {
-		base0 := int32(i * segmentsAround)
-		base1 := int32((i + 1) * segmentsAround)
-		for j := 0; j < segmentsAround; j++ {
-			jn := int32((j + 1) % segmentsAround)
-			ia := base0 + int32(j)
-			ib := base0 + jn
-			ic := base1 + int32(j)
-			id := base1 + jn
-			indices = append(indices, ia, ic, id, ia, id, ib)
-		}
+		appendRingQuads(&indices, int32(i*segmentsAround), int32((i+1)*segmentsAround), segmentsAround)
 	}
 
 	lastRing := int32((n - 1) * segmentsAround)
@@ -370,6 +361,70 @@ func (c *Critter) BuildLegMesh(leg Leg, ringsPerSegment, segmentsAround int, mir
 		jn := int32((j + 1) % segmentsAround)
 		indices = append(indices, footCap, lastRing+jn, lastRing+int32(j))
 	}
+
+	// Hip cap: a hemisphere behind the first ring so the top of the
+	// limb reads as a rounded ball joint instead of an open tube —
+	// visible whenever the hip pokes out of the body (splayed insect
+	// legs, arms on a thin torso, mid-gait poses). Latitude rings run
+	// pole → equator; the equator ring IS the tube's first ring (verts
+	// 0..segmentsAround-1), so the cap welds seamlessly and inherits
+	// the tube's winding by treating each latitude step exactly like a
+	// tube segment whose "upper" ring is nearer the pole. The radial
+	// basis reuses the first ring's frame (frameNorms/frameBins[0]) so
+	// the equator lines up with the existing verts angle-for-angle.
+	hemiRings := ringsPerSegment / 2
+	if hemiRings < 2 {
+		hemiRings = 2
+	}
+	hipDome := Vec3{X: -femurDir.X, Y: -femurDir.Y, Z: -femurDir.Z}
+	pole := int32(len(verts))
+	verts = append(verts, Vec3{
+		X: leg.Hip.X + hipDome.X*hipR,
+		Y: leg.Hip.Y + hipDome.Y*hipR,
+		Z: leg.Hip.Z + hipDome.Z*hipR,
+	})
+	meshNormals = append(meshNormals, hipDome)
+	nrm0, bn0 := frameNorms[0], frameBins[0]
+	prevRing := int32(-1)
+	for k := 1; k < hemiRings; k++ {
+		phi := math.Pi / 2 * float64(k) / float64(hemiRings)
+		sinP := float32(math.Sin(phi))
+		cosP := float32(math.Cos(phi))
+		ringStart := int32(len(verts))
+		for j := 0; j < segmentsAround; j++ {
+			a := 2 * math.Pi * float64(j) / float64(segmentsAround)
+			cs := float32(math.Cos(a))
+			sn := float32(math.Sin(a))
+			radial := Vec3{
+				X: nrm0.X*cs + bn0.X*sn,
+				Y: nrm0.Y*cs + bn0.Y*sn,
+				Z: nrm0.Z*cs + bn0.Z*sn,
+			}
+			normal := Vec3{
+				X: radial.X*sinP + hipDome.X*cosP,
+				Y: radial.Y*sinP + hipDome.Y*cosP,
+				Z: radial.Z*sinP + hipDome.Z*cosP,
+			}
+			verts = append(verts, Vec3{
+				X: leg.Hip.X + normal.X*hipR,
+				Y: leg.Hip.Y + normal.Y*hipR,
+				Z: leg.Hip.Z + normal.Z*hipR,
+			})
+			meshNormals = append(meshNormals, normal)
+		}
+		if k == 1 {
+			// Pole fan — the degenerate first "quad" row.
+			for j := 0; j < segmentsAround; j++ {
+				jn := int32((j + 1) % segmentsAround)
+				indices = append(indices, pole, ringStart+int32(j), ringStart+jn)
+			}
+		} else {
+			appendRingQuads(&indices, prevRing, ringStart, segmentsAround)
+		}
+		prevRing = ringStart
+	}
+	// Weld the last latitude ring to the tube's first ring (verts 0..).
+	appendRingQuads(&indices, prevRing, 0, segmentsAround)
 
 	if mirror {
 		mirrorBase := int32(len(verts))
@@ -391,6 +446,21 @@ func (c *Critter) BuildLegMesh(leg Leg, ringsPerSegment, segmentsAround int, mir
 	}
 
 	return Mesh{Verts: verts, Normals: meshNormals, Indices: indices}
+}
+
+// appendRingQuads stitches two same-count vertex rings with the tube's
+// standard quad triangulation: `upper` is the ring nearer the hip pole,
+// `lower` the ring nearer the foot, matching the winding of the main
+// tube loop so outward faces stay outward.
+func appendRingQuads(indices *[]int32, upper, lower int32, segmentsAround int) {
+	for j := 0; j < segmentsAround; j++ {
+		jn := int32((j + 1) % segmentsAround)
+		ia := upper + int32(j)
+		ib := upper + jn
+		ic := lower + int32(j)
+		id := lower + jn
+		*indices = append(*indices, ia, ic, id, ia, id, ib)
+	}
 }
 
 // MapToSegment converts a global t ∈ [0,1] along a poly-curve of
