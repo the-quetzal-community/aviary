@@ -271,3 +271,15 @@ func TestCoasterCompleteCircuit(t *testing.T) {
 		t.Logf("%s: %d pieces: %v", name, len(run), names)
 	}
 }
+
+func TestRepairResourceURI(t *testing.T) {
+	for in, want := range map[string]string{
+		"res:/library/kenney/track_f/flume-straight.glb":  "res://library/kenney/track_f/flume-straight.glb",
+		"res://library/kenney/track_f/flume-straight.glb": "res://library/kenney/track_f/flume-straight.glb",
+		"mod://tracks/thing.glb":                           "mod://tracks/thing.glb",
+	} {
+		if got := repairResourceURI(in); got != want {
+			t.Errorf("repairResourceURI(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

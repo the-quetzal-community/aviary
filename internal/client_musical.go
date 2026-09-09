@@ -347,7 +347,18 @@ func (client *Client) buildDesignNode(design musical.Design) (Node3D.Instance, b
 	return Node3D.Nil, false
 }
 
+// repairResourceURI restores the "res://" scheme on URIs recorded as
+// "res:/..." — a path.Dir slip in the coaster editor (fixed in 5ce9d9c)
+// left saves with designs the loader could not resolve.
+func repairResourceURI(uri string) string {
+	if strings.HasPrefix(uri, "res:/") && !strings.HasPrefix(uri, "res://") {
+		return "res://" + strings.TrimPrefix(uri, "res:/")
+	}
+	return uri
+}
+
 func (world musicalImpl) Import(uri musical.Import) error {
+	uri.Import = repairResourceURI(uri.Import)
 	world.enqueue(func() {
 		defer timeIn(&bucketImport)()
 		if world.minted[uri.Import] == uri.Design {
