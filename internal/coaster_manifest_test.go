@@ -180,3 +180,83 @@ func TestCoasterReverseBuild(t *testing.T) {
 		cursor = next
 	}
 }
+
+func testCompletionMoves() []coasterMove {
+	var moves []coasterMove
+	for _, fs := range coasterCompletionShapes {
+		design := coasterDesign(fs[0], fs[1])
+		piece, ok := coasterPieceForPath(design)
+		if !ok {
+			panic(design)
+		}
+		moves = append(moves, coasterMove{design: design, piece: piece})
+	}
+	return moves
+}
+
+// TestCoasterCompleteCircuit builds the open part of a track, asks the
+// search for the run that closes it, and lays that run both ways
+// round: forward from the exit end it must arrive on the entry end,
+// and in reverse from the entry end it must arrive on the exit end.
+func TestCoasterCompleteCircuit(t *testing.T) {
+	moves := testCompletionMoves()
+	for name, designs := range map[string][]string{
+		"U turn": {
+			coasterDesign("station", "station"),
+			coasterDesign("track_f", "straight"),
+			coasterDesign("track_r", "corner-large"),
+			coasterDesign("track_r", "corner-large"),
+		},
+		"climb": {
+			coasterDesign("station", "station"),
+			coasterDesign("track_f", "hill-beginning"),
+			coasterDesign("track_f", "hill-end"),
+			coasterDesign("track_l", "corner-large"),
+		},
+		"offset lane": {
+			coasterDesign("station", "station"),
+			coasterDesign("track_f", "curve"),
+			coasterDesign("track_r", "corner-small"),
+		},
+	} {
+		start := Transform3D.BasisOrigin{Basis: Basis.FromEuler(Euler.Radians{Y: -Angle.Pi / 2}, Angle.OrderXYZ), Origin: Vector3.New(4, 0.5, 1)}
+		track, cursor := layTrack(t, &CoasterEditor{}, start, designs...)
+		head, tail := track[0], track[len(track)-1]
+		footprint := coasterFootprint{}
+		for _, p := range track {
+			footprint.add(p.entry.Origin, p.exit.Origin)
+		}
+		run, ok := coasterSearchJoin(tail.exit, tail.piece.exitPitch, head.entry, head.piece.entryPitch, moves, footprint)
+		if !ok {
+			t.Fatalf("%s: no join found", name)
+		}
+		names := make([]string, len(run))
+		forwardDesigns := make([]string, len(run))
+		for i, m := range run {
+			names[i] = designCategory(m.design) + "/" + m.design[len(m.design)-20:]
+			forwardDesigns[i] = m.design
+		}
+		joined, end := layTrack(t, &CoasterEditor{}, cursor, forwardDesigns...)
+		if !near(end.Origin, head.entry.Origin) || Vector3.Distance(heading(end), heading(head.entry)) > 1e-3 {
+			t.Fatalf("%s: run %v ends at %v heading %v, want %v heading %v", name, names, end.Origin, heading(end), head.entry.Origin, heading(head.entry))
+		}
+		for _, p := range joined {
+			for _, q := range track {
+				if p.entity != q.entity && !footprint.clear(p.entry.Origin, p.exit.Origin) {
+					t.Fatalf("%s: %s runs through the existing track", name, p.design)
+				}
+			}
+		}
+		// The same run laid backwards from the entry end.
+		reverse := &CoasterEditor{reverse: true}
+		at := head.entry
+		for i := len(run) - 1; i >= 0; i-- {
+			_, next, _ := reverse.attach(run[i].piece, at)
+			at = next
+		}
+		if !near(at.Origin, tail.exit.Origin) || Vector3.Distance(heading(at), heading(tail.exit)) > 1e-3 {
+			t.Fatalf("%s: reverse run ends at %v heading %v, want %v", name, at.Origin, heading(at), tail.exit.Origin)
+		}
+		t.Logf("%s: %d pieces: %v", name, len(run), names)
+	}
+}

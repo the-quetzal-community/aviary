@@ -56,6 +56,10 @@ const coasterJoinTolerance = 0.05
 //   - Delete/Backspace pops the last piece; Ctrl+Z does the same
 //     through the shared undo stack (and peers see either as a plain
 //     removal). Right-click with nothing selected closes the track.
+//   - The "complete the circuit" tile (track_f tab, while a track is
+//     open) searches the grid for a run of pieces joining the free
+//     exit end back to the entry end, lays them as one undo group and
+//     closes the track.
 //   - Clicking a placed piece with nothing selected walks the placed
 //     track to its two ends and re-opens it at whichever end is nearer
 //     the click. The exit end builds onward; the entry end builds
@@ -253,7 +257,24 @@ func (editor *CoasterEditor) currentFilter() coasterFilter {
 	return coasterFilter{theme: editor.theme, open: editor.cursorValid, reverse: editor.reverse, pitch: editor.cursorPitch}
 }
 
+// BuiltinDesigns adds the auto-complete tile to the forward-track tab
+// while a track is open: picking it closes the track into a circuit.
+func (editor *CoasterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
+	if mode != ModeGeometry || tab != "track_f" || !editor.cursorValid {
+		return nil
+	}
+	return []BuiltinDesign{{
+		Resource: BuiltinCoasterComplete,
+		Icon:     "res://ui/restart.svg",
+		Label:    "Complete the circuit",
+	}}
+}
+
 func (editor *CoasterEditor) SelectDesign(mode Mode, design string) {
+	if design == BuiltinCoasterComplete {
+		editor.completeCircuit()
+		return
+	}
 	if editor.theme != "" {
 		design = coasterRetheme(design, editor.theme)
 	}
@@ -497,11 +518,21 @@ func (editor *CoasterEditor) commitPreview() {
 		editor.commitProp(design)
 		return
 	}
+	if !editor.cursorValid && !editor.startValid {
+		return
+	}
+	editor.recorder.RecordChange(editor.layPiece(design, piece))
+	// The piece stays selected: the next click lays the same piece
+	// again at the advanced cursor (straight, straight, straight...).
+}
+
+// layPiece attaches a track piece to the open cursor (or starts a
+// track at the snapped start pose when none is open), advances the
+// cursor and publishes the placement, returning it with its undo for
+// the caller to record.
+func (editor *CoasterEditor) layPiece(design string, piece coasterPiece) (do, undo musical.Change) {
 	place := editor.cursor
 	if !editor.cursorValid {
-		if !editor.startValid {
-			return
-		}
 		place = editor.start
 	}
 	worldTransform, next, pitch := editor.attach(piece, place)
@@ -517,13 +548,11 @@ func (editor *CoasterEditor) commitPreview() {
 		Commit: true,
 	}
 	editor.recorder.publishChange(placement)
-	editor.recorder.RecordChange(placement, musical.Change{
+	return placement, musical.Change{
 		Author: placement.Author,
 		Entity: placement.Entity,
 		Remove: true,
-	})
-	// The piece stays selected: the next click lays the same piece
-	// again at the advanced cursor (straight, straight, straight...).
+	}
 }
 
 // commitProp places a park prop (dressing tab) where it previews.
