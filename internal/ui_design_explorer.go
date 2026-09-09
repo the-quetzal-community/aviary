@@ -759,6 +759,12 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 						if filter, ok := ui.editor.(DesignFilter); ok && filter.HidesDesign(mode, resource) {
 							continue
 						}
+						// Per-item license badge (attribution.json overrides):
+						// a CC-BY hat in an otherwise CC0 author folder hides
+						// with the CC-BY badge, not the author.
+						if designHidden(resource) {
+							continue
+						}
 						// Load the thumbnail off the main thread: the palette has
 						// hundreds of these and they aren't needed for the world to
 						// render, so blocking on each one stalled the whole load. The
@@ -797,6 +803,9 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 						resource := library_path + "/" + tab + "/" + resource
 						if FileAccess.FileExists(region_path) {
 							resource = region_path
+						}
+						if designHidden(resource) {
+							continue
 						}
 						// Thumbnail loaded off the main thread (see the glb case).
 						tile := TextureButton.New().

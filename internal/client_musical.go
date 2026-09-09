@@ -614,11 +614,12 @@ func (world musicalImpl) Change(con musical.Change) error {
 			if world.ui != nil && world.ui.Editor != nil {
 				world.ui.Editor.BumpDesign(resource)
 			}
-			// An entity arriving (remote placement or load replay) while its
-			// author's license badge is toggled off starts hidden, matching
-			// what applyLicenseVisibility did to everything already present.
-			// Render-local only — the mutation is recorded and observable.
-			if authorHidden(designAuthor(resource)) {
+			// An entity arriving (remote placement or load replay) while the
+			// license badge for its design is toggled off starts hidden,
+			// matching what applyLicenseVisibility did to everything already
+			// present. Render-local only — the mutation is recorded and
+			// observable.
+			if designHidden(resource) {
 				node.SetVisible(false)
 			}
 		}

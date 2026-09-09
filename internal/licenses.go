@@ -2,7 +2,6 @@ package internal
 
 import (
 	"slices"
-	"strings"
 )
 
 // ccLicense identifies one of the Creative Commons licenses that the
@@ -22,22 +21,6 @@ const (
 // attribution + share-alike).
 var ccLicenses = []ccLicense{ccZero, ccBY, ccBYSA}
 
-// authorLicense maps each library author folder (res://library/<author>)
-// to the license their assets are distributed under, mirroring the
-// License.txt shipped alongside each author's folder in the library
-// project (which isn't exported into library.pck, so the mapping lives
-// here). Authors missing from this map are never hidden by the license
-// toggles.
-var authorLicense = map[string]ccLicense{
-	"everything":     ccBY,
-	"excog":          ccZero,
-	"kenney":         ccZero,
-	"makehuman":      ccZero,
-	"splizard":       ccZero,
-	"wildfire_games": ccBYSA,
-	"yughues":        ccZero,
-}
-
 // licenseHidden reports whether the user has toggled this license's badge
 // off in the Settings menu.
 func licenseHidden(license ccLicense) bool {
@@ -56,28 +39,37 @@ func setLicenseHidden(license ccLicense, hidden bool) {
 	}
 }
 
-// authorHidden reports whether an author's artwork should be hidden from
-// the design explorer because the user toggled off the badge for that
-// author's license. Authors with no known license stay visible.
+// authorHidden reports whether an author's theme button should disappear
+// from the design explorer because the user toggled off the badge for
+// every license used in that author's folder. An author whose folder mixes
+// licenses (MakeHuman: CC0 base, CC-BY hats) stays listed while any of them
+// is shown; designHidden then filters the individual tiles. Authors with no
+// attribution record (mods, unknown folders) stay visible.
 func authorHidden(name string) bool {
-	license, ok := authorLicense[name]
+	licenses := authorLicenses(name)
+	if len(licenses) == 0 {
+		return false
+	}
+	for _, license := range licenses {
+		if !licenseHidden(license) {
+			return false
+		}
+	}
+	return true
+}
+
+// designHidden reports whether one design should be hidden because the
+// badge for its license — per-item where the author's attribution.json
+// overrides the folder default — is toggled off. Non-library resources
+// (procedural builtins, mods, user bookmarks) are never hidden.
+func designHidden(uri string) bool {
+	_, _, license, ok := designAttribution(uri)
 	return ok && licenseHidden(license)
 }
 
-// designAuthor extracts the library author from a design resource URI of
-// the form "res://library/<author>/<category>/<file>". Returns "" (never
-// hidden) for non-library resources such as procedural builtin designs.
-func designAuthor(uri string) string {
-	rest, ok := strings.CutPrefix(uri, "res://library/")
-	if !ok {
-		return ""
-	}
-	author, _, _ := strings.Cut(rest, "/")
-	return author
-}
-
 // applyLicenseVisibility walks every placed entity and shows/hides it
-// according to the license badges toggled in the Settings menu. Hiding is
+// according to the license badges toggled in the Settings menu (resolved
+// per design, so a CC-BY hat hides while the CC0 citizen wearing it stays). Hiding is
 // strictly render-local — the entities stay in the scene graph and the
 // musical log, so nothing about the shared mutation history changes and
 // peers are unaffected. Entities placed while a badge is off are hidden
@@ -88,7 +80,7 @@ func (world *Client) applyLicenseVisibility() {
 		if !ok {
 			continue
 		}
-		hidden := authorHidden(designAuthor(uri))
+		hidden := designHidden(uri)
 		for _, id := range ids {
 			if node, ok := id.Instance(); ok {
 				node.SetVisible(!hidden)
