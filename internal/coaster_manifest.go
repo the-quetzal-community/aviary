@@ -313,7 +313,16 @@ func coasterRetheme(design, theme string) string {
 	if !ok || current == "" || current == theme {
 		return design
 	}
-	return path.Dir(design) + "/" + theme + "-" + shape + ".glb"
+	return uriDir(design) + "/" + theme + "-" + shape + ".glb"
+}
+
+// uriDir is path.Dir for resource URIs: it keeps the "res://" scheme
+// intact where path.Dir would collapse the double slash.
+func uriDir(uri string) string {
+	if i := strings.LastIndex(uri, "/"); i >= 0 {
+		return uri[:i]
+	}
+	return uri
 }
 
 // coasterPieceForPath returns the manifest entry for a design,

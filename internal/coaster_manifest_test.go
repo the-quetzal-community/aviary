@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"strings"
 	"testing"
 
 	"graphics.gd/variant/Angle"
@@ -177,17 +178,26 @@ func TestCoasterReverseBuild(t *testing.T) {
 	}
 }
 
-func testCompletionMoves() []coasterMove {
-	var moves []coasterMove
-	for _, fs := range coasterCompletionShapes {
-		design := coasterDesign(fs[0], fs[1])
-		piece, ok := coasterPieceForPath(design)
-		if !ok {
-			panic(design)
+func testCompletionMoves(t *testing.T) []coasterMove {
+	t.Helper()
+	editor := &CoasterEditor{theme: "wood"}
+	moves := editor.completionMoves("res://library/kenney/station/wood-station.glb.tscn")
+	if len(moves) != len(coasterCompletionShapes) {
+		t.Fatalf("completionMoves offered %d of %d shapes", len(moves), len(coasterCompletionShapes))
+	}
+	for _, m := range moves {
+		if !strings.HasPrefix(m.design, "res://library/kenney/track_") || !strings.Contains(m.design, "/wood-") {
+			t.Fatalf("completion design %q is not a wood track resource beside the station", m.design)
 		}
-		moves = append(moves, coasterMove{design: design, piece: piece})
 	}
 	return moves
+}
+
+func TestCoasterRetheme(t *testing.T) {
+	got := coasterRetheme("res://library/kenney/track_f/wood-straight.glb", "flume")
+	if want := "res://library/kenney/track_f/flume-straight.glb"; got != want {
+		t.Fatalf("coasterRetheme = %q, want %q", got, want)
+	}
 }
 
 // TestCoasterCompleteCircuit builds the open part of a track, asks the
@@ -195,7 +205,7 @@ func testCompletionMoves() []coasterMove {
 // round: forward from the exit end it must arrive on the entry end,
 // and in reverse from the entry end it must arrive on the exit end.
 func TestCoasterCompleteCircuit(t *testing.T) {
-	moves := testCompletionMoves()
+	moves := testCompletionMoves(t)
 	for name, designs := range map[string][]string{
 		"U turn": {
 			coasterDesign("station", "station"),

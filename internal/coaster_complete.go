@@ -3,7 +3,6 @@ package internal
 import (
 	"container/heap"
 	"fmt"
-	"path"
 
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Basis"
@@ -250,7 +249,7 @@ func coasterSearchJoin(start Transform3D.BasisOrigin, startPitch Angle.Radians, 
 // track: the completion shapes in the track's theme, located beside
 // the placed piece `sample` (".../<author>/<folder>/<theme>-<shape>.glb").
 func (editor *CoasterEditor) completionMoves(sample string) []coasterMove {
-	root := path.Dir(path.Dir(sample))
+	root := uriDir(uriDir(sample))
 	var moves []coasterMove
 	for _, fs := range coasterCompletionShapes {
 		design := root + "/" + fs[0] + "/" + editor.theme + "-" + fs[1] + ".glb"
