@@ -2,6 +2,7 @@ package internal
 
 import (
 	"container/heap"
+	"fmt"
 	"path"
 
 	"graphics.gd/variant/Angle"
@@ -17,10 +18,13 @@ import (
 const BuiltinCoasterComplete = "procedural://coaster/complete"
 
 // coasterCompletionShapes are the pieces auto-complete may lay, as
-// (folder, shape) pairs looked up in the track's theme. Everything
-// here moves the cursor by whole half-metre cells and quarter-metre
-// rises, so a search over the grid stays exact; the loop (half-lane
-// shift) and the cosmetic bumps/skews are left to the player.
+// (folder, shape) pairs looked up in the track's theme (every theme
+// ships the same shapes in every folder). Everything here moves the
+// cursor by whole half-metre cells and quarter-metre rises, so a
+// search over the grid stays exact; the cosmetic bumps/skews are left
+// to the player. The loop is here for its half-lane shift: a track
+// that already has one sits half a cell off, and only another loop
+// can bring it back.
 var coasterCompletionShapes = [][2]string{
 	{"track_f", "straight"},
 	{"track_r", "corner-small"}, {"track_l", "corner-small"},
@@ -31,12 +35,13 @@ var coasterCompletionShapes = [][2]string{
 	{"track_d", "hill-complete"}, {"track_d", "hill-complete-half"},
 	{"track_r", "corner-small-ramp"}, {"track_l", "corner-small-ramp"},
 	{"track_r", "corner-large-ramp"}, {"track_l", "corner-large-ramp"},
-	{"track_f", "curve"},
+	{"track_r", "curve"}, {"track_l", "curve"},
+	{"track_s", "looping"},
 }
 
 // coasterCompletionBudget caps the search: how many cursor states may
 // be expanded before giving up on a join.
-const coasterCompletionBudget = 250000
+const coasterCompletionBudget = 100000
 
 // coasterMove is one candidate piece for the search.
 type coasterMove struct {
@@ -45,10 +50,14 @@ type coasterMove struct {
 }
 
 // cost is what the search pays to lay the piece: straights and
-// turns one; anything that changes height, and the lane change, two,
-// so a join only climbs, dives or sidesteps when the ends call for it.
+// turns one; anything that changes height, and the lane change, two;
+// the loop three, so a join only climbs, dives, sidesteps or loops
+// when the ends call for it.
 func (move coasterMove) cost() int {
-	if move.piece.exit.Y != move.piece.entry.Y || (move.piece.exit.X != 0 && move.piece.exitRotation.Y == 0) {
+	switch {
+	case move.piece.exit.Z == move.piece.entry.Z:
+		return 3 // the loop: no progress along the track
+	case move.piece.exit.Y != move.piece.entry.Y || (move.piece.exit.X != 0 && move.piece.exitRotation.Y == 0):
 		return 2
 	}
 	return 1
@@ -63,11 +72,16 @@ type coasterCell struct {
 	pitch   int8
 }
 
+// heading is the direction of travel at a track pose.
+func heading(pose Transform3D.BasisOrigin) Vector3.XYZ {
+	return Basis.Transform(Vector3.New(0, 0, 1), pose.Basis)
+}
+
 // coasterCellOf quantises a cursor pose. Every piece auto-complete
 // lays moves the cursor by whole cells, so two poses that quantise
 // alike are the same pose up to float noise.
 func coasterCellOf(pose Transform3D.BasisOrigin, pitch Angle.Radians) coasterCell {
-	forward := Basis.Transform(Vector3.New(0, 0, 1), pose.Basis)
+	forward := heading(pose)
 	quarter := Float.X(Angle.Pi / 2)
 	heading := int(Float.Round(Float.X(Angle.Atan2(forward.X, forward.Z))/quarter)) % 4
 	if heading < 0 {
@@ -233,15 +247,15 @@ func coasterSearchJoin(start Transform3D.BasisOrigin, startPitch Angle.Radians, 
 }
 
 // completionMoves lists the pieces auto-complete may use for the open
-// track: the completion shapes that exist in the track's theme,
-// located beside the placed piece `sample`.
+// track: the completion shapes in the track's theme, located beside
+// the placed piece `sample` (".../<author>/<folder>/<theme>-<shape>.glb").
 func (editor *CoasterEditor) completionMoves(sample string) []coasterMove {
 	root := path.Dir(path.Dir(sample))
 	var moves []coasterMove
 	for _, fs := range coasterCompletionShapes {
 		design := root + "/" + fs[0] + "/" + editor.theme + "-" + fs[1] + ".glb"
 		piece, ok := coasterPieceForPath(design)
-		if !ok || !ExistsSync(design) {
+		if !ok {
 			continue
 		}
 		moves = append(moves, coasterMove{design: design, piece: piece})
@@ -256,11 +270,13 @@ func (editor *CoasterEditor) completionMoves(sample string) []coasterMove {
 // already a loop, or no join is found within the search budget.
 func (editor *CoasterEditor) completeCircuit() bool {
 	if !editor.cursorValid || len(editor.chain) == 0 || !editor.recorder.recording() {
+		fmt.Println("coaster: complete the circuit: no track is open")
 		return false
 	}
 	pieces := editor.placedPieces()
 	track, closed := walkTrack(pieces, editor.chain[0].entity)
 	if closed || len(track) == 0 {
+		fmt.Println("coaster: complete the circuit: the track is already a loop")
 		return false
 	}
 	head, tail := track[0], track[len(track)-1]
@@ -271,8 +287,11 @@ func (editor *CoasterEditor) completeCircuit() bool {
 	moves := editor.completionMoves(tail.design)
 	run, ok := coasterSearchJoin(tail.exit, tail.piece.exitPitch, head.entry, head.piece.entryPitch, moves, footprint)
 	if !ok {
+		fmt.Printf("coaster: complete the circuit: no join found from %v (heading %v) to %v (heading %v) with %d piece kinds\n",
+			tail.exit.Origin, heading(tail.exit), head.entry.Origin, heading(head.entry), len(moves))
 		return false
 	}
+	fmt.Printf("coaster: complete the circuit: laying %d pieces\n", len(run))
 	// Building forward the run lays from the exit end in order; in
 	// reverse the cursor sits on the entry end and the same run is
 	// laid last piece first, each piece's exit landing on the cursor.

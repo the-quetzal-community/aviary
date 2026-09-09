@@ -24,10 +24,6 @@ func storedPose(t Transform3D.BasisOrigin) Transform3D.BasisOrigin {
 	return Transform3D.BasisOrigin{Basis: Basis.FromEuler(angles, Angle.OrderXYZ), Origin: t.Origin}
 }
 
-func heading(pose Transform3D.BasisOrigin) Vector3.XYZ {
-	return Basis.Transform(Vector3.New(0, 0, 1), pose.Basis)
-}
-
 func near(a, b Vector3.XYZ) bool { return Vector3.Distance(a, b) < coasterJoinTolerance }
 
 // layTrack attaches designs one after another from start, returning
@@ -215,8 +211,13 @@ func TestCoasterCompleteCircuit(t *testing.T) {
 		},
 		"offset lane": {
 			coasterDesign("station", "station"),
-			coasterDesign("track_f", "curve"),
+			coasterDesign("track_r", "curve"),
 			coasterDesign("track_r", "corner-small"),
+		},
+		"half lane after a loop": {
+			coasterDesign("station", "station"),
+			coasterDesign("track_s", "looping"),
+			coasterDesign("track_l", "corner-large"),
 		},
 	} {
 		start := Transform3D.BasisOrigin{Basis: Basis.FromEuler(Euler.Radians{Y: -Angle.Pi / 2}, Angle.OrderXYZ), Origin: Vector3.New(4, 0.5, 1)}
