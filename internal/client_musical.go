@@ -350,10 +350,28 @@ func (client *Client) buildDesignNode(design musical.Design) (Node3D.Instance, b
 func (world musicalImpl) Import(uri musical.Import) error {
 	world.enqueue(func() {
 		defer timeIn(&bucketImport)()
-		if _, ok := world.loaded[uri.Import]; ok {
-			return
+		if world.minted[uri.Import] == uri.Design {
+			delete(world.minted, uri.Import)
 		}
 		world.design_ids[uri.Design.Author] = max(world.design_ids[uri.Design.Author], uri.Design.Number)
+		if first, ok := world.loaded[uri.Import]; ok {
+			// A second design for a resource that already has one: two
+			// peers minting the same new design at once, or a save from
+			// before MusicalDesign remembered what it had minted. The
+			// resource is loaded once, under the first design; alias this
+			// design to it so its entities resolve too.
+			if first != uri.Design && world.design_to_string[uri.Design] == "" {
+				world.design_to_string[uri.Design] = uri.Import
+				if scene, ok := world.packed_scenes[first]; ok {
+					world.packed_scenes[uri.Design] = scene
+				}
+				if texture, ok := world.textures[first]; ok {
+					world.textures[uri.Design] = texture
+				}
+				world.rebuildDesignEntities(uri.Design)
+			}
+			return
+		}
 		// Some imports are non-Godot-resource files shipped verbatim
 		// (.obj files used by the citizen dressing pipeline use the
 		// `keep` importer). Resource.Load on those logs an error to

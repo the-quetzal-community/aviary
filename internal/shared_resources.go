@@ -72,6 +72,12 @@ type SharedResources struct {
 	textures         map[musical.Design]Texture2D.ID
 	design_to_string map[musical.Design]string
 	loaded           map[string]musical.Design
+	// minted holds designs allocated by MusicalDesign whose Import
+	// has been sent but not yet applied (Imports come back through the
+	// main-thread queue), so allocating the same resource twice in one
+	// frame reuses the design instead of minting a second one that
+	// would never map to a scene.
+	minted map[string]musical.Design
 
 	// missing_scenes records designs whose .glb/.scn could not be loaded even
 	// though their import URI is known (file absent from the library.pck, or the
@@ -166,18 +172,25 @@ func (client *Client) designWalksTerrain(design musical.Design) bool {
 }
 
 func (client *Client) MusicalDesign(resource string) musical.Design {
-	design, ok := client.loaded[resource]
-	if !ok {
-		client.design_ids[client.id]++
-		design = musical.Design{
-			Author: client.id,
-			Number: client.design_ids[client.id],
-		}
-		client.space.Import(musical.Import{
-			Design: design,
-			Import: resource,
-		})
+	if design, ok := client.loaded[resource]; ok {
+		return design
 	}
+	if design, ok := client.minted[resource]; ok {
+		return design
+	}
+	client.design_ids[client.id]++
+	design := musical.Design{
+		Author: client.id,
+		Number: client.design_ids[client.id],
+	}
+	if client.minted == nil {
+		client.minted = make(map[string]musical.Design)
+	}
+	client.minted[resource] = design
+	client.space.Import(musical.Import{
+		Design: design,
+		Import: resource,
+	})
 	return design
 }
 
