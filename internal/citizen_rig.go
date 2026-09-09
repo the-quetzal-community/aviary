@@ -12,7 +12,6 @@ import (
 	"graphics.gd/classdb/PackedScene"
 	"graphics.gd/classdb/Skeleton3D"
 	"graphics.gd/variant/Object"
-	"graphics.gd/variant/Packed"
 	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 
@@ -59,8 +58,7 @@ func citizenGLBFromMesh(mesh Mesh.Instance) (*citizen.GLB, error) {
 	if len(arr) <= int(Mesh.ArrayIndex) {
 		return nil, fmt.Errorf("citizen: surface arrays too short (%d)", len(arr))
 	}
-	// SurfaceGetArrays hands back Packed.Array[T] per attribute (Godot's
-	// Variant.Interface wraps packed arrays, not plain Go slices).
+	// SurfaceGetArrays hands back plain Go slices per attribute.
 	pos := packedVec3(arr[Mesh.ArrayVertex])
 	if len(pos) == 0 {
 		return nil, fmt.Errorf("citizen: no vertices in surface (vertex array is %T)", arr[Mesh.ArrayVertex])
@@ -106,57 +104,49 @@ func packCitizenSkin(bones []int32, weights []float32, vertCount int) ([][4]uint
 	return j, w
 }
 
-// packedVec3/packedVec2/packedInt32/packedFloat32 copy a Packed.Array element
-// from SurfaceGetArrays into the plain Go slice BuildCitizenRig wants. They
+// packedVec3/packedVec2/packedInt32/packedFloat32 copy one SurfaceGetArrays
+// element (graphics.gd hands the attributes back as plain Go slices:
+// []Vector3.XYZ, []int32, …) into the slice types BuildCitizenRig wants. They
 // return nil (not an error) for an absent/wrong-typed attribute so optional
-// arrays (normals/UVs) degrade gracefully. The per-element Iter is the cost of
-// the one-time rig build (lazy, on first citizen-editor entry).
+// arrays (normals/UVs) degrade gracefully.
 func packedVec3(a any) []citizen.Vec3 {
-	p, ok := a.(Packed.Array[Vector3.XYZ])
+	p, ok := a.([]Vector3.XYZ)
 	if !ok {
 		return nil
 	}
-	out := make([]citizen.Vec3, 0, p.Len())
-	for _, v := range p.Iter() {
+	out := make([]citizen.Vec3, 0, len(p))
+	for _, v := range p {
 		out = append(out, citizen.Vec3{X: float32(v.X), Y: float32(v.Y), Z: float32(v.Z)})
 	}
 	return out
 }
 
 func packedVec2(a any) []citizen.Vec2 {
-	p, ok := a.(Packed.Array[Vector2.XY])
+	p, ok := a.([]Vector2.XY)
 	if !ok {
 		return nil
 	}
-	out := make([]citizen.Vec2, 0, p.Len())
-	for _, v := range p.Iter() {
+	out := make([]citizen.Vec2, 0, len(p))
+	for _, v := range p {
 		out = append(out, citizen.Vec2{U: float32(v.X), V: float32(v.Y)})
 	}
 	return out
 }
 
 func packedInt32(a any) []int32 {
-	p, ok := a.(Packed.Array[int32])
+	p, ok := a.([]int32)
 	if !ok {
 		return nil
 	}
-	out := make([]int32, 0, p.Len())
-	for _, v := range p.Iter() {
-		out = append(out, v)
-	}
-	return out
+	return append([]int32(nil), p...)
 }
 
 func packedFloat32(a any) []float32 {
-	p, ok := a.(Packed.Array[float32])
+	p, ok := a.([]float32)
 	if !ok {
 		return nil
 	}
-	out := make([]float32, 0, p.Len())
-	for _, v := range p.Iter() {
-		out = append(out, v)
-	}
-	return out
+	return append([]float32(nil), p...)
 }
 
 // loadCitizenTransform returns the base.obj→GLB similarity (p_glb = scale·p_obj
