@@ -776,7 +776,7 @@ func (editor *CoasterEditor) unchain(entity musical.Entity) {
 }
 
 // designScale returns the world-space scale for a coaster entity,
-// flipping X when the design is sourced from track_r (right turn).
+// flipping X when the design is sourced from track_l (left turn).
 // Falls back to the standard pieceScale when the design path isn't a
 // known coaster path (park props in dressing tabs).
 func (editor *CoasterEditor) designScale(design musical.Design) Vector3.XYZ {

@@ -15,9 +15,9 @@ import (
 // cursor: entry is where the previous piece's exit connects (in the
 // piece's local frame), and exit is where the next piece's entry
 // will sit. entryRotation and exitRotation give the track's heading
-// at those points relative to the mesh's own frame: left turns set Y
-// at the exit, a piece that starts or ends on a climb sets X at that
-// end (a hill-end's rails enter pitched up, so the mesh is laid level
+// at those points relative to the mesh's own frame: a turn sets Y at
+// the exit (-Pi/2 turns +Z towards -X), a piece that starts or ends
+// on a climb sets X at that end (a hill-end's rails enter pitched up, so the mesh is laid level
 // under a pitched cursor, not tilted).
 //
 // All values are in the piece's local frame at scale 1. The editor
@@ -35,11 +35,14 @@ import (
 // ground at z=0 that lands one lane to the left. hill-end overhangs
 // its origin by 0.21 so its rail tucks into the piece before it.
 //
-// Left-curving assets are stored as-shipped; right turns reuse the
-// same asset and are X-mirrored at render time when the design path's
-// parent folder is "track_r". Descents reuse the climbing assets
-// turned around (folder "track_d"): the cursor enters at the mesh's
-// exit and leaves at its entry, see coasterPiece.atEntry.
+// The kit's curving assets bend towards -X, which is the track's
+// right when travelling along +Z (Y up, right-handed), so the
+// as-shipped assets are the right turns and the left turns reuse
+// them X-mirrored at render time. Which folder a design sits in
+// ("track_l" or "track_r") decides its handedness in
+// coasterPieceForPath. Descents reuse the climbing assets turned
+// around (folder "track_d"): the cursor enters at the mesh's exit and
+// leaves at its entry, see coasterPiece.atEntry.
 type coasterPiece struct {
 	entry         Vector3.XYZ
 	exit          Vector3.XYZ
@@ -88,31 +91,32 @@ var coasterPieces = map[string]coasterPiece{
 		entry: Vector3.XYZ{0, 0, -0.1},
 		exit:  Vector3.XYZ{0, 0, 0.1},
 	},
+	// Quarter circles from +Z round to -X: the exit heads along -X.
 	"corner-small": {
 		entry:        Vector3.XYZ{0, 0, 0},
 		exit:         Vector3.XYZ{-2, 0, 2},
-		exitRotation: Euler.Radians{Y: Angle.Pi / 2},
+		exitRotation: Euler.Radians{Y: -Angle.Pi / 2},
 	},
 	"corner-large": {
 		entry:        Vector3.XYZ{0, 0, 0},
 		exit:         Vector3.XYZ{-4, 0, 4},
-		exitRotation: Euler.Radians{Y: Angle.Pi / 2},
+		exitRotation: Euler.Radians{Y: -Angle.Pi / 2},
 	},
 	// The corner ramps climb a unit through the turn and flatten out
 	// before the exit, so they chain level to level like hill-complete.
 	"corner-small-ramp": {
 		entry:        Vector3.XYZ{0, 0, 0},
 		exit:         Vector3.XYZ{-2, 1, 2},
-		exitRotation: Euler.Radians{Y: Angle.Pi / 2},
+		exitRotation: Euler.Radians{Y: -Angle.Pi / 2},
 	},
 	"corner-large-ramp": {
 		entry:        Vector3.XYZ{0, 0, 0},
 		exit:         Vector3.XYZ{-4, 1, 4},
-		exitRotation: Euler.Radians{Y: Angle.Pi / 2},
+		exitRotation: Euler.Radians{Y: -Angle.Pi / 2},
 	},
 	// A full circle tangent to the ground at the origin: the track
 	// enters at z=0, goes up and over, and comes back down at z=0 one
-	// lane to the left, heading the same way.
+	// lane to the right (-X), heading the same way.
 	"looping": {
 		entry: Vector3.XYZ{0, 0, 0},
 		exit:  Vector3.XYZ{-1, 0, 0},
@@ -149,7 +153,7 @@ var coasterPieces = map[string]coasterPiece{
 		exit:  Vector3.XYZ{0, 0, 4},
 	},
 	// "curve" is a lane change, not a turn: the track shifts two units
-	// left over four and exits parallel to the entry. The "skew" pieces
+	// right (-X) over four and exits parallel to the entry. The "skew" pieces
 	// bank the track without turning or climbing, so they chain as
 	// level straights (the roll itself is cosmetic until a banked-turn
 	// set exists).
@@ -266,8 +270,8 @@ func (piece coasterPiece) meshAtExit(pose Transform3D.BasisOrigin) (transform, e
 var coasterCategories = map[string]string{
 	"track_f": "f", // forward (straights, hills, bumps, skews)
 	"track_d": "d", // descents (the hill assets, laid turned around)
-	"track_l": "l", // left turns
-	"track_r": "r", // right turns (left assets, X-mirrored at render)
+	"track_l": "l", // left turns (the kit's assets, X-mirrored at render)
+	"track_r": "r", // right turns (the kit's assets as shipped)
 	"track_s": "s", // special (loops, corkscrews)
 	"station": "station",
 }
@@ -313,8 +317,9 @@ func coasterRetheme(design, theme string) string {
 }
 
 // coasterPieceForPath returns the manifest entry for a design,
-// applying right-handed mirroring when the path is in track_r. Any
-// shape in the station category falls back to the "station" entry.
+// mirroring the kit's right-curving geometry into a left turn when
+// the path is in track_l. Any shape in the station category falls
+// back to the "station" entry.
 func coasterPieceForPath(design string) (coasterPiece, bool) {
 	category, _, shape, ok := coasterParsePath(design)
 	if !ok {
@@ -328,7 +333,7 @@ func coasterPieceForPath(design string) (coasterPiece, bool) {
 		return coasterPiece{}, false
 	}
 	switch category {
-	case "r":
+	case "l":
 		piece.entry.X = -piece.entry.X
 		piece.exit.X = -piece.exit.X
 		piece.entryRotation.Y = -piece.entryRotation.Y
