@@ -17,7 +17,10 @@ import (
 //	touch   — the on-screen TouchControls overlay (virtual joystick +
 //	          Jump/Run buttons, see ui_touch_controls.go);
 //	VR      — the left controller thumbstick, with A/X (or the off-UI
-//	          trigger while possessing) as jump.
+//	          trigger while possessing) as jump;
+//	gamepad — the left stick, with A as jump and the left stick's
+//	          click as run (see input_pad.go, which also gives the
+//	          editors a stick-driven cursor).
 //
 // Modes consume DriveInput instead of the keyboard, so adding an input
 // surface here upgrades every drive mode at once.
@@ -67,6 +70,15 @@ func (world *Client) driveInput() DriveInput {
 		d.Jump = d.Jump || world.touchControls.JumpHeld()
 		d.Run = d.Run || world.touchControls.RunActive()
 	}
+	if device, ok := world.padDevice(); ok {
+		stick := padStick(device, Input.JoyAxisLeftX, Input.JoyAxisLeftY)
+		d.Move.X += stick.X
+		// Godot's stick Y is screen-style (+1 towards the player);
+		// DriveInput's is forward-positive.
+		d.Move.Y -= stick.Y
+		d.Jump = d.Jump || Input.IsJoyButtonPressed(device, Input.JoyButtonA)
+		d.Run = d.Run || Input.IsJoyButtonPressed(device, Input.JoyButtonLeftStick)
+	}
 	if world.xr && world.xrLeft != XRController3D.Nil {
 		stick := world.xrLeft.GetVector2("primary")
 		if Vector2.Length(stick) > vrDriveStickDeadzone {
@@ -82,10 +94,10 @@ func (world *Client) driveInput() DriveInput {
 }
 
 // consumeDriveExit reports (and clears) a pending exit request from a
-// non-keyboard affordance: the touch overlay's Exit button or the VR
-// B/Y button. Keyboard Escape/Enter stay handled by each mode directly,
-// so nothing double-fires. Exactly one mode is active at a time — that
-// mode is the single consumer per frame.
+// non-keyboard affordance: the touch overlay's Exit button, the VR
+// B/Y button, or B on a gamepad. Keyboard Escape/Enter stay handled by
+// each mode directly, so nothing double-fires. Exactly one mode is
+// active at a time — that mode is the single consumer per frame.
 func (world *Client) consumeDriveExit() bool {
 	fired := false
 	if world.touchControls != nil && world.touchControls.ConsumeExit() {
@@ -93,6 +105,10 @@ func (world *Client) consumeDriveExit() bool {
 	}
 	if world.vrExitRequest {
 		world.vrExitRequest = false
+		fired = true
+	}
+	if world.pad.exitRequest {
+		world.pad.exitRequest = false
 		fired = true
 	}
 	return fired

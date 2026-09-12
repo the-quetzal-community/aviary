@@ -134,6 +134,11 @@ type Client struct {
 	vrJumpHeld    bool
 	vrExitRequest bool
 
+	// pad is the gamepad / Steam Deck input state: the connected
+	// device, the button edges, and the trigger zoom this frame.
+	// See input_pad.go.
+	pad padState
+
 	// swimAim drives the right-drag "swim here" target for a selected swimmer: a
 	// 3D move whose depth you set by dragging, previewed by a depth indicator.
 	// See client_swimmer.go.
@@ -1723,6 +1728,10 @@ func (world *Client) Process(dt Float.X) {
 	if world.touchControls != nil {
 		world.touchControls.SetActive(world.driveModeActive())
 	}
+	// Gamepad: virtual cursor, camera, and the button edges that
+	// become mouse/key events for the editors. Runs before the Ctrl
+	// gate below so a pad works whatever the keyboard is doing.
+	world.processPad(dt)
 	// The touch overlay's EXIT button lifts out of first-person ground
 	// mode; possession/flight/walk-tests consume the latch themselves.
 	if world.fpsMode && world.consumeDriveExit() {
@@ -1815,7 +1824,7 @@ func (world *Client) Process(dt Float.X) {
 	if Input.IsKeyPressed(Input.KeyF) {
 		world.lookPitch(Angle.Radians(dt), grounded)
 	}
-	if Input.IsKeyPressed(Input.KeyEqual) && !grounded {
+	if (Input.IsKeyPressed(Input.KeyEqual) || world.padZoomIn()) && !grounded {
 		// Ease the zoom-in as the eye nears the ground so it glides in instead of
 		// slamming down: the step shrinks with altitude (capped at the old 0.5,
 		// floored so the last bit still closes). Zooming in is disabled once
@@ -1823,7 +1832,7 @@ func (world *Client) Process(dt Float.X) {
 		step := min(max(world.cameraAltitude()*0.1, 0.02), 0.5)
 		world.FocalPoint.Lens.Camera.AsNode3D().Translate(Vector3.New(0, 0, -step))
 	}
-	if Input.IsKeyPressed(Input.KeyMinus) && world.canZoomOut() {
+	if (Input.IsKeyPressed(Input.KeyMinus) || world.padZoomOut()) && world.canZoomOut() {
 		if world.fpsMode {
 			world.exitFPS() // zoom-out at a sharp angle lifts off
 		} else {
