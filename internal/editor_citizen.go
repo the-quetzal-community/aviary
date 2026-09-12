@@ -204,12 +204,15 @@ func (*CitizenEditor) Tabs(mode Mode) []string {
 			"sandals",
 		}
 	case ModeMaterial:
+		// Declared with the "editing/" prefix the explorer builds
+		// sliders from; the Sculpt they emit keeps the bare name every
+		// save already carries (see citizenMaterialSlider). hairdye,
+		// tattoos and posture were listed here with no slider and no
+		// library folder behind them, so the mode came up empty —
+		// they're gone until something drives them.
 		return []string{
-			"hairdye",
-			"eyetint",
-			"pigment",
-			"tattoos",
-			"posture",
+			"editing/pigment",
+			"editing/eyetint",
 		}
 	default:
 		return nil
@@ -315,7 +318,6 @@ var citizenGeometryTabs = []string{
 	"editing/head_size",
 	"haircut",
 	"eyebrow",
-	"stubble",
 	// face proportions
 	"editing/head_age",
 	"editing/head_fat",
@@ -372,8 +374,8 @@ var citizenEditorSliders = func() map[string]struct {
 }()
 
 func (*CitizenEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
-	if init, ok := citizenMaterialSliders[editing]; ok {
-		return init, 0, 1, 0.01
+	if name, ok := citizenMaterialSlider(editing); ok {
+		return citizenMaterialSliders[name], 0, 1, 0.01
 	}
 	if _, ok := citizenEditorSliders[editing]; ok {
 		return 0, -1, 1, 0.01
@@ -391,7 +393,22 @@ var citizenMaterialSliders = map[string]float64{
 	"eyetint": defaultEyeTint,
 }
 
+// citizenMaterialSlider maps a material tab to the slider name that goes
+// on the wire. The tabs are declared as "editing/pigment" because that
+// prefix is how the design explorer knows to build a slider rather than
+// a tile grid, but the Sculpt keeps the bare "pigment" that saves have
+// carried since before the tabs were sliders — the musical format only
+// grows, it doesn't get respelled.
+func citizenMaterialSlider(tab string) (string, bool) {
+	name := strings.TrimPrefix(tab, "editing/")
+	_, ok := citizenMaterialSliders[name]
+	return name, ok
+}
+
 func (ce *CitizenEditor) SliderHandle(mode Mode, editing string, value float64, commit bool) {
+	if name, ok := citizenMaterialSlider(editing); ok {
+		editing = name
+	}
 	if !commit && time.Since(ce.last_slider_sculpt) < time.Second/10 {
 		return
 	}

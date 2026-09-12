@@ -235,16 +235,48 @@ func (de *DesignExplorer) Ready() {
 	de.addThemeButton("user")
 }
 
+// tabFolderAliases lists extra folder names a tab pulls tiles from,
+// beyond the folder of its own name. Some library folders drifted from
+// the tab the editor asks for: everything's kitchen furniture is filed
+// under "cuisine" (107 models that nothing ever showed), and
+// wildfire_games carries an "obelish" typo folder alongside its
+// obelisk one. Aliasing here rather than renaming on the drive keeps
+// every design URI already written into a save — and every pck already
+// downloaded — valid, which renaming the folders would not.
+var tabFolderAliases = map[string][]string{
+	"kitchen": {"cuisine"},
+	"obelisk": {"obelish"},
+}
+
+// tabFolders is the folder names a tab draws on, its own first.
+func tabFolders(tab string) []string {
+	return append([]string{tab}, tabFolderAliases[tab]...)
+}
+
+// tabSource is one directory a tab pulls tiles from: the folder name
+// under the author's tree (the tab's own, or an alias) and the opened
+// directory.
+type tabSource struct {
+	folder string
+	dir    DirAccess.Instance
+}
+
 // authorTabDirs opens an author's library-preview and mods directories for a
 // given tab, honouring which sources back the author. Either return may be
-// DirAccess.Nil (source absent or that tab missing from it); a merged author can
+// empty (source absent or that tab missing from it); a merged author can
 // return both, and the caller builds tiles from each.
-func (de *DesignExplorer) authorTabDirs(author, tab string) (lib, mod DirAccess.Instance) {
-	if de.theme_lib[author] {
-		lib = DirAccess.Open("res://preview/" + author + "/" + tab)
-	}
-	if de.theme_mod[author] {
-		mod = DirAccess.Open(modsRoot + "/" + author + "/" + tab)
+func (de *DesignExplorer) authorTabDirs(author, tab string) (lib, mod []tabSource) {
+	for _, folder := range tabFolders(tab) {
+		if de.theme_lib[author] {
+			if dir := DirAccess.Open("res://preview/" + author + "/" + folder); dir != DirAccess.Nil {
+				lib = append(lib, tabSource{folder: folder, dir: dir})
+			}
+		}
+		if de.theme_mod[author] {
+			if dir := DirAccess.Open(modsRoot + "/" + author + "/" + folder); dir != DirAccess.Nil {
+				mod = append(mod, tabSource{folder: folder, dir: dir})
+			}
+		}
 	}
 	return lib, mod
 }
@@ -592,7 +624,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		for author := range ui.themes {
 			for _, tab := range ui.editor.Tabs(mode) {
 				lib, mod := ui.authorTabDirs(author, tab)
-				if lib != DirAccess.Nil || mod != DirAccess.Nil {
+				if len(lib) > 0 || len(mod) > 0 {
 					themes_available[author] = struct{}{}
 					break
 				}
@@ -641,14 +673,16 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		ui.refreshUserBookmarks(mode)
 		return
 	}
-	// Bail if the chosen author has no content root at all (e.g. preferredAuthor
-	// returned "" or a stale name). Otherwise each tab pulls tiles from whichever
-	// of the library / mods sources back this author.
+	// Which sources back the chosen author (it may be "" when no author
+	// has content for this editor/mode — e.g. preferredAuthor found
+	// nothing, or the mode is nothing but sliders). Tile grids need one
+	// of these; slider tabs are the editor's own and need neither, so
+	// the loop below skips grid tabs rather than bailing out here. A
+	// mode made only of sliders — the foliage tree parameters, the
+	// citizen's skin and eye colour — used to come up blank for exactly
+	// that reason: no author, no panel, no sliders.
 	hasLib := ui.theme_lib[author] && DirAccess.Open("res://preview/"+author) != DirAccess.Nil
 	hasMod := ui.theme_mod[author] && DirAccess.Open(modsRoot+"/"+author) != DirAccess.Nil
-	if !hasLib && !hasMod {
-		return
-	}
 	ui.tabbed = nil
 	for _, tab := range ui.editor.Tabs(mode) {
 		if strings.HasPrefix(tab, "editing/") {
@@ -682,6 +716,9 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			ui.Tabs.SetTabTitle(index, "")
 			index++
 		} else {
+			if !hasLib && !hasMod {
+				continue // a tile grid with no source behind it
+			}
 			lib, mod := ui.authorTabDirs(author, tab)
 			// Builtin procedural tiles the editor wants shown in this
 			// tab (e.g. the critter editor's procedural foreleg). The
@@ -692,7 +729,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			if provider, ok := ui.editor.(BuiltinDesignProvider); ok {
 				builtins = provider.BuiltinDesigns(mode, tab)
 			}
-			if lib == DirAccess.Nil && mod == DirAccess.Nil && len(builtins) == 0 {
+			if len(lib) == 0 && len(mod) == 0 && len(builtins) == 0 {
 				continue
 			}
 			gridflow := new(GridFlowContainer)
@@ -733,27 +770,28 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			// Community-library tiles (res://): thumbnails from the preview tree,
 			// models from the library tree.
-			if lib != DirAccess.Nil {
+			for _, src := range lib {
 				var ext = glb
 				if mode == ModeMaterial {
 					ext = png
 				}
+				folder := src.folder
 				preview_path := "res://preview/" + author
 				library_path := "res://library/" + author
 				// Default tile order is alphabetical by file name. DirAccess
 				// iterates in filesystem/pack order (not guaranteed sorted), so
 				// sort the names up front; applyRecency later floats recently-
 				// placed designs ahead of this stable alphabetical baseline.
-				for _, resource := range slices.Sorted(lib.Iter()) {
+				for _, resource := range slices.Sorted(src.dir.Iter()) {
 					resource = strings.TrimSuffix(resource, ".import")
 					if !String.HasSuffix(resource, ".png") || String.HasSuffix(resource, "_cut.glb.png") {
 						continue
 					}
-					var path = preview_path + "/" + tab + "/" + resource
+					var path = preview_path + "/" + folder + "/" + resource
 					switch ext {
 					case glb:
-						resource := library_path + "/" + tab + "/" + strings.TrimSuffix(string(resource), ".png")
-						if tscn := library_path + "/" + tab + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
+						resource := library_path + "/" + folder + "/" + strings.TrimSuffix(string(resource), ".png")
+						if tscn := library_path + "/" + folder + "/" + String.TrimSuffix(resource, ".png") + ".tscn"; FileAccess.FileExists(tscn) {
 							resource = tscn
 						}
 						if filter, ok := ui.editor.(DesignFilter); ok && filter.HidesDesign(mode, resource) {
@@ -799,8 +837,8 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 						// shared atlas material, while the raw .png is the
 						// legacy pre-cropped form.
 						base := strings.TrimSuffix(string(resource), ".png")
-						region_path := library_path + "/" + tab + "/" + base + ".region"
-						resource := library_path + "/" + tab + "/" + resource
+						region_path := library_path + "/" + folder + "/" + base + ".region"
+						resource := library_path + "/" + folder + "/" + resource
 						if FileAccess.FileExists(region_path) {
 							resource = region_path
 						}
@@ -838,14 +876,14 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			// Mod overlay tiles (user://mods): list the .glb models directly
 			// (sidecar <file>.glb.png thumbnails optional) and reference each by its
 			// mod:// pseudo-URI so it flows through the same placement pipeline.
-			if mod != DirAccess.Nil {
-				modBase := modsRoot + "/" + author + "/" + tab
-				for _, name := range slices.Sorted(mod.Iter()) {
+			for _, src := range mod {
+				modBase := modsRoot + "/" + author + "/" + src.folder
+				for _, name := range slices.Sorted(src.dir.Iter()) {
 					if !strings.HasSuffix(name, glb) {
 						continue
 					}
 					ui.addModTile(elements.AsNode(), mode,
-						modScheme+author+"/"+tab+"/"+name,
+						modScheme+author+"/"+src.folder+"/"+name,
 						modBase+"/"+name+png)
 				}
 			}

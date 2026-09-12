@@ -196,7 +196,6 @@ func (*ShelterEditor) Tabs(mode Mode) []string {
 			"bathing",
 			"benches",
 			"candles",
-			"lesiure",
 			"trinket",
 			"storage",
 			"mounted",

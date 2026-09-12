@@ -454,10 +454,12 @@ func (es *SceneryEditor) Tabs(mode Mode) []string {
 		// vehicle
 		return sceneryDressingCategories
 	case ModeMaterial:
-		return []string{
-			"colours",
-			"posture",
-		}
+		// Nothing: scenery props place as models and have no material
+		// channel — SelectDesign here would treat a texture tile as
+		// something to place. "colours" and "posture" were listed as
+		// tabs with no folder and no handler behind either, so the mode
+		// promised an editing surface that does not exist.
+		return nil
 	default:
 		return nil
 	}
