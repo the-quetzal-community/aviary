@@ -4628,3 +4628,29 @@ func (a *TerrainTileArrow) InputEvent(_ Camera3D.Instance, event InputEvent.Inst
 		Commit: true,
 	})
 }
+
+// ExportedDesignURIs names the library artwork in a terrain export that
+// walking the exported nodes cannot find, so it still reaches the
+// export's ATTRIBUTION.txt (see export_attribution.go): the instanced
+// dressing — grass, pebbles, flowers, all rendered as MultiMeshes
+// rather than scene instances — and the materials painted onto the
+// ground, which live as layers in the shader's texture array. Both are
+// somebody's artwork and both end up baked into the exported glTF.
+func (vr *TerrainEditor) ExportedDesignURIs() []string {
+	if vr.library == nil {
+		return nil
+	}
+	uris := make([]string, 0, len(vr.grassRenders)+len(vr.mapper))
+	add := func(design musical.Design) {
+		if uri := vr.library.designURI(design); strings.HasPrefix(uri, "res://library/") {
+			uris = append(uris, uri)
+		}
+	}
+	for design := range vr.grassRenders {
+		add(design)
+	}
+	for design := range vr.mapper {
+		add(design)
+	}
+	return uris
+}

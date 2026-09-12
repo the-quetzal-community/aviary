@@ -68,6 +68,9 @@ func exportDuplicateChild(root, src Node3D.Instance) Node3D.Instance {
 // world. When the editor implements [Exporter] the returned
 // subtree is exported; otherwise it falls back to AsNode3D().
 //
+// Alongside the .glb it writes <name>-ATTRIBUTION.txt: the authors,
+// licences and sources of the library artwork the export contains.
+//
 // Falls back to a stderr message on platforms without a native
 // file dialog (hypothetical headless builds only); on supported
 // targets — Linux X11/Wayland, Windows, macOS, Android — Godot
@@ -116,6 +119,12 @@ func (world *Client) Export() {
 			if err := writeNodeAsGLTF(root, dst); err != nil {
 				Engine.Raise(fmt.Errorf("export failed: %w", err))
 				return
+			}
+			// The .glb leaves with the player; so must the record of
+			// who made the artwork inside it, or the usage rights it
+			// carries can't be exercised (see export_attribution.go).
+			if err := writeExportAttribution(editor, root, dst); err != nil {
+				Engine.Raise(fmt.Errorf("export attribution failed: %w", err))
 			}
 			fmt.Println("Exported", dst)
 		},
