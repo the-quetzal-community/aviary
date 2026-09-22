@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"runtime"
 
 	"graphics.gd/classdb"
@@ -67,6 +68,10 @@ func main() {
 	sentry.Register()
 	if Engine.IsEditorHint() {
 		startup.Scene()
+		return
+	}
+	// tools/devshot.sh rebuilds the linked engine with `gd run`; stop once built.
+	if os.Getenv("AVIARY_BUILD_ONLY") == "1" {
 		return
 	}
 	// Keep the 4K default window from overflowing a smaller display (off-screen

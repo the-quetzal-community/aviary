@@ -29,7 +29,6 @@ import (
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/GPUParticles3D"
 	"graphics.gd/classdb/GeometryInstance3D"
-	"graphics.gd/classdb/Image"
 	"graphics.gd/classdb/Input"
 	"graphics.gd/classdb/InputEvent"
 	"graphics.gd/classdb/InputEventKey"
@@ -57,7 +56,6 @@ import (
 	"graphics.gd/classdb/SubViewport"
 	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
-	"graphics.gd/classdb/ViewportTexture"
 	"graphics.gd/classdb/WorldEnvironment"
 	"graphics.gd/classdb/XRCamera3D"
 	"graphics.gd/classdb/XRController3D"
@@ -383,6 +381,9 @@ type Client struct {
 	// camera rig holds a real user view worth persisting (vs the default/just-
 	// restored pose mid-load, which it must not write over the saved one).
 	finishedLoading bool
+	// devshot is the scripted scenario harness (AVIARY_DEMO / AVIARY_SHOT, see
+	// devshot.go); nil in a normal run.
+	devshot *devShot
 	// loadProgressArmed gates the byte-counting file wrapper to the FIRST
 	// Storage.Open (the initial replay); later Opens serve joining peers
 	// (musical server srv.handle) and must not reset the bar.
@@ -497,6 +498,7 @@ func NewClient() *Client {
 
 		load_last_save: true,
 		queue:          make(chan func(), queueCapFromEnv()),
+		devshot:        newDevShot(),
 	}
 	client.clientReady.Add(1)
 	client.loadUserState()
@@ -1390,48 +1392,6 @@ func (world *Client) loadingComplete() bool {
 	return time.Since(world.loadIdleSince) > joinLoadGrace
 }
 
-// Opt-in viewport screenshot for headless verification: when AVIARY_SHOTPATH is
-// set, save one PNG of the rendered viewport a short while after loading ends
-// (the native Wayland window can't be grabbed by X11 tools / the COSMIC portal).
-var (
-	shotPath   = os.Getenv("AVIARY_SHOTPATH")
-	shotFrames int
-	shotDone   bool
-)
-
-func (world *Client) maybeCaptureScreenshot() {
-	if shotPath == "" || shotDone {
-		return
-	}
-	shotFrames++
-	if shotFrames < 90 { // ~1.5s of rendered frames so the world settles
-		return
-	}
-	shotDone = true
-	tex := Viewport.Get(world.AsNode()).GetTexture()
-	if tex == (ViewportTexture.Instance{}) {
-		profMark("screenshot: nil viewport texture")
-		return
-	}
-	img := tex.AsTexture2D().GetImage()
-	if img == (Image.Instance{}) {
-		profMark("screenshot: nil image")
-		return
-	}
-	if err := img.SavePng(shotPath); err != nil {
-		profMark("screenshot save failed: %v", err)
-		return
-	}
-	profMark("screenshot saved to %s", shotPath)
-	world.debugResourceUsage()
-	if world.TerrainEditor != nil {
-		world.TerrainEditor.debugTerrainSignature()
-	}
-	if world.CritterEditor != nil {
-		world.CritterEditor.debugCritterSignature()
-	}
-}
-
 // debugResourceUsage reports how many imported scenery Designs (packed scenes)
 // still have a live entity vs. how many were loaded but have no surviving entity
 // (removed or superseded) — i.e. resources we paid to load but that aren't in
@@ -1516,7 +1476,7 @@ func (world *Client) Process(dt Float.X) {
 		return
 	}
 	world.time.Process(dt)
-	world.maybeCaptureScreenshot()
+	world.devshot.process(world, dt)
 
 	// Keep the underwater post-process in sync with the water surface AND terrain
 	// floor under the camera: the LOCAL river surface where one is carved (else

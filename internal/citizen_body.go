@@ -241,8 +241,10 @@ func AttachCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh, targe
 	// inconsistencies in the source mesh.
 	body.eyeMaterial.AsBaseMaterial3D().SetCullMode(BaseMaterial3D.CullDisabled)
 	body.surface()
-	body.applySurfaceMaterials()
 	mi.SetMesh(body.arrayMesh.AsMesh())
+	// Overrides live on the MI and only take for surfaces its current mesh
+	// has, so bind them after the swap (before it, the eye surface was rejected).
+	body.applySurfaceMaterials()
 	return body, nil
 }
 
@@ -310,7 +312,6 @@ func AttachRiggedCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh,
 
 	body.writeRiggedVerts(c.Recompute())
 	body.surface()
-	body.applySurfaceMaterials()
 	// Generous custom AABB (GLB ≈1.7 m space) so the renderer skips the
 	// per-frame skinned-AABB recompute (and its "bs > sbs" warning), and so
 	// big clips — backflip, flying, jumps — aren't frustum-culled at the
@@ -323,6 +324,9 @@ func AttachRiggedCitizenBody(mi MeshInstance3D.Instance, base *citizen.BaseMesh,
 	// path (both live on the node, not the Mesh resource), and our ArrayBones
 	// index the same skin binds the GLB's JOINTS_0 did.
 	mi.SetMesh(body.arrayMesh.AsMesh())
+	// After the swap, not before: the imported mesh has fewer surfaces than
+	// ours, and the MI rejects overrides for surfaces its mesh lacks.
+	body.applySurfaceMaterials()
 	return body, nil
 }
 
