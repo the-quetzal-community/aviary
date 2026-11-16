@@ -537,11 +537,11 @@ func (*CritterEditor) Tabs(mode Mode) []string {
 
 // TabIcon implements TabIconProvider: the skin sliders draw their own
 // colour-ramp swatches.
-func (ce *CritterEditor) TabIcon(mode Mode, tab string) Texture2D.Instance {
+func (ce *CritterEditor) TabIcon(mode Mode, tab string, host Node.Instance) Texture2D.Instance {
 	if mode != ModeMaterial {
 		return Texture2D.Nil
 	}
-	return skinTabIcon(ce.body.critter, tab)
+	return skinTabIcon(ce.body.critter, tab, host)
 }
 
 func (ce *CritterEditor) EnableEditor() {
@@ -777,7 +777,7 @@ func (ce *CritterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 		return []BuiltinDesign{
 			{
 				Resource: BuiltinHornDesign,
-				Icon:     "res://ui/triangle.svg",
+				Render:   func() Node3D.Instance { return sweptIconSubject(BuiltinHornDesign) },
 				Label:    "Horn",
 			},
 		}
@@ -785,7 +785,7 @@ func (ce *CritterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 		return []BuiltinDesign{
 			{
 				Resource: BuiltinFinDesign,
-				Icon:     "res://ui/spoiler.svg",
+				Render:   func() Node3D.Instance { return sweptIconSubject(BuiltinFinDesign) },
 				Label:    "Fin",
 			},
 		}

@@ -288,6 +288,28 @@ func demoCritter() []devStep {
 			return ok && c.BoneCount() == 5 && b == head
 		}),
 		snap("undone"),
+		// The explorer's rendered icons: the skin sliders' tabs, then the
+		// parametric horn's tile.
+		do(func(s *devShot, w *Client) {
+			if w.ui != nil {
+				w.ui.SetMode(ModeMaterial)
+			}
+		}),
+		waitFrames(6),
+		snap("material"),
+		do(func(s *devShot, w *Client) {
+			if w.ui == nil {
+				return
+			}
+			w.ui.SetMode(ModeGeometry)
+			for i, tab := range w.ui.Editor.Tabs.AsNode().GetChildren() {
+				if tab.Name() == "antlers" {
+					w.ui.Editor.Tabs.SetCurrentTab(i)
+				}
+			}
+		}),
+		waitFrames(6),
+		snap("antlers"),
 	}
 }
 

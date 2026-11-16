@@ -710,11 +710,11 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			ui.Tabs.AsNode().AddChild(Node.Instance(slider.AsNode()))
 			var icon Texture2D.Instance
 			if provider, ok := ui.editor.(TabIconProvider); ok {
-				icon = provider.TabIcon(mode, tab)
+				icon = provider.TabIcon(mode, tab, Node.Instance(slider.AsNode()))
 			}
 			if icon != Texture2D.Nil {
 				ui.Tabs.SetTabIcon(index, icon)
-				ui.Tabs.SetTabIconMaxWidth(index, 48)
+				ui.Tabs.SetTabIconMaxWidth(index, 96)
 			} else if ExistsSync("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
 				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
@@ -752,7 +752,10 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				resource := b.Resource
 				button := TextureButton.New()
 				var iconTex Texture2D.Instance
-				if b.Icon != "" {
+				if b.Render != nil {
+					iconTex = renderIcon(button.AsNode(), b.Render(), 256)
+					button.SetTextureNormal(iconTex)
+				} else if b.Icon != "" {
 					if icon := LoadSync[Texture2D.Instance](b.Icon); icon != Texture2D.Nil {
 						iconTex = icon
 						button.SetTextureNormal(icon)

@@ -368,6 +368,9 @@ type BuiltinDesign struct {
 	// Icon is an optional res:// path to a thumbnail texture. When
 	// empty the tile shows a label-only fallback.
 	Icon string
+	// Render, when set, builds the thing the tile stands for; the tile
+	// shows a render of it (renderIcon) instead of Icon.
+	Render func() Node3D.Instance
 	// Label is shown in tooltips / accessibility metadata.
 	Label string
 }
@@ -381,11 +384,12 @@ type BuiltinDesignProvider interface {
 }
 
 // TabIconProvider is an optional interface an editor can implement to
-// supply a tab's icon itself (e.g. a generated colour swatch) instead
-// of the res://ui/<editor>/<tab>.svg lookup. Returning Texture2D.Nil
-// falls back to that lookup.
+// supply a tab's icon itself (e.g. a generated colour swatch, or a
+// render) instead of the res://ui/<editor>/<tab>.svg lookup. host is
+// the tab's own control, for parenting whatever a rendered icon needs
+// kept alive. Returning Texture2D.Nil falls back to that lookup.
 type TabIconProvider interface {
-	TabIcon(mode Mode, tab string) Texture2D.Instance
+	TabIcon(mode Mode, tab string, host Node.Instance) Texture2D.Instance
 }
 
 // DesignFilter is an optional interface an editor can implement to

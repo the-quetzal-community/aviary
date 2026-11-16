@@ -6,6 +6,7 @@ import (
 	"graphics.gd/classdb/ArrayMesh"
 	"graphics.gd/classdb/Gradient"
 	"graphics.gd/classdb/GradientTexture2D"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Shader"
 	"graphics.gd/classdb/ShaderMaterial"
@@ -182,11 +183,12 @@ func (b *CritterBody) setSkinSurface(am ArrayMesh.Instance) {
 	}
 }
 
-// skinTabIcon draws the tab icon for a skin slider. The colour sliders
-// get a swatch of what they sweep through — generated, since a colour
-// ramp is data rather than art — square for the main colour and round
-// for the second; the rest reuse existing icons.
-func skinTabIcon(c *critter.Critter, tab string) Texture2D.Instance {
+// skinTabIcon draws the tab icon for a skin slider — nothing here is a
+// drawn icon. The colour sliders get a swatch of what they sweep through
+// (square for the main colour, round for the second); the rest get a
+// render of a ball wearing the critter's skin with that control turned
+// up, so the tab shows what the slider does.
+func skinTabIcon(c *critter.Critter, tab string, host Node.Instance) Texture2D.Instance {
 	white := Color.RGBA{R: 1, G: 1, B: 1, A: 1}
 	black := Color.RGBA{A: 1}
 	var hue1, hue2 float32
@@ -211,13 +213,13 @@ func skinTabIcon(c *critter.Critter, tab string) Texture2D.Instance {
 	case "editing/shade2":
 		return rampIcon([]Color.RGBA{white, black}, true)
 	case "editing/pattern":
-		return LoadSync[Texture2D.Instance]("res://ui/texture.svg")
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 1, "skin/scale": 0, "skin/belly": 0}), 128)
 	case "editing/scale":
-		return LoadSync[Texture2D.Instance]("res://ui/details.svg")
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 1, "skin/scale": 0.8, "skin/belly": 0}), 128)
 	case "editing/belly":
-		return LoadSync[Texture2D.Instance]("res://ui/shading.svg")
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 0, "skin/belly": 0.6}), 128)
 	case "editing/gloss":
-		return LoadSync[Texture2D.Instance]("res://ui/surface.svg")
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 0, "skin/belly": 0, "skin/gloss": 1}), 128)
 	}
 	return Texture2D.Nil
 }
