@@ -19,10 +19,13 @@ import (
 	"graphics.gd/classdb/SceneTree"
 	"graphics.gd/classdb/TextureButton"
 	"graphics.gd/classdb/TextureRect"
+	"graphics.gd/classdb/Tween"
 	"graphics.gd/variant/Callable"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Vector2"
 	"the.quetzal.community/aviary/internal/datasize"
 	"the.quetzal.community/aviary/internal/httpseek"
+	"the.quetzal.community/aviary/internal/netstate"
 	"the.quetzal.community/aviary/internal/pck"
 )
 
@@ -39,11 +42,29 @@ type LibraryDownloader struct {
 	Progress ProgressBar.Instance
 
 	downloading      bool
+	checking         bool // computePlan is running in the background
 	total            datasize.ByteSize
 	bytes_downloaded chan datasize.ByteSize
 	done             chan struct{}
 	plan             *previewPlan
+
+	// failed is set when a size check or download didn't complete; it is
+	// retried automatically at retryAt (sooner if the internet comes back) or
+	// on the next press. retryDelay doubles per consecutive failure and is
+	// zero after a success.
+	failed     bool
+	retryAt    time.Time
+	retryDelay time.Duration
+
+	offlineDot   TextureRect.Instance // pulsing red dot while the internet is unreachable
+	offlinePulse Tween.Instance
+	netGen       uint64
 }
+
+const (
+	minRetryDelay = 2 * time.Second
+	maxRetryDelay = 30 * time.Second
+)
 
 // previewPlan is the result of checking the cloud preview.pck against any local
 // backup: how many bytes actually need downloading and whether that can be done
@@ -60,20 +81,50 @@ type previewPlan struct {
 func (dl *LibraryDownloader) Ready() {
 	dl.bytes_downloaded = make(chan datasize.ByteSize, 1)
 	dl.done = make(chan struct{}, 1)
-	// Check in the background the moment the page appears: read the cloud
-	// directory and diff it against any local backup, so the button shows the
-	// REAL download size (just the delta for an update) before it is pressed.
-	// The bar is indeterminate (no text) until the size is known.
+	dl.offlineDot = newOfflineDot(36)
+	dl.DownloadButton.AsNode().AddChild(dl.offlineDot.AsNode())
+	dl.offlineDot.AsControl().SetPosition(Vector2.New(100, -8)) // top-right corner of the 128px button
+	dl.netGen = netstate.Generation()
+	dl.applyNetState()
+	dl.check()
+	dl.DownloadButton.AsBaseButton().OnPressed(func() {
+		if dl.downloading {
+			return
+		}
+		if dl.plan == nil {
+			// Still sizing: ignore until the size is known. After a failure the
+			// button shakes (nothing started) and the check is retried now.
+			if dl.failed {
+				shakeRefused(dl.DownloadButton.AsControl())
+				dl.check()
+			}
+			return
+		}
+		dl.downloading = true
+		dl.DownloadButton.Pointer.AsCanvasItem().SetVisible(false)
+		go dl.execute(*dl.plan)
+	})
+}
+
+// check reads the cloud directory in the background and diffs it against any
+// local backup, so the button shows the REAL download size (just the delta for
+// an update) before it is pressed. The bar is indeterminate until then.
+func (dl *LibraryDownloader) check() {
+	dl.checking = true
+	dl.failed = false
 	dl.Progress.AsCanvasItem().SetVisible(true)
 	dl.Progress.SetIndeterminate(true)
 	dl.DownloadButton.Size.SetText("")
 	go func() {
 		plan, err := dl.computePlan()
-		if err != nil {
-			Callable.Defer(Callable.New(func() { Engine.Raise(err) }))
-			return
-		}
 		Callable.Defer(Callable.New(func() {
+			dl.checking = false
+			if err != nil {
+				dl.fail(err)
+				return
+			}
+			netstate.MarkOnline()
+			dl.retryDelay = 0
 			dl.plan = &plan
 			if plan.downloadBytes == 0 {
 				// Already up to date — nothing to fetch. Restore the backup and
@@ -90,14 +141,49 @@ func (dl *LibraryDownloader) Ready() {
 			dl.DownloadButton.Size.SetText(datasize.ByteSize(plan.downloadBytes).HumanReadable())
 		}))
 	}()
-	dl.DownloadButton.AsBaseButton().OnPressed(func() {
-		if dl.downloading || dl.plan == nil {
-			return // still checking; ignore until the size is known
+}
+
+// fail handles a size check or download that didn't complete (err may be nil
+// when the cause was already recorded). Being offline is an expected state the
+// red dot shows; anything else is reported, once per run of failures so the
+// automatic retries don't flood Sentry. The bar stops spinning and the
+// attempt is scheduled again with backoff. Main thread only.
+func (dl *LibraryDownloader) fail(err error) {
+	if err != nil {
+		if dl.retryDelay == 0 {
+			raiseUnlessOffline(err)
+		} else {
+			netstate.Check(err)
 		}
-		dl.downloading = true
-		dl.DownloadButton.Pointer.AsCanvasItem().SetVisible(false)
-		go dl.execute(*dl.plan)
-	})
+	}
+	dl.failed = true
+	dl.downloading = false
+	dl.plan = nil
+	dl.total = 0
+	dl.Progress.SetIndeterminate(false)
+	dl.Progress.AsRange().SetValue(0)
+	dl.DownloadButton.Size.SetText("")
+	dl.DownloadButton.Pointer.AsCanvasItem().SetVisible(true)
+	dl.retryDelay = min(max(dl.retryDelay*2, minRetryDelay), maxRetryDelay)
+	dl.retryAt = time.Now().Add(dl.retryDelay)
+}
+
+// failLater marshals [LibraryDownloader.fail] onto the main thread.
+func (dl *LibraryDownloader) failLater(err error) {
+	Callable.Defer(Callable.New(func() { dl.fail(err) }))
+}
+
+// applyNetState shows or hides the pulsing red "no internet" dot.
+func (dl *LibraryDownloader) applyNetState() {
+	offline := !netstate.Online()
+	dl.offlineDot.AsCanvasItem().SetVisible(offline)
+	switch {
+	case offline && dl.offlinePulse == Tween.Nil:
+		dl.offlinePulse = pulseOffline(dl.offlineDot.AsCanvasItem())
+	case !offline && dl.offlinePulse != Tween.Nil:
+		dl.offlinePulse.Kill()
+		dl.offlinePulse = Tween.Nil
+	}
 }
 
 // computePlan reads the cloud preview directory and, if a local backup exists,
@@ -154,6 +240,12 @@ func (dl *LibraryDownloader) execute(plan previewPlan) {
 			}
 		} else if dl.doIncremental(plan) {
 			close(dl.done)
+			return
+		}
+		// An incremental fetch that failed for lack of internet: a full
+		// download would only fail the same way.
+		if !netstate.Online() {
+			dl.failLater(nil)
 			return
 		}
 	}
@@ -213,7 +305,10 @@ func (dl *LibraryDownloader) doIncremental(plan previewPlan) bool {
 		}
 	}); err != nil {
 		// Partial update: fall back to a clean full download (overwrites it).
-		Callable.Defer(Callable.New(func() { Engine.Raise(err) }))
+		// Record offline synchronously, so execute sees it before deciding.
+		if !netstate.Check(err) {
+			Callable.Defer(Callable.New(func() { Engine.Raise(err) }))
+		}
 		return false
 	}
 	return true
@@ -224,7 +319,12 @@ func (dl *LibraryDownloader) doIncremental(plan previewPlan) bool {
 func (dl *LibraryDownloader) fullDownload() {
 	resp, err := http.Get(previewURL)
 	if err != nil {
-		Callable.Defer(Callable.New(func() { Engine.Raise(err) }))
+		dl.failLater(err)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		dl.failLater(fmt.Errorf("failed to download preview.pck: %s", resp.Status))
 		return
 	}
 	Callable.Defer(Callable.New(func() { dl.setContentLength(resp) }))
@@ -264,25 +364,41 @@ func (dl *LibraryDownloader) download(body io.ReadCloser) {
 		Notify: dl.bytes_downloaded,
 	}
 	reader := io.TeeReader(body, counter)
-	fmt.Println("Starting download of preview.pck...")
-	library, err := os.Create(filepath.Join(UserDataDir, "preview.pck"))
+	previewPath := filepath.Join(UserDataDir, "preview.pck")
+	library, err := os.Create(previewPath)
 	if err != nil {
-		Engine.Raise(err)
+		dl.failLater(err)
 		return
 	}
 	fmt.Println("Downloading preview.pck to", library.Name())
-	defer library.Close()
-	if _, err := io.Copy(library, reader); err != nil {
-		Engine.Raise(err)
+	_, err = io.Copy(library, reader)
+	if closeErr := library.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		// Don't leave a truncated pck behind: the next launch would mount it.
+		os.Remove(previewPath)
+		dl.failLater(err)
 		return
 	}
+	netstate.MarkOnline()
 	close(dl.done)
 }
 
 func (dl *LibraryDownloader) Process(delta Float.X) {
+	if gen := netstate.Generation(); gen != dl.netGen {
+		dl.netGen = gen
+		dl.applyNetState()
+		if netstate.Online() && dl.failed {
+			dl.retryAt = time.Time{} // back online: retry now, not after the backoff
+		}
+	}
+	if dl.failed && !dl.checking && !dl.downloading && time.Now().After(dl.retryAt) {
+		dl.check()
+	}
 	select {
 	case bytes := <-dl.bytes_downloaded:
-		// dl.total is 0 while run() is still sizing the update (bar is
+		// dl.total is 0 while check() is still sizing the update (bar is
 		// indeterminate); don't render a bogus "remaining" until it's known.
 		if dl.total == 0 {
 			break

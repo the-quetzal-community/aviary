@@ -225,7 +225,7 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		// A 404 ("not found") just means this account has no cloud saves yet — an
 		// expected state, not an error worth reporting to Sentry on every Reload.
 		if err.Error() != "not found" {
-			Engine.Raise(err)
+			raiseUnlessOffline(err)
 		}
 		return
 	}
@@ -241,8 +241,11 @@ func (fl *FlightPlanner) fetchCloudSnaps() {
 		if err != nil {
 			// "not found" (404) just means this save has no preview image uploaded —
 			// an expected state, skip it quietly rather than reporting to Sentry.
-			if err.Error() != "not found" {
-				Engine.Raise(err)
+			if err.Error() == "not found" {
+				continue
+			}
+			if raiseUnlessOffline(err) {
+				return // offline: the remaining lookups would only time out too
 			}
 			continue
 		}

@@ -6,6 +6,7 @@ import (
 
 	"graphics.gd/classdb"
 	"graphics.gd/classdb/Engine"
+	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/OS"
 	"graphics.gd/classdb/PackedScene"
@@ -78,6 +79,7 @@ func main() {
 	// top panel / taskbar overlap). Desktop only — web has no OS window/taskbar.
 	if runtime.GOOS != "js" {
 		internal.FitWindowToScreen()
+		internal.StartOnlineProbe()
 	}
 	community_resource_loader := internal.NewCommunityResourceLoader().AsResourceFormatLoader()
 	ResourceLoader.AddResourceFormatLoader(community_resource_loader, true)
@@ -88,7 +90,7 @@ func main() {
 	// ever touched by that one thread.
 	internal.StartResourceThread()
 	internal.ProfMark("main: resource thread started")
-	if runtime.GOOS != "js" && !ProjectSettings.LoadResourcePack("user://preview.pck", 0) {
+	if runtime.GOOS != "js" && !(FileAccess.FileExists("user://preview.pck") && ProjectSettings.LoadResourcePack("user://preview.pck", 0)) {
 		SceneTree.Add(internal.LoadSync[PackedScene.Is[Node.Instance]]("res://ui/library_downloader.tscn").Instantiate())
 	} else {
 		internal.ProfMark("main: preview.pck mounted")

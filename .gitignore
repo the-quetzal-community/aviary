@@ -10,6 +10,7 @@ graphics/save_old.vult
 releases
 aviary
 /graphics/musl_amd64.editor
+/graphics/musl_amd64.editor.stamp
 /.claude
 
 # Sentry musl libc++ archives (produced by build_sentry_musl.sh; not committed)

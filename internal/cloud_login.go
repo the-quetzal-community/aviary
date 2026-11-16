@@ -3,19 +3,22 @@ package internal
 import (
 	"context"
 
-	"graphics.gd/classdb/Engine"
 	"the.quetzal.community/aviary/internal/ice/signalling"
 	"the.quetzal.community/aviary/internal/musical"
+	"the.quetzal.community/aviary/internal/netstate"
 )
 
 func (ui *CloudControl) loginUpdate() (signalling.User, bool) {
 	user, err := ui.client.signalling.LookupUser(context.Background())
 	if err != nil {
-		// "Unauthorized" (not signed in) and "not found" (no account yet) are expected
-		// offline states, reflected in the status indicator below — not errors worth
-		// reporting to Sentry on every poll. Only surface genuine failures.
-		if err.Error() != "Unauthorized" && err.Error() != "not found" {
-			Engine.Raise(err)
+		switch err.Error() {
+		case "Unauthorized", "not found":
+			// Not signed in / no account yet: the server answered, so we are online.
+			// Both are expected states, reflected in the status indicator below —
+			// not errors worth reporting to Sentry on every poll.
+			netstate.MarkOnline()
+		default:
+			raiseUnlessOffline(err)
 		}
 		ui.on_process <- func(cc *CloudControl) {
 			if err.Error() == "Unauthorized" {
@@ -25,6 +28,7 @@ func (ui *CloudControl) loginUpdate() (signalling.User, bool) {
 		}
 		return signalling.User{}, false
 	}
+	netstate.MarkOnline()
 	ui.on_process <- func(cc *CloudControl) {
 		if UserState.Aviary.ID != user.ID {
 			replaceSceneTree(ui.AsNode(), NewClientLoading(musical.WorkID(ui.client.record)))

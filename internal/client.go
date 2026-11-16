@@ -2355,7 +2355,7 @@ func (world *Client) UnhandledInput(event InputEvent.Instance) {
 				defer cancel()
 
 				if err := world.signalling.InsertSnap(ctx, signalling.WorkID(name), file); err != nil {
-					Engine.Raise(fmt.Errorf("failed to upload snapshot: %w", err))
+					raiseUnlessOffline(fmt.Errorf("failed to upload snapshot: %w", err))
 				}
 			}()
 		}

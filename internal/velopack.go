@@ -13,6 +13,7 @@ import (
 	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/FileAccess"
 	"graphics.gd/variant/Float"
+	"the.quetzal.community/aviary/internal/netstate"
 )
 
 func (ui *CloudControl) automaticallyUpdate() {
@@ -50,7 +51,7 @@ func (ui *CloudControl) automaticallyUpdate() {
 	}
 	latest, update, err := manager.CheckForUpdates()
 	if err != nil {
-		Engine.Raise(err)
+		raiseUnlessOffline(err)
 		return
 	}
 	if update == velopack.UpdateAvailable {
@@ -60,7 +61,7 @@ func (ui *CloudControl) automaticallyUpdate() {
 				cc.UpdateProgress.AsRange().SetValue(Float.X(progress))
 			}
 		}); err != nil {
-			Engine.Raise(err)
+			raiseUnlessOffline(err)
 			return
 		}
 		restart := func() {
@@ -80,6 +81,10 @@ func (ui *CloudControl) automaticallyUpdate() {
 // file. Caller is responsible for running on the Godot main thread
 // (FileAccess / DirAccess are not goroutine-safe).
 func checkPreviewPckFreshness() {
+	// This runs on the main thread: never sit out a connect timeout there.
+	if !netstate.Online() {
+		return
+	}
 	req, err := http.NewRequest("HEAD", previewURL, nil)
 	if err != nil {
 		Engine.Raise(err)
@@ -87,10 +92,11 @@ func checkPreviewPckFreshness() {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		Engine.Raise(err)
+		raiseUnlessOffline(err)
 		return
 	}
 	resp.Body.Close()
+	netstate.MarkOnline()
 	if resp.StatusCode != http.StatusOK {
 		Engine.Raise(fmt.Errorf("failed to HEAD preview.pck: %s", resp.Status))
 		return

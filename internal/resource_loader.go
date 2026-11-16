@@ -17,6 +17,7 @@ import (
 	"graphics.gd/classdb/ProjectSettings"
 	"graphics.gd/classdb/ResourceFormatLoader"
 	"the.quetzal.community/aviary/internal/httpseek"
+	"the.quetzal.community/aviary/internal/netstate"
 	"the.quetzal.community/aviary/internal/pck"
 )
 
@@ -75,14 +76,73 @@ func NewCommunityResourceLoader() *CommunityResourceLoader {
 		crl.load(nil)
 		return crl
 	}
+	probe := make(chan *httpseek.URL, 1)
+	go func() { probe <- dialLibrary() }()
+	select {
+	case cloud := <-probe:
+		if cloud != nil {
+			cloud.OnResourceModified(crl.load)
+			crl.load(cloud)
+			return crl
+		}
+		probe <- nil // hand the failed attempt on to attachCloud
+	case <-time.After(cloudProbeBudget):
+	}
+	// Offline (or a slow connection): mount what is already on disk now so the
+	// window never freezes on connect timeouts, and attach the cloud later.
+	crl.load(nil)
+	go crl.attachCloud(probe)
+	return crl
+}
+
+// cloudProbeBudget is how long startup waits for the cloud library directory
+// before mounting library.pck from disk alone.
+const cloudProbeBudget = 2 * time.Second
+
+// dialLibrary opens the cloud library.pck, returning nil on failure (reported
+// unless it is simply being offline).
+func dialLibrary() *httpseek.URL {
 	cloud, err := httpseek.New(libraryURL)
 	if err != nil {
-		Engine.Raise(err)
-	} else {
-		cloud.OnResourceModified(crl.load)
+		raiseUnlessOffline(err)
+		return nil
 	}
-	crl.load(cloud)
-	return crl
+	netstate.MarkOnline()
+	return cloud
+}
+
+// attachCloud waits for the startup probe (or, if it failed, for the internet
+// to be reachable and a retry to succeed), then indexes the cloud library on
+// the resource thread and remounts library.pck, so files the cloud gained
+// since the last session become loadable without a restart.
+func (crl *CommunityResourceLoader) attachCloud(first <-chan *httpseek.URL) {
+	var cloud *httpseek.URL
+	select {
+	case cloud = <-first:
+	case <-ShuttingDown:
+		return
+	}
+	wait := onlineProbeInterval
+	for cloud == nil {
+		select {
+		case <-time.After(wait):
+		case <-ShuttingDown:
+			return
+		}
+		if !netstate.Online() {
+			continue
+		}
+		if cloud = dialLibrary(); cloud == nil {
+			// Reachable but failing (a server error): back off, so it isn't
+			// retried and reported in a tight loop.
+			wait = min(wait*2, 5*time.Minute)
+		}
+	}
+	runOnResourceThread(func() {
+		cloud.OnResourceModified(crl.load)
+		crl.load(cloud)
+		ProjectSettings.LoadResourcePack("user://library.pck", 0)
+	})
 }
 
 // Tells whether or not this loader should load a resource from its resource path for a given type.
@@ -145,13 +205,18 @@ func (crl *CommunityResourceLoader) remap(entry pck.File) bool {
 }
 
 func (crl *CommunityResourceLoader) download(path string) {
+	// Offline: fail this load at once instead of stalling the resource thread on
+	// connect timeouts; a later request fetches it once the internet is back.
+	if !netstate.Online() {
+		return
+	}
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if crl.cache == nil {
 			cache, err := httpseek.New(libraryURL)
 			if err != nil {
-				Engine.Raise(err)
+				raiseUnlessOffline(err)
 				return
 			}
 			crl.cache = cache
@@ -216,9 +281,12 @@ func (crl *CommunityResourceLoader) download(path string) {
 		if lastErr == nil {
 			return
 		}
+		if netstate.IsOffline(lastErr) {
+			break // retrying can't help until the internet is back
+		}
 	}
 	if lastErr != nil {
-		Engine.Raise(fmt.Errorf("failed to download resource %q from community library: %v", path, lastErr))
+		raiseUnlessOffline(fmt.Errorf("failed to download resource %q from community library: %w", path, lastErr))
 	}
 }
 
@@ -304,20 +372,37 @@ func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
 			}
 		}
 	}
-	preview, err := os.OpenFile(UserDataDir+"/preview.pck", os.O_RDWR|os.O_CREATE, 0644)
+	// preview.pck doesn't exist until the downloader has fetched it (first run),
+	// so there is nothing to remap from yet. Don't create it here: indexing an
+	// empty file fails with EOF.
+	if fi, err := os.Stat(UserDataDir + "/preview.pck"); err == nil && fi.Size() > 0 {
+		if err := crl.remapPreview(local); err != nil {
+			Engine.Raise(err)
+			return
+		}
+	}
+	// Kick off the background refresh. The goroutine uses its own file handles
+	// and cloud connections, so it is independent of the handles closed when
+	// this function returns, and computes its own append offset under refreshMu.
+	if len(stale) > 0 {
+		go crl.backgroundRefresh(stale)
+	}
+}
+
+// remapPreview indexes preview.pck and copies every entry the local library.pck
+// has a slot for across from it.
+func (crl *CommunityResourceLoader) remapPreview(local *os.File) error {
+	preview, err := os.Open(UserDataDir + "/preview.pck")
 	if err != nil {
-		Engine.Raise(err)
-		return
+		return err
 	}
 	defer preview.Close()
 	crl.preview, err = pck.Index(preview)
 	if err != nil {
-		Engine.Raise(err)
-		return
+		return err
 	}
 	if _, err := local.Seek(0, io.SeekStart); err != nil {
-		Engine.Raise(err)
-		return
+		return err
 	}
 	for path, entry := range crl.preview {
 		// These are engine-managed metadata that Godot regenerates per
@@ -333,17 +418,11 @@ func (crl *CommunityResourceLoader) load(resource *httpseek.URL) {
 		}
 		if slot, ok := crl.local[path]; ok {
 			if err := pck.Remap(local, preview, slot, entry); err != nil {
-				Engine.Raise(fmt.Errorf("failed to update local of %s from preview.pck: %w", path, err))
-				return
+				return fmt.Errorf("failed to update local of %s from preview.pck: %w", path, err)
 			}
 		}
 	}
-	// Kick off the background refresh. The goroutine uses its own file handles
-	// and cloud connections, so it is independent of the handles closed when
-	// this function returns, and computes its own append offset under refreshMu.
-	if len(stale) > 0 {
-		go crl.backgroundRefresh(stale)
-	}
+	return nil
 }
 
 // refreshItem is one stale-but-present file to re-download in the background:

@@ -123,6 +123,17 @@ func StartResourceThread() {
 	}()
 }
 
+// runOnResourceThread queues fn onto the loader goroutine without waiting, for
+// work that must not race the loader's maps (e.g. attaching the cloud library
+// once the internet is reachable). Queued work waits for StartResourceThread,
+// and is dropped if the app shuts down first.
+func runOnResourceThread(fn func()) {
+	select {
+	case resourceJobQueue <- fn:
+	case <-ShuttingDown:
+	}
+}
+
 // LoadSync loads the resource at path on the loader thread and returns it,
 // blocking until ready. Safe from the main thread or any goroutine; if
 // called from within the loader thread itself it loads inline to avoid

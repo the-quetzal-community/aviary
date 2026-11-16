@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"graphics.gd/classdb/Control"
-	"graphics.gd/classdb/Engine"
 	"graphics.gd/classdb/GradientTexture2D"
 	"graphics.gd/classdb/GridContainer"
 	"graphics.gd/classdb/HBoxContainer"
@@ -42,6 +41,7 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Signal"
 	"graphics.gd/variant/Vector2"
+	"the.quetzal.community/aviary/internal/netstate"
 	"the.quetzal.community/aviary/internal/networking"
 )
 
@@ -100,10 +100,24 @@ type CloudControl struct {
 	// before any editor restricts the toolbar).
 	allowedGizmos map[Gizmo]bool
 
-	sharing    bool
-	updateBob  Tween.Instance // looping bob of the Updates icon while a background update downloads
-	client     *Client
-	on_process chan func(*CloudControl)
+	sharing   bool
+	updateBob Tween.Instance // looping bob of the Updates icon while a background update downloads
+
+	// signedIn is the last account state passed to set_online_status_indicator
+	// (loginKnown once there has been one); neutralDot is the status dot's
+	// original colour; netGen/netSeen track the netstate generation
+	// applyNetState last showed, wasOffline whether that was offline, and
+	// offlinePulse fades the status dot while offline.
+	signedIn     bool
+	loginKnown   bool
+	neutralDot   Color.RGBA
+	neutralKnown bool
+	netGen       uint64
+	netSeen      bool
+	wasOffline   bool
+	offlinePulse Tween.Instance
+	client       *Client
+	on_process   chan func(*CloudControl)
 
 	// sizeSlider is the terrain brush-size slider built in code and
 	// parented to CloudControl (a sibling of GizmoTypes, like
@@ -257,8 +271,13 @@ func (ui *CloudControl) Ready() {
 			go func() {
 				code, err := ui.client.apiHost()
 				if err != nil {
-					Engine.Raise(err)
-					ui.on_process <- func(cc *CloudControl) { cc.set_join_code("") }
+					offline := raiseUnlessOffline(err)
+					ui.on_process <- func(cc *CloudControl) {
+						cc.set_join_code("")
+						if offline {
+							shakeRefused(cc.JoinCode.ShareButton.AsControl())
+						}
+					}
 					return
 				}
 				ui.on_process <- func(cc *CloudControl) { cc.set_join_code(code) }
@@ -331,13 +350,24 @@ func (ui *CloudControl) stopUpdateBob() {
 }
 
 func (ui *CloudControl) set_online_status_indicator(online bool) {
+	ui.signedIn, ui.loginKnown = online, true
 	var col = Color.X11.Green
-	if !online {
+	if !online || !netstate.Online() {
 		col = Color.X11.Red
 	}
+	ui.paintStatusDot(col)
+}
+
+// paintStatusDot sets the core colour of the OnlineIndicator gradient,
+// remembering the scene's original (neutral, before any login result) the
+// first time so it can be restored.
+func (ui *CloudControl) paintStatusDot(col Color.RGBA) {
 	tex := ui.HBoxContainer.Cloud.OnlineIndicator.Texture()
 	grad := Object.To[GradientTexture2D.Instance](tex).Gradient()
 	cols := grad.Colors()
+	if !ui.neutralKnown {
+		ui.neutralDot, ui.neutralKnown = cols[0], true
+	}
 	cols[0] = col
 	grad.SetColors(cols)
 }
@@ -355,7 +385,47 @@ func (ui *CloudControl) set_join_code(code networking.Code) {
 	ui.sharing = false
 }
 
+// applyNetState shows "no internet" on the cloud button: the cloud tints red and
+// its status dot turns red and pulses (distinct from signed-out, a steady red
+// dot on a white cloud). When the internet returns it restores the sign-in
+// colour and re-checks the account, which a poll made while offline left stale.
+func (ui *CloudControl) applyNetState() {
+	cloud := ui.HBoxContainer.Cloud.AsCanvasItem()
+	dot := ui.HBoxContainer.Cloud.OnlineIndicator.AsCanvasItem()
+	white := Color.RGBA{R: 1, G: 1, B: 1, A: 1}
+	if netstate.Online() {
+		if ui.offlinePulse != Tween.Nil {
+			ui.offlinePulse.Kill()
+			ui.offlinePulse = Tween.Nil
+		}
+		dot.SetModulate(white)
+		cloud.SetSelfModulate(white)
+		if ui.wasOffline {
+			if ui.loginKnown {
+				ui.set_online_status_indicator(ui.signedIn)
+			} else {
+				ui.paintStatusDot(ui.neutralDot)
+			}
+			if setting_up.CompareAndSwap(false, true) {
+				go ui.automaticallyUpdate()
+			}
+		}
+		ui.wasOffline = false
+		return
+	}
+	ui.wasOffline = true
+	cloud.SetSelfModulate(offlineRed)
+	ui.paintStatusDot(Color.X11.Red)
+	if ui.offlinePulse == Tween.Nil {
+		ui.offlinePulse = pulseOffline(dot)
+	}
+}
+
 func (ui *CloudControl) Process(dt Float.X) {
+	if gen := netstate.Generation(); !ui.netSeen || gen != ui.netGen {
+		ui.netSeen, ui.netGen = true, gen
+		ui.applyNetState()
+	}
 	ui.positionSizeSlider()
 	ui.positionDensitySlider()
 	ui.positionPowerSlider()

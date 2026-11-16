@@ -172,7 +172,7 @@ func (l *lazyCloudReader) init() {
 		parts, err := l.community.CloudParts(ctx, signalling.WorkID(l.work))
 		cancel()
 		if err != nil {
-			Engine.Raise(err) // not fatal: fall through to local parts.
+			raiseUnlessOffline(err) // not fatal: fall through to local parts.
 		}
 		for part, stat := range parts {
 			if handled[string(part)] {
@@ -380,7 +380,7 @@ func (fw *CloudBacked) Write(p []byte) (n int, err error) {
 					log.Println("aviary: cloud save error during shutdown:", err)
 					return
 				}
-				Engine.Raise(err)
+				raiseUnlessOffline(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
