@@ -213,6 +213,13 @@ type CritterEditor struct {
 	// progress (set by Client.updateCritterGizmoDrag).
 	gizmoBefore map[Node3D.ID]PartAnchor
 
+	// Part painting (editor_critter_tint.go): each part's colour as
+	// slider values, the anchors from before the slider drag in
+	// progress, and the part the colour sliders currently show.
+	tintHSV    map[Node3D.ID][3]float32
+	tintBefore map[Node3D.ID]PartAnchor
+	tintShown  Node3D.ID
+
 	// shape is the handle-drag state for sculpting a selected
 	// parametric part (editor_critter_shape.go).
 	shape shapeSculpt
@@ -800,6 +807,9 @@ func (ce *CritterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 // might expose for compatibility) gets the old behaviour for now.
 func (ce *CritterEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
 	if skin, ok := skinSliderForTab(editing); ok {
+		if value, ok := ce.tintSliderConfig(editing); ok {
+			return value, skin.min, skin.max, skin.step
+		}
 		if ce.body.critter != nil {
 			init = float64(ce.body.critter.Weight(skin.weight))
 		}
@@ -818,6 +828,9 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	ce.last_slider_sculpt = time.Now()
+	if ce.tintSliderHandle(editing, value, commit) {
+		return // painted the selected part rather than the body
+	}
 	if skin, ok := skinSliderForTab(editing); ok {
 		// The tab is "editing/hue"; the wire (and the weight) is
 		// "skin/hue". Recolouring leaves lastEditAt alone so the
@@ -2187,6 +2200,11 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 	// rather than tearing down and re-instantiating the design.
 	if id, ok := ce.entityToPart[change.Entity]; ok {
 		anchor := anchorFromChange(change)
+		if ce.tintBefore == nil {
+			// Not our own slider drag (an undo, a peer): the remembered
+			// slider values for this part no longer describe it.
+			delete(ce.tintHSV, id)
+		}
 		ce.body.SetPartAnchor(id, anchor)
 		// A parametric part's sculpted shape rides the same record.
 		if shaped, ok := ce.animatedParts[id].(shapedPart); ok && shaped.Shape() != anchor.Shape {
@@ -2290,6 +2308,7 @@ func anchorFromChange(change musical.Change) PartAnchor {
 		// Bounds.Y = LegSide) so scale + leg anchors can coexist.
 		Scale: float32(change.Bounds.Z),
 		Shape: shapeFromWire(change.Mirror),
+		Tint:  change.Colour,
 	}
 	if change.Bounds.X > 0 {
 		a.OnLeg = true
@@ -2731,6 +2750,7 @@ func (ce *CritterEditor) Process(delta Float.X) {
 	// the first second or two of a session.
 	ce.retryPendingChanges()
 	ce.updateShapeHandles()
+	ce.syncTintSliders()
 	// Mouse-pointer hint for eye parts: pure 2D screen-relative —
 	// project each eye's world position to screen pixels, take the
 	// cursor's 2D offset, normalise to a local look direction. No

@@ -217,10 +217,7 @@ func (ce *CritterEditor) shapeUnhandledInput(event InputEvent.Instance) bool {
 		return false
 	}
 	if part, ok := ce.animatedParts[ce.shape.target].(*sweptPart); ok && ce.shape.dirty {
-		ce.publishShape(ce.shape.target, part.shape, true)
-		if ce.recorder != nil {
-			ce.recordPartEdit(ce.shape.before)
-		}
+		ce.recordPartEdit(ce.shape.before, ce.publishShape(ce.shape.target, part.shape, true))
 	}
 	ce.shape.before = nil
 	ce.shape.drag = shapeHandleNone
@@ -231,7 +228,8 @@ func (ce *CritterEditor) shapeUnhandledInput(event InputEvent.Instance) bool {
 // publishShape records a new shape for a parametric part — and for its
 // mirror twin, if it was placed as one of a pair — as critter part
 // Changes. Without a recorder (single-user dev) it applies directly.
-func (ce *CritterEditor) publishShape(id Node3D.ID, shape critter.PartShape, commit bool) {
+func (ce *CritterEditor) publishShape(id Node3D.ID, shape critter.PartShape, commit bool) (after map[Node3D.ID]PartAnchor) {
+	after = make(map[Node3D.ID]PartAnchor, 2)
 	ids := []Node3D.ID{id}
 	if twin, ok := ce.mirrorTwin(id); ok {
 		ids = append(ids, twin)
@@ -242,6 +240,7 @@ func (ce *CritterEditor) publishShape(id Node3D.ID, shape critter.PartShape, com
 			continue
 		}
 		anchor.Shape = shape
+		after[id] = anchor
 		entity, recorded := ce.partToEntity[id]
 		if ce.recorder == nil || !recorded {
 			ce.body.partAnchors[id] = anchor
@@ -258,6 +257,7 @@ func (ce *CritterEditor) publishShape(id Node3D.ID, shape critter.PartShape, com
 			Engine.Raise(err)
 		}
 	}
+	return after
 }
 
 // mirrorTwin finds the part placed as id's reflection across the body's
@@ -274,9 +274,6 @@ func (ce *CritterEditor) mirrorTwin(id Node3D.ID) (Node3D.ID, bool) {
 	want := Vector3.New(-at.X, at.Y, at.Z)
 	for other := range ce.body.partAnchors {
 		if other == id || ce.partURIs[other] != ce.partURIs[id] {
-			continue
-		}
-		if _, parametric := ce.animatedParts[other].(*sweptPart); !parametric {
 			continue
 		}
 		if twin, ok := other.Instance(); ok && Vector3.Distance(twin.Position(), want) < 0.03 {

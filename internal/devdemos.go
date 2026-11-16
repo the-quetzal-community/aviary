@@ -1,8 +1,12 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Material"
+	"graphics.gd/classdb/MeshInstance3D"
+	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Vector3"
 
 	"the.quetzal.community/aviary/internal/critter"
@@ -171,8 +175,9 @@ func demoCritter() []devStep {
 	}
 	sculpted := critter.PartShape{Length: 0.6, Curl: 1.6, Girth: 0.3}
 	var (
-		footZ float32
-		head  critter.Bone
+		footZ       float32
+		head        critter.Bone
+		libraryPart Node3D.ID
 	)
 	return []devStep{
 		do(func(s *devShot, w *Client) {
@@ -288,6 +293,61 @@ func demoCritter() []devStep {
 			return ok && c.BoneCount() == 5 && b == head
 		}),
 		snap("undone"),
+		// Painting parts: with a part selected the colour sliders paint it
+		// (and its mirrored twin), not the body. A library model stands in
+		// for a muzzle to cover the generic material tint.
+		do(func(s *devShot, w *Client) {
+			ce := w.CritterEditor
+			_, ok := ce.place(ce.body.ClosestAnchor(Vector3.New(0, 0.2, 1.6)), devDemoDesign)
+			s.check(ok, "library part not placed")
+		}),
+		until("library part attached", func(w *Client) bool {
+			for id, uri := range w.CritterEditor.partURIs {
+				if uri == devDemoDesign {
+					libraryPart = id
+					return true
+				}
+			}
+			return false
+		}),
+		do(func(s *devShot, w *Client) {
+			horns = swept(w, BuiltinHornDesign)
+			w.selection = horns[0]
+			w.CritterEditor.SliderHandle(ModeMaterial, "editing/hue", 0.33, true)
+			w.CritterEditor.SliderHandle(ModeMaterial, "editing/sat", 0.9, true)
+		}),
+		until("both horns painted green", func(w *Client) bool {
+			for _, id := range horns {
+				if t := w.CritterEditor.body.partAnchors[id].Tint; t.A == 0 || t.G <= t.R {
+					return false
+				}
+			}
+			return true
+		}),
+		do(func(s *devShot, w *Client) {
+			s.check(w.CritterEditor.body.critter.Weight("skin/hue") == float32(0.08), "painting a part changed the body's hue")
+			w.selection = libraryPart
+			w.CritterEditor.SliderHandle(ModeMaterial, "editing/hue", 0.6, true)
+			w.CritterEditor.SliderHandle(ModeMaterial, "editing/sat", 0.9, true)
+		}),
+		until("library part painted blue", func(w *Client) bool {
+			t := w.CritterEditor.body.partAnchors[libraryPart].Tint
+			return t.A > 0 && t.B > t.R
+		}),
+		do(func(s *devShot, w *Client) {
+			node, _ := libraryPart.Instance()
+			s.check(hasTintOverride(node.AsNode()), "library part has no tinted material")
+		}),
+		snap("painted"),
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (part colour)") }),
+		until("undo cleared the library part's colour", func(w *Client) bool {
+			return w.CritterEditor.body.partAnchors[libraryPart].Tint.A == 0
+		}),
+		do(func(s *devShot, w *Client) {
+			node, _ := libraryPart.Instance()
+			s.check(!hasTintOverride(node.AsNode()), "cleared part kept its tinted material")
+			w.selection = 0
+		}),
 		// The explorer's rendered icons: the skin sliders' tabs, then the
 		// parametric horn's tile.
 		do(func(s *devShot, w *Client) {
@@ -332,4 +392,22 @@ func devDemoGroundAhead(w *Client, dist Float.X) Vector3.XYZ {
 	at := Vector3.Add(cam.Origin, Vector3.MulX(Vector3.Normalized(forward), dist))
 	at.Y = w.TerrainEditor.HeightAt(at)
 	return at
+}
+
+// hasTintOverride reports whether any mesh under node carries a per-instance
+// surface material — what tintMeshes sets to colour a library part.
+func hasTintOverride(node Node.Instance) bool {
+	if mi, ok := Object.As[MeshInstance3D.Instance](node); ok {
+		for i := 0; i < mi.GetSurfaceOverrideMaterialCount(); i++ {
+			if mi.GetSurfaceOverrideMaterial(i) != Material.Nil {
+				return true
+			}
+		}
+	}
+	for _, child := range node.GetChildren() {
+		if hasTintOverride(child) {
+			return true
+		}
+	}
+	return false
 }

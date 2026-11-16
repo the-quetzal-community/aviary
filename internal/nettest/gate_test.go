@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Vector3"
 	"the.quetzal.community/aviary/internal/musical"
 )
@@ -165,6 +166,20 @@ var mutations = []mutation{
 		is: func(e any, a musical.Author) bool {
 			v, ok := e.(musical.Change)
 			return ok && v.Author == a && v.Entity.Number == 7 && v.Commit && v.Editor == "critter" && v.Mirror == Vector3.New(1, 2.5, -1)
+		},
+	},
+	{
+		// A critter part's own colour rides Change.Colour.
+		name: "critter part colour", kind: kindChange, persist: true,
+		send: func(s musical.UsersSpace3D, a musical.Author) error {
+			return s.Change(musical.Change{
+				Author: a, Entity: musical.Entity{Author: a, Number: 8}, Design: musical.Design{Author: a, Number: 1},
+				Offset: Vector3.New(0.5, 1, 0), Colour: Color.RGBA{R: 0.25, G: 0.5, B: 0.75, A: 1}, Editor: "critter", Commit: true,
+			})
+		},
+		is: func(e any, a musical.Author) bool {
+			v, ok := e.(musical.Change)
+			return ok && v.Author == a && v.Entity.Number == 8 && v.Commit && v.Colour == Color.RGBA{R: 0.25, G: 0.5, B: 0.75, A: 1}
 		},
 	},
 	{

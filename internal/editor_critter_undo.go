@@ -223,12 +223,17 @@ func (ce *CritterEditor) partChange(id Node3D.ID, anchor PartAnchor) (musical.Ch
 	return change, true
 }
 
-// recordPartEdit records moving/reshaping parts from `before` to their
-// current anchors as one undo entry.
-func (ce *CritterEditor) recordPartEdit(before map[Node3D.ID]PartAnchor) {
+// recordPartEdit records moving/reshaping/painting parts from their
+// `before` anchors to their `after` anchors as one undo entry. The new
+// anchors are passed in rather than read back: a published Change is
+// applied from the mutation queue, not by the time publishing returns.
+func (ce *CritterEditor) recordPartEdit(before, after map[Node3D.ID]PartAnchor) {
+	if ce.recorder == nil {
+		return
+	}
 	var dos, undos []musical.Change
 	for id, old := range before {
-		now, ok := ce.body.partAnchors[id]
+		now, ok := after[id]
 		if !ok || now == old {
 			continue
 		}

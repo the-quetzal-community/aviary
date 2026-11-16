@@ -145,10 +145,15 @@ func (b *CritterBody) AttachProcedural(anchor PartAnchor, part proceduralParter)
 	if shaped, ok := part.(shapedPart); ok {
 		shaped.SetShape(anchor.Shape)
 	}
-	node := b.AttachPartNode(anchor, part.Node())
+	// Attach untinted: a procedural part takes its colour through
+	// tintable below, not the generic material pass.
+	plain := anchor
+	plain.Tint = Color.RGBA{}
+	node := b.AttachPartNode(plain, part.Node())
 	if node == Node3D.Nil {
 		return node
 	}
+	b.partAnchors[node.ID()] = anchor
 	if follower, ok := part.(skinFollower); ok {
 		if b.skinFollowers == nil {
 			b.skinFollowers = make(map[Node3D.ID]skinFollower)
@@ -157,6 +162,9 @@ func (b *CritterBody) AttachProcedural(anchor PartAnchor, part proceduralParter)
 		if b.critter != nil {
 			follower.SetSkinColours(skinColours(b.critter))
 		}
+	}
+	if anchor.Tint.A > 0 {
+		b.applyPartTint(node.ID(), anchor.Tint)
 	}
 	return node
 }

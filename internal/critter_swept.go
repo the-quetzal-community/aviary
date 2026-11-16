@@ -44,6 +44,8 @@ type sweptPart struct {
 	material StandardMaterial3D.Instance
 	profile  critter.SweptProfile
 	shape    critter.PartShape
+	tint     Color.RGBA
+	tinted   bool
 }
 
 func newSweptPart(profile critter.SweptProfile) *sweptPart {
@@ -100,5 +102,17 @@ func (p *sweptPart) SetShape(shape critter.PartShape) {
 // SetSkinColours implements skinFollower: horns and fins wear the
 // body's second colour.
 func (p *sweptPart) SetSkinColours(primary, secondary Color.RGBA) {
+	if p.tinted {
+		secondary = p.tint
+	}
 	p.material.AsBaseMaterial3D().SetAlbedoColor(secondary)
+}
+
+// SetTint implements tintable: the part's own colour, overriding the
+// skin's second colour while on.
+func (p *sweptPart) SetTint(colour Color.RGBA, on bool) {
+	p.tint, p.tinted = Color.RGBA{R: colour.R, G: colour.G, B: colour.B, A: 1}, on
+	if on {
+		p.material.AsBaseMaterial3D().SetAlbedoColor(p.tint)
+	}
 }

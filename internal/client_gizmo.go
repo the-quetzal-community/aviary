@@ -777,13 +777,15 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 	if _, tracked := ce.gizmoBefore[Node3D.ID(node.ID())]; !tracked {
 		ce.gizmoBefore = map[Node3D.ID]PartAnchor{Node3D.ID(node.ID()): cur}
 	}
+	next := cur
 	if commit {
+		// Deferred so it sees the drag's final `next`, and still clears
+		// the tracking if the final frame finds nothing to move to.
 		defer func() {
-			ce.recordPartEdit(ce.gizmoBefore)
+			ce.recordPartEdit(ce.gizmoBefore, map[Node3D.ID]PartAnchor{Node3D.ID(node.ID()): next})
 			ce.gizmoBefore = nil
 		}()
 	}
-	next := cur
 
 	if world.gizmoDrag.activeGizmo == GizmoShift {
 		// Raycast the mouse against the body collider (layer 2) and
@@ -860,6 +862,7 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 		// Carry the sculpted shape through, or moving a horn would
 		// reset it to the neutral cone.
 		Mirror: shapeToWire(next.Shape),
+		Colour: next.Tint,
 		Commit: commit,
 	}
 	if next.OnLeg {

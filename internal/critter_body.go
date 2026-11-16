@@ -23,6 +23,7 @@ import (
 	"graphics.gd/variant/AABB"
 	"graphics.gd/variant/Basis"
 	"graphics.gd/variant/Callable"
+	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Quaternion"
@@ -210,6 +211,10 @@ type PartAnchor struct {
 	// pre-existing recorded Changes whose Bounds.Z is 0 stay valid
 	// without a schema migration.
 	Scale float32
+
+	// Tint is the part's own colour (critter_tint.go); alpha 0 means
+	// uncoloured. Rides Change.Colour.
+	Tint Color.RGBA
 
 	// Shape is the sculpted shape of a parametric part (horn, fin);
 	// the zero value is the neutral primitive, and parts that aren't
@@ -622,6 +627,9 @@ func (b *CritterBody) AttachPartNode(anchor PartAnchor, node Node3D.Instance) No
 	id := node.ID()
 	b.partAnchors[id] = anchor
 	b.positionPart(node, anchor)
+	if anchor.Tint.A > 0 {
+		b.applyPartTint(id, anchor.Tint)
+	}
 	return node
 }
 
@@ -743,12 +751,16 @@ func (b *CritterBody) DetachPart(id Node3D.ID) {
 // it to the new location/orientation immediately. Returns true if
 // the part existed.
 func (b *CritterBody) SetPartAnchor(id Node3D.ID, anchor PartAnchor) bool {
-	if _, ok := b.partAnchors[id]; !ok {
+	old, ok := b.partAnchors[id]
+	if !ok {
 		return false
 	}
 	b.partAnchors[id] = anchor
 	if node, ok := id.Instance(); ok {
 		b.positionPart(node, anchor)
+	}
+	if old.Tint != anchor.Tint {
+		b.applyPartTint(id, anchor.Tint)
 	}
 	return true
 }

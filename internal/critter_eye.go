@@ -116,6 +116,19 @@ func (e *eyePart) SetSkinColours(primary, secondary Color.RGBA) {
 	e.material.SetShaderParameter("lid_color", Vector3.XYZ{X: primary.R, Y: primary.G, Z: primary.B})
 }
 
+// irisDefault is the shader's own iris colour, restored when an eye's
+// colour is cleared.
+var irisDefault = Vector3.XYZ{X: 0.20, Y: 0.42, Z: 0.58}
+
+// SetTint implements tintable: colouring an eye colours its iris.
+func (e *eyePart) SetTint(colour Color.RGBA, on bool) {
+	iris := irisDefault
+	if on {
+		iris = Vector3.XYZ{X: colour.R, Y: colour.G, Z: colour.B}
+	}
+	e.material.SetShaderParameter("iris_color", iris)
+}
+
 // Node returns the underlying Node3D so the caller can parent or
 // position the eye.
 func (e *eyePart) Node() Node3D.Instance { return e.node }
