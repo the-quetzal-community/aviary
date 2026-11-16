@@ -770,6 +770,19 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 	if !hasCur {
 		return
 	}
+	// Undo: remember the anchor from before this drag's first frame, and
+	// record the whole drag as one step when it commits (even if the
+	// final frame finds nothing to move to).
+	ce := world.CritterEditor
+	if _, tracked := ce.gizmoBefore[Node3D.ID(node.ID())]; !tracked {
+		ce.gizmoBefore = map[Node3D.ID]PartAnchor{Node3D.ID(node.ID()): cur}
+	}
+	if commit {
+		defer func() {
+			ce.recordPartEdit(ce.gizmoBefore)
+			ce.gizmoBefore = nil
+		}()
+	}
 	next := cur
 
 	if world.gizmoDrag.activeGizmo == GizmoShift {

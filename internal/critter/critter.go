@@ -469,6 +469,19 @@ func (c *Critter) RemoveLeg(i int) bool {
 	return true
 }
 
+// MoveLeg moves leg `from` to index `to`, shifting the legs between
+// them — used to put a re-grown leg back in the slot it was removed
+// from, so everything that refers to legs by index still lines up.
+func (c *Critter) MoveLeg(from, to int) bool {
+	if from < 0 || from >= len(c.legs) || to < 0 || to >= len(c.legs) || from == to {
+		return false
+	}
+	leg := c.legs[from]
+	c.legs = append(c.legs[:from], c.legs[from+1:]...)
+	c.legs = append(c.legs[:to], append([]Leg{leg}, c.legs[to:]...)...)
+	return true
+}
+
 // SetLegAttach re-sockets leg i to a different spine bone.
 // Returns true on a real change.
 func (c *Critter) SetLegAttach(i, bone int) bool {

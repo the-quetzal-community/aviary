@@ -456,6 +456,25 @@ func (b *CritterBody) AppendLegAtPosKind(hip critter.Vec3, kind critter.LegKind)
 	return idx
 }
 
+// InsertLegAtPosKind is AppendLegAtPosKind landing the new leg at
+// `index` instead of the end — the inverse of RemoveLeg(index), so an
+// undone removal restores every leg's index. Foot-anchored parts on
+// the legs it displaces shift up to follow them.
+func (b *CritterBody) InsertLegAtPosKind(hip critter.Vec3, kind critter.LegKind, index int) int {
+	idx := b.critter.AppendLegAtPosKind(hip, kind)
+	if b.critter.MoveLeg(idx, index) {
+		for id, anchor := range b.partAnchors {
+			if anchor.OnLeg && anchor.LegFoot >= index {
+				anchor.LegFoot++
+				b.partAnchors[id] = anchor
+			}
+		}
+		idx = index
+	}
+	b.rebuild()
+	return idx
+}
+
 // SetLegKind switches leg i's animation style. No mesh rebuild —
 // the kind only affects how the runtime gait poses the limb, not
 // the stored geometry.

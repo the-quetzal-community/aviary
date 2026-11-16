@@ -75,6 +75,10 @@ type Recorder interface {
 	RecordChange(do, undo musical.Change)
 	RecordChangeGroup(dos, undos []musical.Change)
 
+	// RecordSculptGroup pushes an already-published value-setting sculpt
+	// edit onto the undo stack with the sculpts that restore the old values.
+	RecordSculptGroup(dos, undos []musical.Sculpt)
+
 	// commitSculpt is the identity+undo chokepoint for terrain-style
 	// sculpts: committed non-Revert strokes get a fresh (Author, Timing)
 	// stamp and an undo entry; previews and Reverts pass through.

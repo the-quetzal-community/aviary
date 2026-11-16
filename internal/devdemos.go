@@ -170,6 +170,10 @@ func demoCritter() []devStep {
 		return ids
 	}
 	sculpted := critter.PartShape{Length: 0.6, Curl: 1.6, Girth: 0.3}
+	var (
+		footZ float32
+		head  critter.Bone
+	)
 	return []devStep{
 		do(func(s *devShot, w *Client) {
 			w.StartEditing(Editing.Critter)
@@ -189,9 +193,13 @@ func demoCritter() []devStep {
 			ce := w.CritterEditor
 			primary, _ := skinColours(ce.body.critter)
 			s.check(primary.R > primary.B, "skin primary not warm: %v", primary)
+			var pair []musical.Change
 			for _, x := range []Float.X{0.15, -0.15} {
-				ce.place(ce.body.ClosestAnchor(Vector3.New(x, 0.8, 1.15)), BuiltinHornDesign)
+				placed, ok := ce.place(ce.body.ClosestAnchor(Vector3.New(x, 0.8, 1.15)), BuiltinHornDesign)
+				s.check(ok, "horn not placed")
+				pair = append(pair, placed)
 			}
+			ce.recordPlacements(pair...)
 			ce.place(ce.body.ClosestAnchor(Vector3.New(0, 0.7, 0)), BuiltinFinDesign)
 		}),
 		until("horns and fin attached", func(w *Client) bool {
@@ -231,6 +239,55 @@ func demoCritter() []devStep {
 		}),
 		waitFrames(3),
 		snap("sculpted"),
+
+		// Undo/redo, through the editor's own recording paths.
+		// A mirrored pair placed by one click is one step.
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (horn pair)") }),
+		until("undo removed both horns", func(w *Client) bool { return len(swept(w, BuiltinHornDesign)) == 0 }),
+		do(func(s *devShot, w *Client) { s.check(w.Redo(), "nothing to redo (horn pair)") }),
+		until("redo restored both horns", func(w *Client) bool { return len(swept(w, BuiltinHornDesign)) == 2 }),
+		// A skin slider.
+		do(func(s *devShot, w *Client) { w.CritterEditor.SliderHandle(ModeMaterial, "editing/hue", 0.5, true) }),
+		until("hue changed", func(w *Client) bool { return w.CritterEditor.body.critter.Weight("skin/hue") == 0.5 }),
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (hue)") }),
+		until("undo restored the hue", func(w *Client) bool { return w.CritterEditor.body.critter.Weight("skin/hue") == float32(0.08) }),
+		// A leg: grow, drag a joint, remove — then unwind all three.
+		do(func(s *devShot, w *Client) { w.CritterEditor.emitLegGrow("leg/grow_at", Vector3.New(0.3, 0, 0.4)) }),
+		until("leg grown", func(w *Client) bool { return w.CritterEditor.body.critter.LegCount() == 1 }),
+		do(func(s *devShot, w *Client) {
+			ce := w.CritterEditor
+			footZ = ce.body.critter.LegsView()[0].Foot.Z
+			ce.dragEmit("leg/0/foot/z", footZ+0.3)
+			ce.flushDragEmits()
+			ce.emitLegRemove(0)
+		}),
+		until("leg removed", func(w *Client) bool { return w.CritterEditor.body.critter.LegCount() == 0 }),
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (leg removal)") }),
+		until("undo regrew the dragged leg", func(w *Client) bool {
+			legs := w.CritterEditor.body.critter.LegsView()
+			return len(legs) == 1 && Float.Abs(Float.X(legs[0].Foot.Z-footZ-0.3)) < 1e-4
+		}),
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (joint drag)") }),
+		until("undo put the foot back", func(w *Client) bool {
+			legs := w.CritterEditor.body.critter.LegsView()
+			return len(legs) == 1 && Float.Abs(Float.X(legs[0].Foot.Z-footZ)) < 1e-4
+		}),
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (leg grow)") }),
+		until("undo removed the leg", func(w *Client) bool { return w.CritterEditor.body.critter.LegCount() == 0 }),
+		// The spine: shrinking the head drops a bone; undo brings it back as it was.
+		do(func(s *devShot, w *Client) {
+			c := w.CritterEditor.body.critter
+			head, _ = c.BoneAt(c.BoneCount() - 1)
+			w.CritterEditor.emitSpineResize("bone/shrink/head")
+		}),
+		until("head bone dropped", func(w *Client) bool { return w.CritterEditor.body.critter.BoneCount() == 4 }),
+		do(func(s *devShot, w *Client) { s.check(w.Undo(), "nothing to undo (spine shrink)") }),
+		until("undo restored the head bone", func(w *Client) bool {
+			c := w.CritterEditor.body.critter
+			b, ok := c.BoneAt(4)
+			return ok && c.BoneCount() == 5 && b == head
+		}),
+		snap("undone"),
 	}
 }
 

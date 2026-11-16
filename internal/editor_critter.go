@@ -203,6 +203,16 @@ type CritterEditor struct {
 	// editor_critter_control.go for the rest of the implementation.
 	control *controlVis
 
+	// dragUndo collects, during a bone/leg drag, the sculpts that restore
+	// what the drag overwrites; sliderFrom holds a slider's value from
+	// before its current drag. Both feed the undo entry recorded when the
+	// drag commits (editor_critter_undo.go).
+	dragUndo   []musical.Sculpt
+	sliderFrom map[string]float32
+	// gizmoBefore is the anchor a part had before the gizmo drag in
+	// progress (set by Client.updateCritterGizmoDrag).
+	gizmoBefore map[Node3D.ID]PartAnchor
+
 	// shape is the handle-drag state for sculpting a selected
 	// parametric part (editor_critter_shape.go).
 	shape shapeSculpt
@@ -820,7 +830,24 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 		ce.applySlider(editing, Float.X(value))
 		return
 	}
+	// Remember the value from before this drag (its previews overwrite
+	// the weight as they echo back), to undo the commit to.
+	if _, dragging := ce.sliderFrom[editing]; !dragging && ce.body.critter != nil {
+		if ce.sliderFrom == nil {
+			ce.sliderFrom = make(map[string]float32)
+		}
+		ce.sliderFrom[editing] = ce.body.critter.Weight(editing)
+	}
 	ce.recorder.emitSliderSculpt("critter", editing, value, commit)
+	if from, ok := ce.sliderFrom[editing]; ok && commit {
+		delete(ce.sliderFrom, editing)
+		if from != float32(value) {
+			ce.recordSculpts(
+				[]musical.Sculpt{critterSculpt(editing, float32(value))},
+				[]musical.Sculpt{critterSculpt(editing, from)},
+			)
+		}
+	}
 }
 
 // Sculpt routes incoming sculpts. Anything starting with "bone/" is
@@ -1061,11 +1088,21 @@ func (ce *CritterEditor) applyLegSculptBrush(brush musical.Sculpt) {
 		if len(parts) >= 3 {
 			kind, _ = critter.LegKindFromName(parts[2])
 		}
-		ce.body.AppendLegAtPosKind(critter.Vec3{
+		hip := critter.Vec3{
 			X: float32(brush.Target.X),
 			Y: float32(brush.Target.Y),
 			Z: float32(brush.Target.Z),
-		}, kind)
+		}
+		// leg/grow_at/{kind}/{index}: land the leg at that index (an
+		// undone removal). Clients that predate it ignore the extra
+		// segment and append — same geometry, later index.
+		if len(parts) >= 4 {
+			if index, err := strconv.Atoi(parts[3]); err == nil {
+				ce.body.InsertLegAtPosKind(hip, kind, index)
+				return
+			}
+		}
+		ce.body.AppendLegAtPosKind(hip, kind)
 		return
 	case "shrink":
 		if len(parts) < 3 {
@@ -1311,6 +1348,10 @@ func (ce *CritterEditor) emitBoneSculpt(slider string, amount float32) {
 // take, so the live pose matches the eventual committed pose exactly.
 func (ce *CritterEditor) dragEmit(slider string, amount float32) {
 	ce.lastEditAt = time.Now()
+	if _, seen := ce.dragEmits[slider]; !seen {
+		// First touch this drag: remember what it overwrites, for undo.
+		ce.dragUndo = append(ce.dragUndo, ce.restoreSculpts(slider)...)
+	}
 	if strings.HasPrefix(slider, "leg/") {
 		ce.applyLegSculptBrush(musical.Sculpt{
 			Editor: "critter",
@@ -1345,6 +1386,7 @@ func (ce *CritterEditor) flushDragEmits() {
 	if len(ce.dragEmitOrder) == 0 {
 		return
 	}
+	dos := make([]musical.Sculpt, 0, len(ce.dragEmitOrder))
 	for _, slider := range ce.dragEmitOrder {
 		amount := ce.dragEmits[slider]
 		if strings.HasPrefix(slider, "leg/") {
@@ -1352,7 +1394,11 @@ func (ce *CritterEditor) flushDragEmits() {
 		} else {
 			ce.emitBoneSculpt(slider, amount)
 		}
+		dos = append(dos, critterSculpt(slider, amount))
 	}
+	// The whole drag is one undo step.
+	ce.recordSculpts(dos, ce.dragUndo)
+	ce.dragUndo = nil
 	ce.dragEmits = nil
 	ce.dragEmitOrder = ce.dragEmitOrder[:0]
 }
@@ -1397,7 +1443,7 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 				if kind := ce.placingLegKind(); kind != critter.LegKindMammal {
 					slider += "/" + kind.Name()
 				}
-				ce.emitLegSculptAt(slider, local, 0)
+				ce.emitLegGrow(slider, local)
 				if !Input.IsKeyPressed(Input.KeyShift) {
 					ce.clearLegGhost()
 				}
@@ -1424,19 +1470,28 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 					LegFoot: ce.stepperLeg,
 					LegSide: ce.stepperSide,
 				}
-				ce.place(anchor, ce.Preview.Design())
+				if placed, ok := ce.place(anchor, ce.Preview.Design()); ok {
+					ce.recordPlacements(placed)
+				}
 				if !Input.IsKeyPressed(Input.KeyShift) {
 					ce.Preview.Remove()
 					ce.placingStepper = false
 				}
 				return
 			}
+			var placements []musical.Change
 			primary := ce.previewAnchor(ce.Preview)
-			ce.place(primary, ce.Preview.Design())
+			if placed, ok := ce.place(primary, ce.Preview.Design()); ok {
+				placements = append(placements, placed)
+			}
 			if ce.MirrorPreview.AsNode3D().Visible() && ce.MirrorPreview.Design() != "" {
 				mirror := ce.previewAnchor(ce.MirrorPreview)
-				ce.place(mirror, ce.MirrorPreview.Design())
+				if placed, ok := ce.place(mirror, ce.MirrorPreview.Design()); ok {
+					placements = append(placements, placed)
+				}
 			}
+			// A mirrored pair is one click, so one undo.
+			ce.recordPlacements(placements...)
 			if !Input.IsKeyPressed(Input.KeyShift) {
 				ce.Preview.Remove()
 				ce.MirrorPreview.Remove()
@@ -1456,12 +1511,16 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 			if !ok {
 				return
 			}
-			if err := ce.recorder.publishChange(musical.Change{
+			removal := musical.Change{
 				Entity: entity,
 				Editor: "critter",
 				Remove: true,
 				Commit: true,
-			}); err != nil {
+			}
+			// Recorded first: publishing detaches the part, and with it
+			// the anchor and design the undo needs to re-create it.
+			ce.recordPartRemoval(Node3D.ID(node.ID()), removal)
+			if err := ce.recorder.publishChange(removal); err != nil {
 				Engine.Raise(err)
 			}
 		}
@@ -1485,7 +1544,7 @@ func (ce *CritterEditor) spineUnhandledInput(event InputEvent.Instance) {
 		if ce.view == "limbone" {
 			if legIdx, _, legOk := ce.legHandleUnderMouse(); legOk {
 				Viewport.Get(ce.AsNode()).SetInputAsHandled()
-				ce.emitLegSculpt(fmt.Sprintf("leg/shrink/%d", legIdx), 0)
+				ce.emitLegRemove(legIdx)
 			}
 		}
 		return
@@ -1539,13 +1598,13 @@ func (ce *CritterEditor) spineUnhandledInput(event InputEvent.Instance) {
 	Viewport.Get(ce.AsNode()).SetInputAsHandled()
 	switch h.tag {
 	case tagGrowHead:
-		ce.emitBoneSculpt("bone/grow/head", 0)
+		ce.emitSpineResize("bone/grow/head")
 	case tagGrowTail:
-		ce.emitBoneSculpt("bone/grow/tail", 0)
+		ce.emitSpineResize("bone/grow/tail")
 	case tagShrinkHead:
-		ce.emitBoneSculpt("bone/shrink/head", 0)
+		ce.emitSpineResize("bone/shrink/head")
 	case tagShrinkTail:
-		ce.emitBoneSculpt("bone/shrink/tail", 0)
+		ce.emitSpineResize("bone/shrink/tail")
 	case tagBone:
 		bones := ce.body.critter.Bones()
 		if h.boneIdx < 0 || h.boneIdx >= len(bones) {
@@ -1921,7 +1980,10 @@ func (ce *CritterEditor) previewAnchor(p PreviewRenderer) PartAnchor {
 	return ce.body.ClosestAnchor(local)
 }
 
-func (ce *CritterEditor) place(anchor PartAnchor, design string) {
+// place publishes a new part at anchor. It returns the published Change
+// (ok=false when nothing was recorded) so the caller can record the
+// click — one part or a mirrored pair — as a single undo step.
+func (ce *CritterEditor) place(anchor PartAnchor, design string) (placed musical.Change, ok bool) {
 	ce.ensureLoaded()
 	if ce.recorder == nil {
 		// Single-user dev path: apply directly without going through
@@ -1931,13 +1993,13 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 			node := ce.body.AttachProcedural(anchor, part)
 			setSubtreeOwner(node.AsNode(), node.AsNode())
 			ce.animatedParts[node.ID()] = part
-			return
+			return placed, false
 		}
 		ce.body.AttachPart(anchor, PackedScene.Nil)
-		return
+		return placed, false
 	}
 	if !ce.recorder.recording() {
-		return
+		return placed, false
 	}
 	// Both library-imported and procedural designs ship through the
 	// same Change protocol so peers see the placement. MusicalDesign
@@ -1973,6 +2035,21 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 	change.Mirror = shapeToWire(anchor.Shape)
 	if err := ce.recorder.publishChange(change); err != nil {
 		Engine.Raise(err)
+		return placed, false
+	}
+	change.Author = ce.recorder.localAuthor()
+	return change, true
+}
+
+// recordPlacements records the parts one click placed as one undo step,
+// each undone by removing it.
+func (ce *CritterEditor) recordPlacements(placed ...musical.Change) {
+	var undos []musical.Change
+	for _, do := range placed {
+		undos = append(undos, musical.Change{Author: do.Author, Entity: do.Entity, Editor: "critter", Remove: true})
+	}
+	if len(placed) > 0 {
+		ce.recorder.RecordChangeGroup(placed, undos)
 	}
 }
 

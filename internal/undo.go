@@ -17,6 +17,7 @@ const (
 	undoChange      undoKind = iota // Do/Undo are paired musical.Change records.
 	undoSculpt                      // Sculpt is a committed terrain stroke (toggled).
 	undoChangeGroup                 // Dos/Undos are parallel batches reversed as one.
+	undoSculptGroup                 // SculptDos/SculptUndos are value-setting sculpt batches.
 )
 
 // UndoEntry reverses one committed mutation. For a Change edit it pairs the
@@ -39,6 +40,12 @@ type UndoEntry struct {
 
 	// sculpt path
 	Sculpt musical.Sculpt
+
+	// sculpt-group path: for editors whose sculpts SET a value (critter
+	// bones, legs, skin) rather than add a stroke. SculptDos re-applies the
+	// edit and SculptUndos restores what was there before; each batch is
+	// emitted in slice order.
+	SculptDos, SculptUndos []musical.Sculpt
 }
 
 // UndoStack is a per-client (local-only) history of reversible operations. The
@@ -122,6 +129,36 @@ func (world *Client) RecordSculpt(brush musical.Sculpt) {
 	world.undo.Push(UndoEntry{kind: undoSculpt, Sculpt: brush})
 }
 
+// RecordSculptGroup registers a value-setting edit made of sculpts, with the
+// sculpts that put the previous values back, as one undo entry. The forward
+// sculpts must already have been published; `dos` is what a redo emits (which
+// may differ from what was first published when indices shift — see the critter
+// editor's leg removal).
+func (world *Client) RecordSculptGroup(dos, undos []musical.Sculpt) {
+	if len(dos) == 0 || len(undos) == 0 {
+		return
+	}
+	for i := range dos {
+		dos[i].Commit = true
+	}
+	for i := range undos {
+		undos[i].Commit = true
+	}
+	world.undo.Push(UndoEntry{kind: undoSculptGroup, SculptDos: dos, SculptUndos: undos})
+}
+
+// publishSculpts emits a batch of sculpts in order as the local author.
+func (world *Client) publishSculpts(batch []musical.Sculpt) bool {
+	ok := true
+	for _, brush := range batch {
+		if err := world.publishSculpt(brush); err != nil {
+			Engine.Raise(err)
+			ok = false
+		}
+	}
+	return ok
+}
+
 // nextTiming returns the next strictly-increasing Timing for stamping a locally
 // authored sculpt. Wall-clock based so values never repeat across sessions, but
 // forced monotonic within a session.
@@ -194,6 +231,8 @@ func (world *Client) dispatchUndo(entry UndoEntry) bool {
 		// A Revert sculpt toggles the stored stroke off; re-emitted through the
 		// normal pipeline so peers + the .mus3 log observe the undo.
 		return world.emitRevert(entry.Sculpt)
+	case undoSculptGroup:
+		return world.publishSculpts(entry.SculptUndos)
 	case undoChangeGroup:
 		// Reverse order so the batch unwinds opposite to how it was applied.
 		ok := true
@@ -218,6 +257,8 @@ func (world *Client) dispatchRedo(entry UndoEntry) bool {
 	case undoSculpt:
 		// Redo re-emits the same Revert, toggling the stroke back on.
 		return world.emitRevert(entry.Sculpt)
+	case undoSculptGroup:
+		return world.publishSculpts(entry.SculptDos)
 	case undoChangeGroup:
 		ok := true
 		for i := range entry.Dos {

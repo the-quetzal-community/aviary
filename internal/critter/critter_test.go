@@ -656,3 +656,31 @@ func TestBuildLegMesh_HipCapIsSpherical(t *testing.T) {
 		}
 	}
 }
+
+// MoveLeg puts a re-grown leg back in the slot it was removed from
+// (undo of a leg removal), leaving the other legs in order.
+func TestMoveLegRestoresSlot(t *testing.T) {
+	c := New()
+	for i := 0; i < 4; i++ {
+		c.AppendLegAtPos(Vec3{X: 0.2, Y: 0, Z: float32(i) * 0.3})
+	}
+	want := c.Legs()
+	removed := want[1]
+	c.RemoveLeg(1)
+	idx := c.AppendLegAtPosKind(removed.Hip, removed.Kind)
+	if !c.MoveLeg(idx, 1) {
+		t.Fatal("MoveLeg refused")
+	}
+	got := c.Legs()
+	if len(got) != len(want) {
+		t.Fatalf("leg count %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].Hip != want[i].Hip {
+			t.Errorf("leg %d hip %+v, want %+v", i, got[i].Hip, want[i].Hip)
+		}
+	}
+	if c.MoveLeg(0, 0) || c.MoveLeg(9, 0) || c.MoveLeg(0, -1) {
+		t.Error("MoveLeg accepted a no-op or out-of-range move")
+	}
+}

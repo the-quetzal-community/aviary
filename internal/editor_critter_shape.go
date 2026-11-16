@@ -51,6 +51,9 @@ type shapeSculpt struct {
 	// dirty is set once a drag has actually changed the shape, so a
 	// click that never moved doesn't record a no-op edit.
 	dirty bool
+	// before holds the pre-drag anchors of the part and its twin, for
+	// the undo entry recorded on release.
+	before map[Node3D.ID]PartAnchor
 }
 
 func (ce *CritterEditor) ensureShapeHandles() {
@@ -200,6 +203,12 @@ func (ce *CritterEditor) shapeUnhandledInput(event InputEvent.Instance) bool {
 			return false
 		}
 		ce.shape.drag, ce.shape.dirty = ce.shape.hover, false
+		// Undo: the anchors (shape included) of the part and its twin
+		// from before the drag.
+		ce.shape.before = map[Node3D.ID]PartAnchor{ce.shape.target: ce.body.partAnchors[ce.shape.target]}
+		if twin, ok := ce.mirrorTwin(ce.shape.target); ok {
+			ce.shape.before[twin] = ce.body.partAnchors[twin]
+		}
 		ce.lastEditAt = time.Now()
 		Viewport.Get(ce.AsNode()).SetInputAsHandled()
 		return true
@@ -209,7 +218,11 @@ func (ce *CritterEditor) shapeUnhandledInput(event InputEvent.Instance) bool {
 	}
 	if part, ok := ce.animatedParts[ce.shape.target].(*sweptPart); ok && ce.shape.dirty {
 		ce.publishShape(ce.shape.target, part.shape, true)
+		if ce.recorder != nil {
+			ce.recordPartEdit(ce.shape.before)
+		}
 	}
+	ce.shape.before = nil
 	ce.shape.drag = shapeHandleNone
 	Viewport.Get(ce.AsNode()).SetInputAsHandled()
 	return true
