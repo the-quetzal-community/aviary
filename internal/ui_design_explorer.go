@@ -655,7 +655,22 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 		author = ""
 	}
 	if author == "" {
-		author = preferredAuthor(visible_authors, UserState.AuthorPreferences)
+		// The bookmarks theme is only auto-picked when the mode has
+		// nothing else to show. It returns early below, so choosing it by
+		// default in a mode that has library authors or the editor's own
+		// sliders (critter skin, citizen pigment) would hide them behind
+		// it for anyone with a saved bookmark; it stays one click away.
+		candidates := visible_authors
+		if _, bookmarks := visible_authors["user"]; bookmarks {
+			hasSliders := slices.ContainsFunc(ui.editor.Tabs(mode), func(tab string) bool {
+				return strings.HasPrefix(tab, "editing/")
+			})
+			if len(visible_authors) > 1 || hasSliders {
+				candidates = maps.Clone(visible_authors)
+				delete(candidates, "user")
+			}
+		}
+		author = preferredAuthor(candidates, UserState.AuthorPreferences)
 		if author != "" {
 			ui.Panel.Themes.Heading.Selected.SetTextureNormal(ui.authorThemeIcon(author))
 		}
@@ -918,7 +933,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 	// Now that every tab's tiles exist, reorder them by how recently
 	// their design was placed in the scene (most recent first).
 	ui.applyRecency()
-	if len(visible_authors) == 0 {
+	if author == "" {
 		ui.Panel.Themes.Heading.Selected.SetTextureNormal(LoadSync[Texture2D.Instance]("res://ui/editing.svg"))
 	}
 	ui.AsCanvasItem().SetVisible(index > 0 || len(visible_authors) > 0)

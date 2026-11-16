@@ -291,9 +291,16 @@ func demoCritter() []devStep {
 		// The explorer's rendered icons: the skin sliders' tabs, then the
 		// parametric horn's tile.
 		do(func(s *devShot, w *Client) {
-			if w.ui != nil {
-				w.ui.SetMode(ModeMaterial)
+			if w.ui == nil {
+				return
 			}
+			// With a bookmark saved, the "my stuff" theme exists in every
+			// mode; it must not take the material mode over from the sliders.
+			_, err := saveBookmark("devshot", "critter", w.CritterEditor.CaptureCreation())
+			s.check(err == nil && hasBookmarks(), "bookmark not saved: %v", err)
+			w.ui.SetMode(ModeMaterial)
+			s.check(w.ui.Editor.Tabs.AsNode().GetChildCount() == len(skinSliders),
+				"material mode shows %d tabs, want the %d skin sliders", w.ui.Editor.Tabs.AsNode().GetChildCount(), len(skinSliders))
 		}),
 		waitFrames(6),
 		snap("material"),
