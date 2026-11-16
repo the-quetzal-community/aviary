@@ -714,7 +714,6 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			if icon != Texture2D.Nil {
 				ui.Tabs.SetTabIcon(index, icon)
-				ui.Tabs.SetTabIconMaxWidth(index, 96)
 			} else if ExistsSync("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
 				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
@@ -753,7 +752,7 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 				button := TextureButton.New()
 				var iconTex Texture2D.Instance
 				if b.Render != nil {
-					iconTex = renderIcon(button.AsNode(), b.Render(), 256)
+					iconTex = renderIcon(button.AsNode(), b.Render(), 256, 256)
 					button.SetTextureNormal(iconTex)
 				} else if b.Icon != "" {
 					if icon := LoadSync[Texture2D.Instance](b.Icon); icon != Texture2D.Nil {

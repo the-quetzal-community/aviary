@@ -4,8 +4,8 @@ import (
 	"math"
 
 	"graphics.gd/classdb/ArrayMesh"
-	"graphics.gd/classdb/Gradient"
-	"graphics.gd/classdb/GradientTexture2D"
+	"graphics.gd/classdb/Image"
+	"graphics.gd/classdb/ImageTexture"
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/Shader"
@@ -213,38 +213,53 @@ func skinTabIcon(c *critter.Critter, tab string, host Node.Instance) Texture2D.I
 	case "editing/shade2":
 		return rampIcon([]Color.RGBA{white, black}, true)
 	case "editing/pattern":
-		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 1, "skin/scale": 0, "skin/belly": 0}), 128)
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 1, "skin/scale": 0, "skin/belly": 0}), tabIconWidth, tabIconHeight)
 	case "editing/scale":
-		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 1, "skin/scale": 0.8, "skin/belly": 0}), 128)
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 1, "skin/scale": 0.8, "skin/belly": 0}), tabIconWidth, tabIconHeight)
 	case "editing/belly":
-		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 0, "skin/belly": 0.6}), 128)
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 0, "skin/belly": 0.6}), tabIconWidth, tabIconHeight)
 	case "editing/gloss":
-		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 0, "skin/belly": 0, "skin/gloss": 1}), 128)
+		return renderIcon(host, skinIconSubject(c, map[string]float32{"skin/pattern": 0, "skin/belly": 0, "skin/gloss": 1}), tabIconWidth, tabIconHeight)
 	}
 	return Texture2D.Nil
 }
 
-// rampIcon builds a colour-ramp swatch: a left-to-right bar, or (round)
-// a disc sweeping from the centre out with a transparent surround.
+// Tab icons share the canvas of the drawn ones in res://ui (128×100,
+// glyph centred) so generated and asset-backed tabs line up.
+const (
+	tabIconWidth  = 128
+	tabIconHeight = 100
+	tabIconGlyph  = 76 // the swatch's side / the disc's diameter
+)
+
+// rampIcon builds a colour-ramp swatch centred on a tab-icon canvas: a
+// left-to-right square, or (round) a disc sweeping from the centre out.
 func rampIcon(colours []Color.RGBA, round bool) Texture2D.Instance {
-	offsets := make([]float32, len(colours))
-	for i := range colours {
-		offsets[i] = float32(i) / float32(len(colours)-1)
+	sample := func(t float32) Color.RGBA {
+		t = min(max(t, 0), 1) * float32(len(colours)-1)
+		i := min(int(t), len(colours)-2)
+		f := t - float32(i)
+		a, b := colours[i], colours[i+1]
+		return Color.RGBA{R: a.R + (b.R-a.R)*f, G: a.G + (b.G-a.G)*f, B: a.B + (b.B-a.B)*f, A: 1}
 	}
-	tex := GradientTexture2D.New().SetWidth(64).SetHeight(64)
-	if round {
-		for i := range offsets {
-			offsets[i] *= 0.9
+	const half = float32(tabIconGlyph) / 2
+	data := make([]byte, tabIconWidth*tabIconHeight*4)
+	for y := 0; y < tabIconHeight; y++ {
+		for x := 0; x < tabIconWidth; x++ {
+			dx := float32(x) + 0.5 - tabIconWidth/2
+			dy := float32(y) + 0.5 - tabIconHeight/2
+			var c Color.RGBA
+			if round {
+				r := float32(math.Hypot(float64(dx), float64(dy)))
+				c = sample(r / half)
+				c.A = min(max(half-r, 0), 1) // one-pixel soft edge
+			} else if dx >= -half && dx < half && dy >= -half && dy < half {
+				c = sample((dx + half) / tabIconGlyph)
+			}
+			o := (y*tabIconWidth + x) * 4
+			data[o], data[o+1], data[o+2], data[o+3] = byte(c.R*255), byte(c.G*255), byte(c.B*255), byte(c.A*255)
 		}
-		edge := colours[len(colours)-1]
-		edge.A = 0
-		offsets = append(offsets, 1)
-		colours = append(append([]Color.RGBA(nil), colours...), edge)
-		tex.SetFill(GradientTexture2D.FillRadial).SetFillFrom(Vector2.New(0.5, 0.5)).SetFillTo(Vector2.New(1, 0.5))
 	}
-	grad := Gradient.New()
-	grad.SetOffsets(offsets)
-	grad.SetColors(colours)
-	tex.SetGradient(grad)
-	return tex.AsTexture2D()
+	img := Image.CreateFromData(tabIconWidth, tabIconHeight, false, Image.FormatRgba8, data)
+	return ImageTexture.CreateFromImage(img).AsTexture2D()
 }

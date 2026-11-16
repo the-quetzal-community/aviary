@@ -28,12 +28,12 @@ import (
 // subject's bounds, two lights) lives in a SubViewport parented to `host`
 // — the control showing the icon — so the texture lives exactly as long as
 // what displays it.
-func renderIcon(host Node.Instance, subject Node3D.Instance, size int) Texture2D.Instance {
+func renderIcon(host Node.Instance, subject Node3D.Instance, width, height int) Texture2D.Instance {
 	if host == Node.Nil || subject == Node3D.Nil {
 		return Texture2D.Nil
 	}
 	view := SubViewport.New()
-	view.SetSize(Vector2i.New(size, size))
+	view.SetSize(Vector2i.New(width, height))
 	view.SetRenderTargetUpdateMode(SubViewport.UpdateOnce)
 	view.AsViewport().SetOwnWorld3d(true).SetTransparentBg(true)
 	view.AsNode().AddChild(subject.AsNode())
@@ -43,11 +43,13 @@ func renderIcon(host Node.Instance, subject Node3D.Instance, size int) Texture2D
 		lo, hi = Vector3.New(-0.5, -0.5, -0.5), Vector3.New(0.5, 0.5, 0.5)
 	}
 	centre := Vector3.MulX(Vector3.Add(lo, hi), 0.5)
-	// The box's half-diagonal overestimates rounded subjects, so pull in a
-	// little: the subject should fill the icon.
-	radius := Vector3.Length(Vector3.Sub(hi, lo)) / 2 * 0.85
+	// Frame on the largest half-extent with a margin, so the subject
+	// fills about three quarters of the icon — the share a drawn glyph
+	// takes of its canvas.
+	extent := Vector3.Sub(hi, lo)
+	radius := max(extent.X, extent.Y, extent.Z) / 2
 	const fov = 30.0
-	distance := radius / Float.X(math.Sin(fov/2*math.Pi/180)) * 1.05
+	distance := radius / Float.X(math.Sin(fov/2*math.Pi/180)) * 1.3
 
 	lookFrom := func(dir Vector3.XYZ) Transform3D.BasisOrigin {
 		z := Vector3.Normalized(dir) // a camera/light looks down its −Z
