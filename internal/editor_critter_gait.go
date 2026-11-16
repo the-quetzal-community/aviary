@@ -9,6 +9,7 @@ import (
 	"graphics.gd/classdb/MeshInstance3D"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/variant/Float"
+	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 
 	"the.quetzal.community/aviary/internal/critter"
@@ -189,6 +190,12 @@ type gaitLegRender struct {
 	// PhysicsProcess tick.
 	vertsBuf   []Vector3.XYZ
 	normalsBuf []Vector3.XYZ
+	// Skin pattern coordinates: the REST leg's vertices (same topology
+	// as the posed mesh), cached until the rest leg changes, so marks
+	// stay put on the skin while the leg steps.
+	restLeg critter.Leg
+	uvBuf   []Vector2.XY
+	uv2Buf  []Vector2.XY
 }
 
 // upload copies a critter.Mesh into the cached ArrayMesh, reusing
@@ -206,6 +213,10 @@ func (r *gaitLegRender) upload(m critter.Mesh) {
 	var arrays [Mesh.ArrayMax]any
 	arrays[Mesh.ArrayVertex] = r.vertsBuf
 	arrays[Mesh.ArrayNormal] = r.normalsBuf
+	if len(r.uvBuf) == len(r.vertsBuf) {
+		arrays[Mesh.ArrayTexUv] = r.uvBuf
+		arrays[Mesh.ArrayTexUv2] = r.uv2Buf
+	}
 	arrays[Mesh.ArrayIndex] = m.Indices
 	r.mesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }
@@ -402,7 +413,13 @@ func (g *gaitState) uploadLegs() {
 			phase := gaitPhase(g.profile, g.gaitTime, i, s)
 			posed := computeGaitPose(leg, phase, g.gaitActive, s == 1, bodyDY)
 			g.feetBuf[i][s] = posed.Foot
-			g.legRenders[i][s].upload(g.body.critter.BuildLegMesh(posed, 6, 8, false))
+			render := &g.legRenders[i][s]
+			if rest := computeGaitPose(leg, 0, 0, s == 1, 0); rest != render.restLeg || len(render.uvBuf) == 0 {
+				render.restLeg = rest
+				skinCoords(g.body.critter.BuildLegMesh(rest, 6, 8, false).Verts, &render.uvBuf, &render.uv2Buf)
+			}
+			render.upload(g.body.critter.BuildLegMesh(posed, 6, 8, false))
+			g.body.setSkinSurface(render.mesh)
 		}
 	}
 	g.body.SetAnimatedLegFeet(g.feetBuf)

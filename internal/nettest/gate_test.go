@@ -154,6 +154,31 @@ var mutations = []mutation{
 		},
 	},
 	{
+		// A parametric critter part's sculpted shape rides Change.Mirror.
+		name: "critter part shape", kind: kindChange, persist: true,
+		send: func(s musical.UsersSpace3D, a musical.Author) error {
+			return s.Change(musical.Change{
+				Author: a, Entity: musical.Entity{Author: a, Number: 7}, Design: musical.Design{Author: a, Number: 1},
+				Offset: Vector3.New(0.5, 1, 0), Mirror: Vector3.New(1, 2.5, -1), Editor: "critter", Commit: true,
+			})
+		},
+		is: func(e any, a musical.Author) bool {
+			v, ok := e.(musical.Change)
+			return ok && v.Author == a && v.Entity.Number == 7 && v.Commit && v.Editor == "critter" && v.Mirror == Vector3.New(1, 2.5, -1)
+		},
+	},
+	{
+		// Critter skin colour and pattern are weights under "skin/*".
+		name: "critter skin", kind: kindSculpt, persist: true,
+		send: func(s musical.UsersSpace3D, a musical.Author) error {
+			return s.Sculpt(musical.Sculpt{Author: a, Amount: 0.25, Editor: "critter", Slider: "skin/hue", Timing: 43, Commit: true})
+		},
+		is: func(e any, a musical.Author) bool {
+			v, ok := e.(musical.Sculpt)
+			return ok && v.Author == a && v.Editor == "critter" && v.Slider == "skin/hue" && v.Amount == 0.25 && v.Commit
+		},
+	},
+	{
 		name: "sculpt commit", kind: kindSculpt, persist: true,
 		send: func(s musical.UsersSpace3D, a musical.Author) error {
 			return s.Sculpt(musical.Sculpt{

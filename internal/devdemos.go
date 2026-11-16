@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"graphics.gd/classdb/Node3D"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector3"
 
+	"the.quetzal.community/aviary/internal/critter"
 	"the.quetzal.community/aviary/internal/musical"
 )
 
@@ -21,6 +23,7 @@ var devDemos = map[string]func() []devStep{
 	"editors": demoEditors,
 	"scenery": demoScenery,
 	"terrain": demoTerrain,
+	"critter": demoCritter,
 }
 
 // devDemoDesign is the library model the scenery scenario places: a plain Kenney
@@ -148,6 +151,86 @@ func demoTerrain() []devStep {
 		until("undo flattened it", func(w *Client) bool { return Float.Abs(height(w)-before) < 0.01 }),
 		do(func(s *devShot, w *Client) { s.check(w.Redo(), "nothing to redo") }),
 		until("redo raised it again", func(w *Client) bool { return height(w) > before+amount/4 }),
+	}
+}
+
+// demoCritter colours the critter through the material sliders, places a
+// mirrored pair of parametric horns and a fin, sculpts the horns (the twin must
+// follow), and removes the fin — every step through the editor's own calls, so
+// each one is a recorded, replicated mutation.
+func demoCritter() []devStep {
+	var horns, fins []Node3D.ID
+	swept := func(w *Client, design string) []Node3D.ID {
+		var ids []Node3D.ID
+		for id, uri := range w.CritterEditor.partURIs {
+			if _, ok := w.CritterEditor.animatedParts[id].(*sweptPart); ok && uri == design {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	}
+	sculpted := critter.PartShape{Length: 0.6, Curl: 1.6, Girth: 0.3}
+	return []devStep{
+		do(func(s *devShot, w *Client) {
+			w.StartEditing(Editing.Critter)
+			ce := w.CritterEditor
+			for tab, value := range map[string]float64{
+				"editing/hue": 0.08, "editing/sat": 0.7, "editing/shade": 0.1,
+				"editing/pattern": 1, "editing/hue2": 0.6, "editing/sat2": 0.5, "editing/belly": 0.5,
+			} {
+				ce.SliderHandle(ModeMaterial, tab, value, true)
+			}
+		}),
+		until("skin weights landed", func(w *Client) bool {
+			c := w.CritterEditor.body.critter
+			return c != nil && c.Weight("skin/pattern") == 1 && c.Weight("skin/belly") == 0.5
+		}),
+		do(func(s *devShot, w *Client) {
+			ce := w.CritterEditor
+			primary, _ := skinColours(ce.body.critter)
+			s.check(primary.R > primary.B, "skin primary not warm: %v", primary)
+			for _, x := range []Float.X{0.15, -0.15} {
+				ce.place(ce.body.ClosestAnchor(Vector3.New(x, 0.8, 1.15)), BuiltinHornDesign)
+			}
+			ce.place(ce.body.ClosestAnchor(Vector3.New(0, 0.7, 0)), BuiltinFinDesign)
+		}),
+		until("horns and fin attached", func(w *Client) bool {
+			horns, fins = swept(w, BuiltinHornDesign), swept(w, BuiltinFinDesign)
+			return len(horns) == 2 && len(fins) == 1
+		}),
+		snap("placed"),
+		do(func(s *devShot, w *Client) {
+			twin, ok := w.CritterEditor.mirrorTwin(horns[0])
+			s.check(ok && twin == horns[1], "horn has no mirror twin")
+			w.CritterEditor.publishShape(horns[0], sculpted, true)
+		}),
+		until("both horns took the shape", func(w *Client) bool {
+			for _, id := range horns {
+				if part := w.CritterEditor.animatedParts[id].(*sweptPart); part.shape != sculpted {
+					return false
+				}
+			}
+			return true
+		}),
+		do(func(s *devShot, w *Client) {
+			ce := w.CritterEditor
+			s.check(ce.body.partAnchors[horns[1]].Shape == sculpted, "twin anchor lost its shape")
+			s.check(w.publishChange(musical.Change{
+				Entity: ce.partToEntity[fins[0]], Editor: "critter", Remove: true, Commit: true,
+			}) == nil, "publishChange failed")
+		}),
+		until("fin removed", func(w *Client) bool { return len(swept(w, BuiltinFinDesign)) == 0 }),
+		// Reshape the body after colouring it: the skin must survive the
+		// surface being rebuilt.
+		do(func(s *devShot, w *Client) {
+			s.check(w.publishSculpt(musical.Sculpt{Editor: "critter", Slider: "bone/2/r", Amount: 0.55, Commit: true}) == nil, "publishSculpt failed")
+		}),
+		until("body reshaped", func(w *Client) bool {
+			b, _ := w.CritterEditor.body.critter.BoneAt(2)
+			return b.Radius > 0.5
+		}),
+		waitFrames(3),
+		snap("sculpted"),
 	}
 }
 

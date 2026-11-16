@@ -12,6 +12,7 @@ import (
 	"graphics.gd/classdb/SphereMesh"
 	"graphics.gd/classdb/SphereShape3D"
 	"graphics.gd/classdb/StaticBody3D"
+	"graphics.gd/variant/Color"
 	"graphics.gd/variant/Float"
 	"graphics.gd/variant/Vector3"
 )
@@ -107,6 +108,12 @@ func newEyePart(phase float32) *eyePart {
 	e.scheduleBlink(0)
 	e.scheduleSaccade(0)
 	return e
+}
+
+// SetSkinColours implements skinFollower: the eyelid matches the
+// body's main colour so a blink closes into the skin.
+func (e *eyePart) SetSkinColours(primary, secondary Color.RGBA) {
+	e.material.SetShaderParameter("lid_color", Vector3.XYZ{X: primary.R, Y: primary.G, Z: primary.B})
 }
 
 // Node returns the underlying Node3D so the caller can parent or

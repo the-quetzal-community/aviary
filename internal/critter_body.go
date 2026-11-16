@@ -14,6 +14,7 @@ import (
 	"graphics.gd/classdb/Node"
 	"graphics.gd/classdb/Node3D"
 	"graphics.gd/classdb/PackedScene"
+	"graphics.gd/classdb/ShaderMaterial"
 	"graphics.gd/classdb/Shape3D"
 	"graphics.gd/classdb/Skeleton3D"
 	"graphics.gd/classdb/Skin"
@@ -26,6 +27,7 @@ import (
 	"graphics.gd/variant/Object"
 	"graphics.gd/variant/Quaternion"
 	"graphics.gd/variant/Transform3D"
+	"graphics.gd/variant/Vector2"
 	"graphics.gd/variant/Vector3"
 
 	"the.quetzal.community/aviary/internal/critter"
@@ -57,7 +59,14 @@ type CritterBody struct {
 	arrayMesh ArrayMesh.Instance
 	vertexBuf []Vector3.XYZ
 	normalBuf []Vector3.XYZ
-	indices   []int32
+	uvBuf     []Vector2.XY
+	uv2Buf    []Vector2.XY
+
+	// skinMaterial draws the body and its legs (critter_skin.go);
+	// skinFollowers are the procedural parts recoloured with it.
+	skinMaterial  ShaderMaterial.Instance
+	skinFollowers map[Node3D.ID]skinFollower
+	indices       []int32
 	// collisionShape holds the ConcavePolygonShape3D that mirrors
 	// the visible mesh so the picker can ray-hit the body.
 	collisionShape CollisionShape3D.Instance
@@ -201,6 +210,12 @@ type PartAnchor struct {
 	// pre-existing recorded Changes whose Bounds.Z is 0 stay valid
 	// without a schema migration.
 	Scale float32
+
+	// Shape is the sculpted shape of a parametric part (horn, fin);
+	// the zero value is the neutral primitive, and parts that aren't
+	// parametric ignore it. Rides Change.Mirror, which critter parts
+	// never used.
+	Shape critter.PartShape
 }
 
 // AttachCritterBody creates a fresh ArrayMesh, runs an initial mesh
@@ -260,7 +275,17 @@ func AttachCritterBody(mi MeshInstance3D.Instance, c *critter.Critter) (CritterB
 		partScale:      2.0,
 		skeleton:       skeleton,
 		skin:           skin,
+		skinMaterial:   newSkinMaterial(),
+		skinFollowers:  make(map[Node3D.ID]skinFollower),
 	}
+	// Park the skin material on a hidden node for the body's lifetime.
+	// Surfaces are cleared on every rebuild, and if one held the engine's
+	// only reference the material would be freed with it (a Go handle is
+	// not a refcount) — the body would go grey on its first reshape.
+	skinHolder := MeshInstance3D.New()
+	skinHolder.AsNode3D().SetVisible(false)
+	skinHolder.AsGeometryInstance3D().SetMaterialOverride(body.skinMaterial.AsMaterial())
+	mi.AsNode().AddChild(skinHolder.AsNode())
 	// Build synchronously here rather than via rebuild()'s deferred flush. The
 	// deferred flush fires a frame later through Callable.Defer; that's fine for
 	// the editor's long-lived body, but a transiently-built body (a user-design
@@ -302,6 +327,11 @@ func AttachCritterBody(mi MeshInstance3D.Instance, c *critter.Critter) (CritterB
 // methods below.
 func (b *CritterBody) SetWeight(name string, weight float32) {
 	if !b.critter.SetWeight(name, weight) {
+		return
+	}
+	if isSkinWeight(name) {
+		// Colour only: no geometry to rebuild.
+		b.applySkin()
 		return
 	}
 	b.rebuild()
@@ -687,6 +717,7 @@ func (b *CritterBody) DetachPart(id Node3D.ID) {
 		node.AsNode().QueueFree()
 	}
 	delete(b.partAnchors, id)
+	delete(b.skinFollowers, id)
 }
 
 // SetPartAnchor updates the anchor for an existing part and snaps
@@ -832,6 +863,11 @@ func (b *CritterBody) flushRebuild() {
 	arrays[Mesh.ArrayVertex] = b.vertexBuf
 	arrays[Mesh.ArrayNormal] = b.normalBuf
 	arrays[Mesh.ArrayIndex] = b.indices
+	// The mesh is built in its rest pose, so its own vertices are the
+	// rest coordinates the skin pattern is sampled at.
+	skinCoords(m.Verts, &b.uvBuf, &b.uv2Buf)
+	arrays[Mesh.ArrayTexUv] = b.uvBuf
+	arrays[Mesh.ArrayTexUv2] = b.uv2Buf
 	// Skinning arrays: present iff BuildMesh emitted them (it does
 	// for the spine tube; leg / preview meshes don't). The four-
 	// influences-per-vertex flat layout matches what the GPU
@@ -842,6 +878,8 @@ func (b *CritterBody) flushRebuild() {
 		arrays[Mesh.ArrayWeights] = m.Weights
 	}
 	b.arrayMesh.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
+	b.setSkinSurface(b.arrayMesh)
+	b.applySkin()
 
 	if b.liveDeform {
 		b.collisionStale = true
@@ -1235,6 +1273,7 @@ func (b *CritterBody) rebuildLegs() {
 	for i, leg := range legs {
 		m := b.critter.BuildLegMesh(leg, ringsPerSegment, segmentsAround, !b.legOneSided)
 		UploadCritterMesh(b.legArrayMeshes[i], m)
+		b.setSkinSurface(b.legArrayMeshes[i])
 	}
 }
 
@@ -1252,10 +1291,14 @@ func UploadCritterMesh(am ArrayMesh.Instance, m critter.Mesh) {
 	for j, n := range m.Normals {
 		normals[j] = Vector3.XYZ{X: Float.X(n.X), Y: Float.X(n.Y), Z: Float.X(n.Z)}
 	}
+	var uv, uv2 []Vector2.XY
+	skinCoords(m.Verts, &uv, &uv2)
 	am.ClearSurfaces()
 	var arrays [Mesh.ArrayMax]any
 	arrays[Mesh.ArrayVertex] = verts
 	arrays[Mesh.ArrayNormal] = normals
+	arrays[Mesh.ArrayTexUv] = uv
+	arrays[Mesh.ArrayTexUv2] = uv2
 	arrays[Mesh.ArrayIndex] = m.Indices
 	am.AddSurfaceFromArrays(Mesh.PrimitiveTriangles, arrays[:])
 }

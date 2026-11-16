@@ -31,6 +31,7 @@ import (
 	"graphics.gd/classdb/SphereShape3D"
 	"graphics.gd/classdb/StandardMaterial3D"
 	"graphics.gd/classdb/StaticBody3D"
+	"graphics.gd/classdb/Texture2D"
 	"graphics.gd/classdb/Viewport"
 	"graphics.gd/variant/Angle"
 	"graphics.gd/variant/Basis"
@@ -201,6 +202,10 @@ type CritterEditor struct {
 	// is active; controlExit nils it back out on the way out. See
 	// editor_critter_control.go for the rest of the implementation.
 	control *controlVis
+
+	// shape is the handle-drag state for sculpting a selected
+	// parametric part (editor_critter_shape.go).
+	shape shapeSculpt
 
 	lighting // private lighting for this editor
 }
@@ -508,9 +513,25 @@ func (*CritterEditor) Tabs(mode Mode) []string {
 			"daypack",
 			"hipwear",
 		}
+	case ModeMaterial:
+		// The skin: colour and pattern sliders (critter_skin.go).
+		tabs := make([]string, len(skinSliders))
+		for i, s := range skinSliders {
+			tabs[i] = s.tab
+		}
+		return tabs
 	default:
 		return nil
 	}
+}
+
+// TabIcon implements TabIconProvider: the skin sliders draw their own
+// colour-ramp swatches.
+func (ce *CritterEditor) TabIcon(mode Mode, tab string) Texture2D.Instance {
+	if mode != ModeMaterial {
+		return Texture2D.Nil
+	}
+	return skinTabIcon(ce.body.critter, tab)
 }
 
 func (ce *CritterEditor) EnableEditor() {
@@ -643,6 +664,14 @@ func (ce *CritterEditor) SelectDesign(mode Mode, design string) {
 		ce.Preview.AsNode3D().SetVisible(false)
 		ce.MirrorPreview.AsNode3D().SetVisible(false)
 		return
+	case BuiltinHornDesign, BuiltinFinDesign:
+		// Parametric parts preview as their neutral primitive, through
+		// the same hover + click flow as the eyes.
+		ce.setProceduralPreview(&ce.Preview, design, newProceduralPart(design).Node())
+		ce.setProceduralPreview(&ce.MirrorPreview, design, newProceduralPart(design).Node())
+		ce.Preview.AsNode3D().SetVisible(false)
+		ce.MirrorPreview.AsNode3D().SetVisible(false)
+		return
 	}
 	if ce.Preview.AsNode().GetChildCount() > 0 {
 		Object.To[Node3D.Instance](ce.Preview.AsNode().GetChild(0)).AsNode().QueueFree()
@@ -734,6 +763,22 @@ func (ce *CritterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 				Label:    "Procedural Eyes",
 			},
 		}
+	case "antlers":
+		return []BuiltinDesign{
+			{
+				Resource: BuiltinHornDesign,
+				Icon:     "res://ui/triangle.svg",
+				Label:    "Horn",
+			},
+		}
+	case "gliders":
+		return []BuiltinDesign{
+			{
+				Resource: BuiltinFinDesign,
+				Icon:     "res://ui/spoiler.svg",
+				Label:    "Fin",
+			},
+		}
 	}
 	return nil
 }
@@ -744,6 +789,12 @@ func (ce *CritterEditor) BuiltinDesigns(mode Mode, tab string) []BuiltinDesign {
 // still routes through them (e.g. macro sliders the citizen UI
 // might expose for compatibility) gets the old behaviour for now.
 func (ce *CritterEditor) SliderConfig(mode Mode, editing string) (init, min, max, step float64) {
+	if skin, ok := skinSliderForTab(editing); ok {
+		if ce.body.critter != nil {
+			init = float64(ce.body.critter.Weight(skin.weight))
+		}
+		return init, skin.min, skin.max, skin.step
+	}
 	for _, s := range critter.Specs() {
 		if s.Tab == editing {
 			return s.Init, s.Min, s.Max, 0.01
@@ -757,7 +808,14 @@ func (ce *CritterEditor) SliderHandle(mode Mode, editing string, value float64, 
 		return
 	}
 	ce.last_slider_sculpt = time.Now()
-	ce.lastEditAt = time.Now()
+	if skin, ok := skinSliderForTab(editing); ok {
+		// The tab is "editing/hue"; the wire (and the weight) is
+		// "skin/hue". Recolouring leaves lastEditAt alone so the
+		// critter keeps breathing and blinking while it is painted.
+		editing = skin.weight
+	} else {
+		ce.lastEditAt = time.Now()
+	}
 	if ce.recorder == nil {
 		ce.applySlider(editing, Float.X(value))
 		return
@@ -882,7 +940,7 @@ func (ce *CritterEditor) applySlider(editing string, value Float.X) {
 		return
 	}
 	ce.body.SetWeight(editing, float32(value))
-	if ce.spineEdit {
+	if ce.spineEdit && !isSkinWeight(editing) {
 		ce.refreshSpineRig()
 	}
 }
@@ -1305,6 +1363,9 @@ func (ce *CritterEditor) UnhandledInput(event InputEvent.Instance) {
 	}
 	if ce.spineEdit {
 		ce.spineUnhandledInput(event)
+		return
+	}
+	if ce.shapeUnhandledInput(event) {
 		return
 	}
 	if mev, ok := Object.As[InputEventMouseButton.Instance](event); ok && mev.AsInputEvent().IsPressed() {
@@ -1867,7 +1928,7 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 		// the musical Change/Import cycle. Procedural parts still
 		// need their owners wired up so selection works.
 		if part := newProceduralPart(design); part != nil {
-			node := ce.body.AttachPartNode(anchor, part.Node())
+			node := ce.body.AttachProcedural(anchor, part)
 			setSubtreeOwner(node.AsNode(), node.AsNode())
 			ce.animatedParts[node.ID()] = part
 			return
@@ -1909,6 +1970,7 @@ func (ce *CritterEditor) place(anchor PartAnchor, design string) {
 		// X stays 0 so decoders still see this as a body anchor.
 		change.Bounds = Vector3.XYZ{Z: Float.X(anchor.Scale)}
 	}
+	change.Mirror = shapeToWire(anchor.Shape)
 	if err := ce.recorder.publishChange(change); err != nil {
 		Engine.Raise(err)
 	}
@@ -1992,6 +2054,10 @@ func newProceduralPart(design string) proceduralParter {
 	switch design {
 	case BuiltinEyesDesign:
 		return newEyePart(0)
+	case BuiltinHornDesign:
+		return newSweptPart(critter.ProfileHorn)
+	case BuiltinFinDesign:
+		return newSweptPart(critter.ProfileFin)
 	}
 	return nil
 }
@@ -2043,7 +2109,12 @@ func (ce *CritterEditor) Change(change musical.Change) error {
 	// the existing Node3D (so selection state survives the drag)
 	// rather than tearing down and re-instantiating the design.
 	if id, ok := ce.entityToPart[change.Entity]; ok {
-		ce.body.SetPartAnchor(id, anchorFromChange(change))
+		anchor := anchorFromChange(change)
+		ce.body.SetPartAnchor(id, anchor)
+		// A parametric part's sculpted shape rides the same record.
+		if shaped, ok := ce.animatedParts[id].(shapedPart); ok && shaped.Shape() != anchor.Shape {
+			shaped.SetShape(anchor.Shape)
+		}
 		return nil
 	}
 	if !ce.tryAttachChange(change) {
@@ -2141,6 +2212,7 @@ func anchorFromChange(change musical.Change) PartAnchor {
 		// the leg-foot encoding leaves empty (Bounds.X = LegFoot+1,
 		// Bounds.Y = LegSide) so scale + leg anchors can coexist.
 		Scale: float32(change.Bounds.Z),
+		Shape: shapeFromWire(change.Mirror),
 	}
 	if change.Bounds.X > 0 {
 		a.OnLeg = true
@@ -2178,7 +2250,7 @@ func (ce *CritterEditor) tryAttachChange(change musical.Change) bool {
 			// part is re-instantiated on each client; only the
 			// anchor and design URI ride the wire.
 			part := newProceduralPart(uri)
-			node = ce.body.AttachPartNode(anchor, part.Node())
+			node = ce.body.AttachProcedural(anchor, part)
 			setSubtreeOwner(node.AsNode(), node.AsNode())
 			ce.animatedParts[node.ID()] = part
 		default:
@@ -2581,6 +2653,7 @@ func (ce *CritterEditor) Process(delta Float.X) {
 	// Change arrived. Cheap: pendingChanges is usually empty after
 	// the first second or two of a session.
 	ce.retryPendingChanges()
+	ce.updateShapeHandles()
 	// Mouse-pointer hint for eye parts: pure 2D screen-relative —
 	// project each eye's world position to screen pixels, take the
 	// cursor's 2D offset, normalise to a local look direction. No

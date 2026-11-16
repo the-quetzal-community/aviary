@@ -302,6 +302,7 @@ func changeFromAnchor(a PartAnchor) musical.Change {
 		ch.Bounds.X = Float.X(a.LegFoot + 1)
 		ch.Bounds.Y = Float.X(a.LegSide)
 	}
+	ch.Mirror = shapeToWire(a.Shape)
 	return ch
 }
 

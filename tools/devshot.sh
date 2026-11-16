@@ -35,6 +35,7 @@ SCENARIOS=(
   editors
   scenery
   terrain
+  critter
 )
 
 # Engine errors that are the environment, not Aviary: the dynamic sentry addon

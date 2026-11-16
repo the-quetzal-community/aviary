@@ -708,7 +708,14 @@ func (ui *DesignExplorer) Refresh(editor Subject, author string, mode Mode) {
 			}
 			ui.slider[ui.editor.Name()][tab] = slider_id
 			ui.Tabs.AsNode().AddChild(Node.Instance(slider.AsNode()))
-			if ExistsSync("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
+			var icon Texture2D.Instance
+			if provider, ok := ui.editor.(TabIconProvider); ok {
+				icon = provider.TabIcon(mode, tab)
+			}
+			if icon != Texture2D.Nil {
+				ui.Tabs.SetTabIcon(index, icon)
+				ui.Tabs.SetTabIconMaxWidth(index, 48)
+			} else if ExistsSync("res://ui/" + strings.ToLower(editor.String()) + "/" + tab + ".svg") {
 				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+"/"+tab+".svg"))
 			} else {
 				ui.Tabs.SetTabIcon(index, LoadSync[Texture2D.Instance]("res://ui/"+strings.ToLower(editor.String())+".svg"))

@@ -380,6 +380,14 @@ type BuiltinDesignProvider interface {
 	BuiltinDesigns(mode Mode, tab string) []BuiltinDesign
 }
 
+// TabIconProvider is an optional interface an editor can implement to
+// supply a tab's icon itself (e.g. a generated colour swatch) instead
+// of the res://ui/<editor>/<tab>.svg lookup. Returning Texture2D.Nil
+// falls back to that lookup.
+type TabIconProvider interface {
+	TabIcon(mode Mode, tab string) Texture2D.Instance
+}
+
 // DesignFilter is an optional interface an editor can implement to
 // hide library tiles from the design explorer while some editor state
 // holds (the coaster editor hides every other theme's track once a

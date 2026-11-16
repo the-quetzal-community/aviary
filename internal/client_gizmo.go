@@ -844,6 +844,9 @@ func (world *Client) updateCritterGizmoDrag(ent musical.Entity, node Node3D.Inst
 		Editor: "critter",
 		Offset: Vector3.New(Float.X(next.T), Float.X(next.Theta), Float.X(next.Offset)),
 		Angles: Euler.Radians{X: 0, Y: Angle.Radians(next.Twist), Z: 0},
+		// Carry the sculpted shape through, or moving a horn would
+		// reset it to the neutral cone.
+		Mirror: shapeToWire(next.Shape),
 		Commit: commit,
 	}
 	if next.OnLeg {

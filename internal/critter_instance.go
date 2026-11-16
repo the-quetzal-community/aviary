@@ -121,7 +121,7 @@ func attachCreationPart(body *CritterBody, p CritterPartRef) {
 		return
 	}
 	if part := newProceduralPart(p.URI); part != nil {
-		body.AttachPartNode(p.Anchor, part.Node())
+		body.AttachProcedural(p.Anchor, part)
 		return
 	}
 	if isModPath(p.URI) {
